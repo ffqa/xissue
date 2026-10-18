@@ -1,0 +1,4 @@
+bin/
+internal/server/dist/
+web/node_modules/
+.DS_Store

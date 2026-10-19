@@ -36,6 +36,7 @@ type githubRelease struct {
 func runUpdate(args []string) {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
 	checkOnly := fs.Bool("check", false, "仅检查是否有新版本，不执行升级")
+	force := fs.Bool("force", false, "跳过完整性校验强制执行升级 (默认 fail-closed 校验)")
 	_ = fs.Parse(args)
 
 	currentVer := server.Version
@@ -54,7 +55,7 @@ func runUpdate(args []string) {
 	}
 
 	fmt.Printf("检测到安装方式: 独立二进制 (%s)\n", exePath)
-	handleBinaryUpdate(currentVer, exePath, *checkOnly)
+	handleBinaryUpdate(currentVer, exePath, *checkOnly, *force)
 }
 
 func isHomebrewInstall(exePath string) bool {
@@ -120,7 +121,7 @@ func handleBrewUpdate(checkOnly bool) {
 	restartServiceIfRunning()
 }
 
-func handleBinaryUpdate(currentVer, exePath string, checkOnly bool) {
+func handleBinaryUpdate(currentVer, exePath string, checkOnly, force bool) {
 	fmt.Println("正在检查 GitHub Releases 最新版本...")
 	rel, err := fetchLatestRelease()
 	if err != nil {
@@ -155,22 +156,43 @@ func handleBinaryUpdate(currentVer, exePath string, checkOnly bool) {
 	}
 	defer os.Remove(tmpArchive)
 
-	// 完整性校验：下载 SHA256SUMS.txt 并校验包哈希
+	// 完整性校验：下载 SHA256SUMS.txt 并校验包哈希 (默认严格 fail-closed，杜绝供应链投毒)
 	sumsURL := findSumsURL(rel)
-	if sumsURL != "" {
+	if sumsURL == "" {
+		if !force {
+			fmt.Println("❌ 安全拦截: 未在发布包中找到 SHA256SUMS.txt 校验和文件。\n   为防范供应链风险已终止升级（可使用 'xissue update --force' 强制升级）。")
+			return
+		}
+		fmt.Println("⚠️ 警告: 未找到 SHA256SUMS.txt，因使用 --force 参数跳过校验。")
+	} else {
 		fmt.Println("正在获取 SHA256SUMS.txt 进行完整性校验...")
 		tmpSums, err := downloadFile(sumsURL)
 		if err != nil {
-			fmt.Printf("警告: 获取校验和文件失败: %v\n", err)
+			if !force {
+				fmt.Printf("❌ 获取校验和文件失败: %v\n   为防范供应链风险已终止升级（可使用 'xissue update --force' 强制升级）。\n", err)
+				return
+			}
+			fmt.Printf("⚠️ 警告: 获取校验和文件失败 (%v)，因使用 --force 参数跳过校验。\n", err)
 		} else {
 			defer os.Remove(tmpSums)
 			sumsBytes, err := os.ReadFile(tmpSums)
-			if err == nil {
+			if err != nil {
+				if !force {
+					fmt.Printf("❌ 读取校验和文件失败: %v\n", err)
+					return
+				}
+			} else {
 				expectedSHA := parseChecksum(string(sumsBytes), assetName)
-				if expectedSHA != "" {
+				if expectedSHA == "" {
+					if !force {
+						fmt.Printf("❌ 安全拦截: SHA256SUMS.txt 中未包含文件 %s 的校验和记录。\n   为防范供应链风险已终止升级（可使用 'xissue update --force' 强制升级）。\n", assetName)
+						return
+					}
+					fmt.Printf("⚠️ 警告: 未找到 %s 的校验和记录，因使用 --force 参数跳过校验。\n", assetName)
+				} else {
 					actualSHA, err := computeFileSHA256(tmpArchive)
 					if err != nil {
-						fmt.Printf("计算校验和失败: %v\n", err)
+						fmt.Printf("计算本地文件校验和失败: %v\n", err)
 						return
 					}
 					if !strings.EqualFold(actualSHA, expectedSHA) {

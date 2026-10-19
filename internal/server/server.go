@@ -104,12 +104,16 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				}
 			}
 
+			// /api/mcp is a machine JSON-RPC endpoint used by CLI stdio bridge and IDE agents.
+			// Cross-origin browser requests with application/json trigger mandatory CORS preflight and are blocked by Origin/Host checks.
+			isMCPEndpoint := r.URL.Path == "/api/mcp"
+
 			// Require custom header X-XIssue or Authorization to block cross-site simple requests (forms/scripts)
 			authHeader := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			hasCustomHeader := r.Header.Get("X-XIssue") != ""
 			hasValidBearer := s.cfg.Token != "" && subtle.ConstantTimeCompare([]byte(authHeader), []byte(s.cfg.Token)) == 1
 
-			if !hasCustomHeader && !hasValidBearer {
+			if !isMCPEndpoint && !hasCustomHeader && !hasValidBearer {
 				http.Error(w, "forbidden: missing X-XIssue header for state-changing request", http.StatusForbidden)
 				return
 			}

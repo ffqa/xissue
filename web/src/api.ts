@@ -39,17 +39,49 @@ export class ApiError extends Error {
   }
 }
 
+// 自动捕获 URL 中的 ?token= 参数并持久化到 localStorage，然后从地址栏移除
+if (typeof window !== 'undefined') {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const tokenInUrl = params.get('token');
+    if (tokenInUrl) {
+      localStorage.setItem('xissue_token', tokenInUrl);
+      params.delete('token');
+      const newQuery = params.toString() ? `?${params.toString()}` : '';
+      window.history.replaceState({}, '', `${window.location.pathname}${newQuery}${window.location.hash}`);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export function getStoredToken(): string {
+  try {
+    return localStorage.getItem('xissue_token') || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setStoredToken(token: string): void {
+  try {
+    if (token) {
+      localStorage.setItem('xissue_token', token);
+    } else {
+      localStorage.removeItem('xissue_token');
+    }
+  } catch {
+    // ignore
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {
     'X-XIssue': '1',
   };
-  try {
-    const token = localStorage.getItem('xissue_token');
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-  } catch {
-    // ignore localStorage errors in non-browser env
+  const token = getStoredToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
   const init: RequestInit = { method, credentials: 'same-origin', headers };
   if (body !== undefined) {
@@ -72,6 +104,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     }
   }
   if (!res.ok) {
+    if (res.status === 401) {
+      // 401 时清理可能失效的 token
+      setStoredToken('');
+      throw new ApiError(401, '未授权访问 (401)：请在服务端配置文件核对 Token，或在 URL 附带 ?token=xxx 重新授权');
+    }
     const msg =
       data && typeof data === 'object' && 'error' in data
         ? String((data as { error: unknown }).error)

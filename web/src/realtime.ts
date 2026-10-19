@@ -107,6 +107,8 @@ function handleMessage(qc: QueryClient, msg: WsMessage) {
       toast.info(`🔔 ${n.title}`);
       break;
     }
+    case 'heartbeat':
+      break;
   }
 }
 
@@ -150,7 +152,11 @@ export function useRealtime(qc: QueryClient) {
       ws.onmessage = (ev) => {
         lastSeen = Date.now();
         try {
-          handleMessage(qc, JSON.parse(ev.data) as WsMessage);
+          const data = JSON.parse(ev.data) as WsMessage;
+          if (data.type === 'heartbeat') {
+            return;
+          }
+          handleMessage(qc, data);
         } catch (e) {
           console.warn('ws message error', e);
         }

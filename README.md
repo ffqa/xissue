@@ -95,7 +95,7 @@ chmod +x ~/.local/bin/xissue
   - 支持在提交审查或 Cherry-Pick 时自动生成团队规范格式改动记录（`本次改动：a. / b. / 分支 / PR / 备注`），一键复制备查。
 - **⚡ ABC 三层自动化与插件扩展架构**：
   - **🅰️ 声明式规则 (Layer 1)**：在项目设置中直接配置特定审核人员（如 `@qa-team` 或 `@release-bot`）的 Report 格式与正则模式，满足条件自动触发合并 PR (Squash/Merge)、将 Issue 状态流转为 `Done`、自动 Pull 本地代码及桌面通知；
-  - **🅱️ 项目级 Hooks 脚本 (Layer 2)**：在代码库根目录放置 `.xissue/hooks/on-pr-comment` 或 `on-pr-review` 脚本，接收 stdin JSON 上下文并自由定制私有流转逻辑；
+  - **🅱️ 项目级 Hooks 脚本 (Layer 2)**：在代码库根目录放置 `.xissue/hooks/on-pr-comment` 或 `on-pr-review` 脚本，接收 stdin JSON 上下文并自由定制私有流转逻辑（*注：仅对以本地目录添加的仓库生效；纯远程 Git URL 镜像仓库无本地工作树，建议使用 Layer 1 规则或 Layer 3 全局插件*）；
   - **🅲️ 规范化生态插件 (Layer 3)**：支持在全局 `~/.xissue/plugins/` 放置带 `plugin.yaml` 清单的独立插件，与社区共享自动化扩展。
 - **内置审查与暗色/亮色主题切换**：
   - Web UI 内嵌本地打包的 Monaco DiffEditor，支持行内编辑保存、一键跳回 VSCode/Cursor。

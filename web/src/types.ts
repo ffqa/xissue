@@ -377,7 +377,8 @@ export type WsMessage =
   | { type: 'run_event'; runId: number; issueId: number; event: RunEvent }
   | { type: 'run_updated'; run: Run }
   | { type: 'issue_updated'; issue: Issue }
-  | { type: 'notification'; notification: Notification };
+  | { type: 'notification'; notification: Notification }
+  | { type: 'heartbeat' };
 
 export interface MonitorLogEntry {
   timestamp: string;

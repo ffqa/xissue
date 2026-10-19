@@ -113,6 +113,9 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return
 			}
+			wctx, wcancel := context.WithTimeout(ctx, 5*time.Second)
+			_ = conn.Write(wctx, websocket.MessageText, []byte(`{"type":"heartbeat"}`))
+			wcancel()
 		case msg := <-ch:
 			wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			err := conn.Write(wctx, websocket.MessageText, msg)

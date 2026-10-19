@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -149,6 +150,7 @@ func runMCPStdio(cfg *config.Config) {
 			continue
 		}
 		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-XIssue", "1")
 		if cfg.Token != "" {
 			req.Header.Set("Authorization", "Bearer "+cfg.Token)
 		}
@@ -160,7 +162,29 @@ func runMCPStdio(cfg *config.Config) {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		body = bytes.TrimSpace(body)
-		if len(body) > 0 && resp.StatusCode == http.StatusOK {
+
+		if resp.StatusCode != http.StatusOK {
+			fmt.Fprintf(os.Stderr, "xissue mcp server returned status %d: %s\n", resp.StatusCode, string(body))
+			var reqMsg struct {
+				ID any `json:"id"`
+			}
+			_ = json.Unmarshal(line, &reqMsg)
+			if reqMsg.ID != nil {
+				errResp, _ := json.Marshal(map[string]any{
+					"jsonrpc": "2.0",
+					"id":      reqMsg.ID,
+					"error": map[string]any{
+						"code":    -32000,
+						"message": fmt.Sprintf("server error: %s (status %d)", string(body), resp.StatusCode),
+					},
+				})
+				os.Stdout.Write(errResp)
+				os.Stdout.Write([]byte("\n"))
+			}
+			continue
+		}
+
+		if len(body) > 0 {
 			os.Stdout.Write(body)
 			os.Stdout.Write([]byte("\n"))
 		}

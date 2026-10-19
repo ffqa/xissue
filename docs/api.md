@@ -110,6 +110,10 @@ interface RunEvent {
 | GET | `/api/projects/{id}/prs` | 查询项目 PR 列表（`?state=open\|merged\|closed\|all`）→ `RemotePR[]` |
 | POST | `/api/projects/{id}/prs/{number}/merge` | 在项目中直接合并 PR 并自动 pull 同步本地代码 → `{ ok, merged, message }` |
 | POST | `/api/projects/{id}/prs/{number}/close` | 在项目中直接关闭 PR → `{ ok, closed }` |
+| GET | `/api/monitor/status` | 获取监控服务状态、上次检查耗时、监控分支与 PR 数 → `MonitorStatus` |
+| GET | `/api/monitor/logs` | 查询监控与执行日志（`?hours=8` 默认最近8小时）→ `MonitorLogEntry[]` |
+| POST | `/api/monitor/trigger` | 立即触发一次全分支与 PR 状态检查 → `{ ok, watchesTriggered, prsUpdated, message }` |
+| POST | `/api/monitor/prune` | 立即裁剪旧日志（`?hours=8`）保留最近指定时间 → `{ ok, prunedCount, message }` |
 | GET | `/api/projects/{id}/issues` | `Issue[]` |
 | POST | `/api/projects/{id}/issues` | `{ title, body, labels? }` → `Issue`（本地 Issue，status=todo） |
 | GET / PATCH | `/api/issues/{id}` | PATCH `{ title?, body?, status? }` |

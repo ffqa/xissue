@@ -14,6 +14,8 @@ import type {
   Issue,
   IssueStatus,
   MCPStatus,
+  MonitorLogEntry,
+  MonitorStatus,
   Notification,
   Project,
   RemotePR,
@@ -179,11 +181,18 @@ export const api = {
   discard: (runId: number) => post<void>(`/api/runs/${runId}/discard`),
   runArchive: (runId: number) =>
     get<{ dir: string; analysis: string; events: string }>(`/api/runs/${runId}/archive`),
+
+  monitorStatus: () => get<MonitorStatus>('/api/monitor/status'),
+  monitorLogs: (hours = 8) => get<MonitorLogEntry[]>(`/api/monitor/logs?hours=${hours}`),
+  triggerMonitor: () => post<{ ok: boolean; watchesTriggered: number; prsUpdated: number; message: string }>('/api/monitor/trigger'),
+  pruneMonitorLogs: (hours = 8) => post<{ ok: boolean; prunedCount: number; message: string }>(`/api/monitor/prune?hours=${hours}`),
 };
 
 /** react-query keys */
 export const qk = {
   health: ['health'] as const,
+  monitorStatus: ['monitorStatus'] as const,
+  monitorLogs: (hours?: number) => ['monitorLogs', hours ?? 8] as const,
   agents: ['agents'] as const,
   agentModels: (name: string) => ['agentModels', name] as const,
   mcpStatus: ['mcpStatus'] as const,

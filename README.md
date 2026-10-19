@@ -6,41 +6,60 @@
 
 ---
 
-## 🚀 快速开始（直接下载 Release 运行）
+## 🚀 快速开始与安装
 
-你可以直接从 [GitHub Releases](https://github.com/ffqa/xissue/releases) 下载对应系统的预编译单文件包（已内置完整前端资源，无需安装 Node.js 或 Go）：
+xIssue 提供多种安装与运行方式（已内置完整前端与数据引擎，单文件独立运行，无需配置 Node.js 或 Go）：
 
-### macOS / Linux
+### 方式一：Homebrew 安装（推荐，支持自动升级与服务托管）
 
 ```bash
-# 1. 前往 GitHub Releases 页面下载对应系统的压缩包（或使用 curl 下载最新发布包，以 macOS Apple Silicon 为例）：
-# 架构可选：darwin-arm64 / darwin-amd64 / linux-amd64 / linux-arm64
+# 1. 添加 tap 并安装
+brew tap ffqa/tap
+brew install ffqa/tap/xissue
+
+# 2. 启动常驻后台自启服务（默认监听 http://127.0.0.1:7789）
+brew services start ffqa/tap/xissue
+
+# 3. （可选）一键把 xIssue MCP 插件注册到本机所有主流 IDE / CLI Agent
+xissue mcp --install
+```
+
+### 方式二：下载预编译 Release 单文件运行
+
+可以直接从 [GitHub Releases](https://github.com/ffqa/xissue/releases) 下载对应系统的包：
+
+```bash
+# 1. 下载最新发布包（以 macOS Apple Silicon 为例，架构可选：darwin-arm64 / darwin-amd64 / linux-amd64 / linux-arm64）
 curl -fL "$(curl -s https://api.github.com/repos/ffqa/xissue/releases/latest | grep "browser_download_url.*darwin-arm64.tar.gz" | cut -d '"' -f 4)" | tar -xz
 cd xissue-*-darwin-arm64
 
-# 2. 直接启动服务（默认监听 http://127.0.0.1:7789，数据目录 ~/.xissue）
-./xissue
-
-# 3. （可选）一键把 xIssue MCP 插件注册到本机所有主流 IDE / CLI Agent
-./xissue mcp --install
-```
-
-### 安装为系统开机自启常驻服务（launchd / systemd）
-
-```bash
+# 2. 安装为开机自启常驻服务（launchd / systemd）
 ./scripts/install-service.sh
 ```
 
-> 该脚本会自动查找 `bin/xissue` 或发布包根目录下的 `xissue` 可执行文件，并清理 macOS 隔离属性。也可以直接运行 `make install-service` 从源码构建后安装。
+> **安全与持久化保障**：
+> `install-service.sh` 安装时会自动将 `xissue` 安装到 `$HOME/.local/bin/xissue` 并清理系统隔离属性。
+> LaunchAgent plist / systemd 服务配置**直接指向持久化目录**，安装完成后可安全删除下载解压的临时目录，服务完全不受影响。
+
+### 🔄 检查与版本自动升级 (`xissue update`)
+
+无论是通过 Homebrew 还是直接下载预编译二进制安装，均可通过一行命令自动检查或升级至最新版本：
+
+```bash
+# 检查是否有更新
+xissue update --check
+
+# 一键自动升级（Homebrew 模式自动调用 brew upgrade，独立二进制模式自动下载替换最新版本并热重启服务）
+xissue update
+```
 
 ### macOS 首次运行被系统拦截（Gatekeeper）
 
-从浏览器下载的发布包可能带有隔离属性，直接执行 `./xissue` 时 macOS 可能将其移入废纸篓。请先修复权限再运行：
+若手动下载的二进制首次执行被 macOS 拦截：
 
 ```bash
-sudo xattr -r -c xissue
-chmod +x xissue
-./xissue
+sudo xattr -r -c ~/.local/bin/xissue
+chmod +x ~/.local/bin/xissue
 ```
 
 ---

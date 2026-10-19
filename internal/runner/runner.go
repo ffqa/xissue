@@ -121,22 +121,30 @@ type Runner struct {
 	mu         sync.Mutex
 	active     map[int64]*activeRun   // runID -> activeRun
 	warm       map[int64]*warmSession // runID -> idle warm ACP process
-	allowSet   map[int64]bool         // runID -> allow_always chosen
-	watchMu    sync.Mutex
-	modelMu    sync.Mutex
-	modelCache map[string]cachedAgentModels
+	allowSet        map[int64]bool         // runID -> allow_always chosen
+	watchMu         sync.Mutex
+	modelMu         sync.Mutex
+	modelCache      map[string]cachedAgentModels
+	monitorMu       sync.RWMutex
+	monitorLogs     []MonitorLogEntry
+	lastCheckTime   time.Time
+	nextCheckTime   time.Time
+	lastDurationMs  int64
+	lastTrigWatches int
+	lastUpdatedPRs  int
 }
 
 func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 	r := &Runner{
-		cfg:        cfg,
-		st:         st,
-		notify:     notify,
-		budget:     newBudget(cfg.Runner.MaxConcurrent, cfg.Runner.MemoryBudgetMB),
-		active:     map[int64]*activeRun{},
-		warm:       map[int64]*warmSession{},
-		allowSet:   map[int64]bool{},
-		modelCache: map[string]cachedAgentModels{},
+		cfg:         cfg,
+		st:          st,
+		notify:      notify,
+		budget:      newBudget(cfg.Runner.MaxConcurrent, cfg.Runner.MemoryBudgetMB),
+		active:      map[int64]*activeRun{},
+		warm:        map[int64]*warmSession{},
+		allowSet:    map[int64]bool{},
+		modelCache:  map[string]cachedAgentModels{},
+		monitorLogs: []MonitorLogEntry{},
 	}
 	// Mark any runs left active by a previous server process as failed and sync their parent issues.
 	if runs, err := st.ListActiveRuns(context.Background()); err == nil {

@@ -336,3 +336,24 @@ export type WsMessage =
   | { type: 'issue_updated'; issue: Issue }
   | { type: 'notification'; notification: Notification };
 
+export interface MonitorLogEntry {
+  timestamp: string;
+  level: 'INFO' | 'WARN' | 'EVENT' | 'ERROR';
+  source: string;
+  message: string;
+}
+
+export interface MonitorStatus {
+  running: boolean;
+  intervalSeconds: number;
+  lastCheckTime?: string;
+  nextCheckTime?: string;
+  lastDurationMs: number;
+  watchesCount: number;
+  openPRsCount: number;
+  watchedBranches: BranchWatch[];
+  lastTriggeredWatches: number;
+  lastUpdatedPRs: number;
+}
+
+

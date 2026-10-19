@@ -54,12 +54,38 @@ case "${1:-install}" in
     fi
     prepare_binary "$binary"
     mkdir -p "$log_dir"
+
+    # 确定持久化运行路径，决不能使用解压缩的临时目录
+    target_bin="$HOME/.local/bin/xissue"
+    if [[ "$binary" == "/opt/homebrew/bin/xissue" || "$binary" == "/usr/local/bin/xissue" || "$binary" == *"/Cellar/"* ]]; then
+      persistent_bin="$binary"
+    else
+      mkdir -p "$HOME/.local/bin"
+      if [[ "$binary" != "$target_bin" ]]; then
+        echo "installing binary to $target_bin..."
+        cp -f "$binary" "$target_bin.tmp"
+        mv -f "$target_bin.tmp" "$target_bin"
+      fi
+      prepare_binary "$target_bin"
+      persistent_bin="$target_bin"
+    fi
+
+    # 备份 scripts 与 deploy 到 ~/.xissue 目录，供离线维护使用
+    if [[ -d "$root/scripts" ]]; then
+      mkdir -p "$log_dir/scripts"
+      cp -r "$root/scripts/"* "$log_dir/scripts/" 2>/dev/null || true
+    fi
+    if [[ -d "$root/deploy" ]]; then
+      mkdir -p "$log_dir/deploy"
+      cp -r "$root/deploy/"* "$log_dir/deploy/" 2>/dev/null || true
+    fi
+
     if [[ "$os" == "Darwin" ]]; then
       mkdir -p "$HOME/Library/LaunchAgents"
       target="$HOME/Library/LaunchAgents/$label.plist"
       svc_path="$HOME/.opencode/bin:/opt/homebrew/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
       if [[ -f "$root/deploy/dev.xissue.plist" ]]; then
-        sed -e "s|__BIN__|$binary|g" \
+        sed -e "s|__BIN__|$persistent_bin|g" \
             -e "s|__HOME__|$HOME|g" \
             -e "s|__PATH__|$svc_path|g" \
             -e "s|__LOG__|$log|g" \
@@ -74,7 +100,7 @@ case "${1:-install}" in
   <string>$label</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$binary</string>
+    <string>$persistent_bin</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -99,17 +125,17 @@ case "${1:-install}" in
 </plist>
 EOF
       fi
-      pkill -f "$binary" 2>/dev/null || true
+      pkill -f "$persistent_bin" 2>/dev/null || true
       launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
       launchctl bootstrap "gui/$(id -u)" "$target"
       echo "installed $label -> $target"
-      echo "binary: $binary"
+      echo "binary: $persistent_bin"
       echo "log: $log"
     else
       mkdir -p "$HOME/.config/systemd/user"
       target="$HOME/.config/systemd/user/xissue.service"
       if [[ -f "$root/deploy/xissue.service" ]]; then
-        sed "s|/usr/local/bin/xissue|$binary|g" "$root/deploy/xissue.service" > "$target"
+        sed "s|/usr/local/bin/xissue|$persistent_bin|g" "$root/deploy/xissue.service" > "$target"
       else
         cat <<EOF > "$target"
 [Unit]
@@ -119,7 +145,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=$binary
+ExecStart=$persistent_bin
 Restart=on-failure
 RestartSec=3
 OOMScoreAdjust=-500
@@ -132,7 +158,7 @@ EOF
       systemctl --user daemon-reload
       systemctl --user enable --now xissue.service
       echo "installed systemd user service -> $target"
-      echo "binary: $binary"
+      echo "binary: $persistent_bin"
     fi
     ;;
   uninstall)
@@ -160,6 +186,15 @@ EOF
     fi
     ;;
   restart)
+    if binary="$(find_binary)"; then
+      target_bin="$HOME/.local/bin/xissue"
+      if [[ "$binary" != "$target_bin" && -f "$binary" ]]; then
+        mkdir -p "$HOME/.local/bin"
+        cp -f "$binary" "$target_bin.tmp"
+        mv -f "$target_bin.tmp" "$target_bin"
+        prepare_binary "$target_bin"
+      fi
+    fi
     if [[ "$os" == "Darwin" ]]; then
       lsof -ti tcp:7789 | xargs kill -9 2>/dev/null || true
       if ! launchctl kickstart -k "gui/$(id -u)/$label" 2>/dev/null; then

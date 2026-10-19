@@ -22,7 +22,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.6"
+const Version = "0.2.7"
 
 type Server struct {
 	cfg    *config.Config
@@ -155,6 +155,11 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/projects/{id}/prs/{number}/merge", s.handleMergeProjectPR)
 	m.HandleFunc("POST /api/projects/{id}/prs/{number}/close", s.handleCloseProjectPR)
 	m.HandleFunc("POST /api/projects/{id}/pull", s.handlePullProjectRepos)
+
+	m.HandleFunc("GET /api/monitor/status", s.handleMonitorStatus)
+	m.HandleFunc("GET /api/monitor/logs", s.handleMonitorLogs)
+	m.HandleFunc("POST /api/monitor/trigger", s.handleMonitorTrigger)
+	m.HandleFunc("POST /api/monitor/prune", s.handleMonitorPrune)
 
 	m.HandleFunc("GET /api/repos/{repoId}/branches", s.handleRepoBranches)
 	m.HandleFunc("GET /api/repos/{repoId}/commits", s.handleRepoCommits)
@@ -1157,4 +1162,55 @@ func (s *Server) handlePullProjectRepos(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pulledRepos": updated, "message": "已从远端成功拉取最新代码"})
 }
+
+func (s *Server) handleMonitorStatus(w http.ResponseWriter, r *http.Request) {
+	st, err := s.runner.GetMonitorStatus(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) handleMonitorLogs(w http.ResponseWriter, r *http.Request) {
+	hoursStr := r.URL.Query().Get("hours")
+	hours := 8
+	if h, err := strconv.Atoi(hoursStr); err == nil && h > 0 {
+		hours = h
+	}
+	logs := s.runner.GetMonitorLogs(r.Context(), hours)
+	if logs == nil {
+		logs = []runner.MonitorLogEntry{}
+	}
+	writeJSON(w, http.StatusOK, logs)
+}
+
+func (s *Server) handleMonitorTrigger(w http.ResponseWriter, r *http.Request) {
+	watchesTriggered, prsUpdated, err := s.runner.CheckWatchesAndPRs(r.Context(), 0)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":               true,
+		"watchesTriggered": watchesTriggered,
+		"prsUpdated":       prsUpdated,
+		"message":          fmt.Sprintf("轮询检查完成: 触发 %d 个分支推送, %d 个 PR 状态流转", watchesTriggered, prsUpdated),
+	})
+}
+
+func (s *Server) handleMonitorPrune(w http.ResponseWriter, r *http.Request) {
+	hoursStr := r.URL.Query().Get("hours")
+	hours := 8
+	if h, err := strconv.Atoi(hoursStr); err == nil && h > 0 {
+		hours = h
+	}
+	pruned, err := s.runner.PruneMonitorLogs(time.Duration(hours) * time.Hour)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "prunedCount": pruned, "message": fmt.Sprintf("已成功清理并保留最近 %d 小时日志", hours)})
+}
+
 

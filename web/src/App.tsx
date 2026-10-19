@@ -6,6 +6,7 @@ import { useRealtime, useWsState } from './realtime';
 import { Toaster, toast } from './toast';
 import { useTheme } from './theme';
 import { AgentManagerModal } from './components/AgentManagerModal';
+import { MonitorModal } from './components/MonitorModal';
 import { fmtTime } from './components/common';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectPage from './pages/ProjectPage';
@@ -56,29 +57,55 @@ function NotificationBell() {
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.notifications }),
   });
 
+  const onToggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && unreadCount > 0) {
+      markAllMut.mutate();
+    }
+  };
+
   return (
     <div ref={wrapRef} style={{ position: 'relative' }}>
       <button
         type="button"
-        className={`ghost sm ${unreadCount > 0 ? 'primary' : ''}`}
-        title="PR 状态变更、分支推送监控与 Run 执行通知"
-        onClick={() => setOpen((v) => !v)}
-        style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 5 }}
+        className="ghost sm"
+        title={unreadCount > 0 ? `有 ${unreadCount} 条新通知` : '消息通知'}
+        onClick={onToggle}
+        style={{
+          position: 'relative',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '4px 8px',
+          fontSize: 14,
+        }}
       >
-        🔔 通知
+        🔔
         {unreadCount > 0 && (
           <span
             style={{
-              background: 'var(--danger)',
-              color: '#fff',
+              position: 'absolute',
+              top: -3,
+              right: -3,
+              background: '#ef4444',
+              color: '#ffffff',
               borderRadius: 999,
-              padding: '0 6px',
-              fontSize: 11,
+              minWidth: 16,
+              height: 16,
+              padding: '0 4px',
+              fontSize: 10,
               fontWeight: 700,
               lineHeight: '16px',
+              textAlign: 'center',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.35)',
+              border: '1.5px solid var(--bg, #18181b)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
-            {unreadCount}
+            {unreadCount > 99 ? '99+' : unreadCount}
           </span>
         )}
       </button>
@@ -179,6 +206,7 @@ export default function App() {
   useRealtime(qc);
   const [theme, toggleTheme] = useTheme();
   const [agentMgrOpen, setAgentMgrOpen] = useState(false);
+  const [monitorOpen, setMonitorOpen] = useState(false);
   const health = useQuery({ queryKey: qk.health, queryFn: api.health, staleTime: Infinity });
   const restart = useMutation({
     mutationFn: api.restartServer,
@@ -200,17 +228,26 @@ export default function App() {
         <NotificationBell />
         <button
           className="ghost sm"
-          title="切换亮色 / 暗色主题"
-          onClick={toggleTheme}
+          title="查看监控状态与最近8小时日志"
+          onClick={() => setMonitorOpen(true)}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
         >
-          {theme === 'dark' ? '☀ 亮色' : '☾ 暗色'}
+          📡 监控
+        </button>
+        <button
+          className="ghost sm"
+          title={theme === 'dark' ? '切换为亮色模式' : '切换为暗色模式'}
+          onClick={toggleTheme}
+          style={{ fontSize: 14, padding: '4px 8px' }}
+        >
+          {theme === 'dark' ? '☀️' : '🌙'}
         </button>
         <button
           className="ghost sm"
           title="管理 Agent、一键安装 MCP 到所有 IDE/Agent、绑定默认 Provider/模型"
           onClick={() => setAgentMgrOpen(true)}
         >
-          ⚙ Agent & MCP
+          ⚙ MCP
         </button>
         <button
           className="ghost sm"
@@ -218,7 +255,7 @@ export default function App() {
           disabled={restart.isPending}
           onClick={() => restart.mutate()}
         >
-          ↻ 重启服务
+          ↻ 重启
         </button>
         {health.data && <span className="dim small">v{health.data.version}</span>}
       </header>
@@ -231,6 +268,7 @@ export default function App() {
         </Routes>
       </main>
       {agentMgrOpen && <AgentManagerModal onClose={() => setAgentMgrOpen(false)} />}
+      {monitorOpen && <MonitorModal onClose={() => setMonitorOpen(false)} />}
       <Toaster />
     </div>
   );

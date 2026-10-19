@@ -6,7 +6,7 @@ DATA_DIR := $(HOME)/.xissue
 LOG_FILE := $(DATA_DIR)/xissue.log
 
 .PHONY: help build all web server deploy run dev stop restart status logs test clean \
-        install-service uninstall-service service-status service-restart
+        install-service uninstall-service service-status service-restart brew-publish
 
 help: ## 显示此帮助菜单（默认）
 	@printf "\033[1;36mxIssue (xpier-issue) 构建与服务管理菜单\033[0m\n\n"
@@ -73,3 +73,7 @@ test: ## 运行 Go 单元测试与前端 TypeScript 类型检查
 
 clean: ## 清理编译产物 (bin/ 与 internal/server/dist/)
 	rm -rf bin internal/server/dist
+
+brew-publish: ## 发布最新版本 Formula 到 ffqa/homebrew-tap
+	./scripts/brew-publish.sh
+

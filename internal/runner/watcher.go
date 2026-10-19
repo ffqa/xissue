@@ -170,17 +170,36 @@ func (r *Runner) AddBranchWatch(ctx context.Context, projectID, repoID int64, br
 
 // startWatcherLoop periodically checks watched branches and open PR statuses.
 func (r *Runner) startWatcherLoop() {
+	r.LogMonitor("INFO", "watcher", "监控服务已启动，轮询间隔: 90秒 (保留最近8小时监控与执行日志)")
 	ticker := time.NewTicker(90 * time.Second)
+	pruneTicker := time.NewTicker(1 * time.Hour)
 	defer ticker.Stop()
-	for range ticker.C {
+	defer pruneTicker.Stop()
+
+	// 启动时立即执行一次检查与裁剪
+	go func() {
+		time.Sleep(2 * time.Second)
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		_, _, _ = r.CheckWatchesAndPRs(ctx, 0)
 		cancel()
+		_, _ = r.PruneMonitorLogs(8 * time.Hour)
+	}()
+
+	for {
+		select {
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			_, _, _ = r.CheckWatchesAndPRs(ctx, 0)
+			cancel()
+		case <-pruneTicker.C:
+			_, _ = r.PruneMonitorLogs(8 * time.Hour)
+		}
 	}
 }
 
 // CheckWatchesAndPRs checks branch watches and open PRs (for projectID, or all projects if projectID == 0).
 func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watchesTriggered int, prsUpdated int, err error) {
+	start := time.Now()
 	r.watchMu.Lock()
 	defer r.watchMu.Unlock()
 
@@ -191,6 +210,7 @@ func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watch
 		watches, err = r.st.ListAllBranchWatches(ctx)
 	}
 	if err != nil {
+		r.LogMonitor("ERROR", "watcher", fmt.Sprintf("获取监控分支失败: %v", err))
 		return 0, 0, err
 	}
 
@@ -288,6 +308,21 @@ func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watch
 				r.pushNotification("pr_status", fmt.Sprintf("⚠️ [%s] PR 已关闭 (Closed)", issue.Key), fmt.Sprintf("%s\n%s", prTitle, run.PRURL), fmt.Sprintf("/issues/%d", issue.ID), "")
 			}
 		}
+	}
+
+	duration := time.Since(start)
+	r.monitorMu.Lock()
+	r.lastCheckTime = start
+	r.nextCheckTime = start.Add(90 * time.Second)
+	r.lastDurationMs = duration.Milliseconds()
+	r.lastTrigWatches = watchesTriggered
+	r.lastUpdatedPRs = prsUpdated
+	r.monitorMu.Unlock()
+
+	if watchesTriggered > 0 || prsUpdated > 0 {
+		r.LogMonitor("EVENT", "watcher", fmt.Sprintf("检查完成: 触发 %d 个分支推送通知, 更新 %d 个 PR 状态 (耗时 %dms)", watchesTriggered, prsUpdated, duration.Milliseconds()))
+	} else {
+		r.LogMonitor("INFO", "watcher", fmt.Sprintf("检查完成: %d 个监控分支正常, 无新变更 (耗时 %dms)", len(watches), duration.Milliseconds()))
 	}
 
 	return watchesTriggered, prsUpdated, nil
@@ -575,4 +610,171 @@ func (r *Runner) CloseProjectPR(ctx context.Context, projectID, repoID, number i
 	r.pushNotification("pr_status", fmt.Sprintf("[%s] PR #%d 已关闭", repo.Name, number), "", fmt.Sprintf("/projects/%d", projectID), "")
 	return nil
 }
+
+// MonitorLogEntry represents a structured log event in the monitoring subsystem.
+type MonitorLogEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Level     string    `json:"level"`  // INFO, WARN, EVENT, ERROR
+	Source    string    `json:"source"` // watcher, pr_sync, service, prune
+	Message   string    `json:"message"`
+}
+
+// MonitorStatus represents current runtime status of the monitoring daemon.
+type MonitorStatus struct {
+	Running              bool                 `json:"running"`
+	IntervalSeconds      int                  `json:"intervalSeconds"`
+	LastCheckTime        *time.Time           `json:"lastCheckTime,omitempty"`
+	NextCheckTime        *time.Time           `json:"nextCheckTime,omitempty"`
+	LastDurationMs       int64                `json:"lastDurationMs"`
+	WatchesCount         int                  `json:"watchesCount"`
+	OpenPRsCount         int                  `json:"openPRsCount"`
+	WatchedBranches      []domain.BranchWatch `json:"watchedBranches"`
+	LastTriggeredWatches int                  `json:"lastTriggeredWatches"`
+	LastUpdatedPRs       int                  `json:"lastUpdatedPRs"`
+}
+
+// LogMonitor appends an event to the in-memory ring buffer and appends to ~/.xissue/monitor.log.
+func (r *Runner) LogMonitor(level, source, message string) {
+	entry := MonitorLogEntry{
+		Timestamp: time.Now(),
+		Level:     level,
+		Source:    source,
+		Message:   message,
+	}
+
+	r.monitorMu.Lock()
+	r.monitorLogs = append(r.monitorLogs, entry)
+	// Retain only entries within the last 8 hours, max 2000 items
+	cutoff := time.Now().Add(-8 * time.Hour)
+	if len(r.monitorLogs) > 100 {
+		var pruned []MonitorLogEntry
+		for _, e := range r.monitorLogs {
+			if e.Timestamp.After(cutoff) {
+				pruned = append(pruned, e)
+			}
+		}
+		if len(pruned) > 2000 {
+			pruned = pruned[len(pruned)-2000:]
+		}
+		r.monitorLogs = pruned
+	}
+	r.monitorMu.Unlock()
+
+	// Asynchronously append to file
+	go func() {
+		logFile := filepath.Join(r.cfg.DataDir, "monitor.log")
+		line := fmt.Sprintf("[%s] [%s] [%s] %s\n", entry.Timestamp.Format("2006-01-02 15:04:05"), entry.Level, entry.Source, entry.Message)
+		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		if err == nil {
+			_, _ = f.WriteString(line)
+			_ = f.Close()
+		}
+	}()
+}
+
+// GetMonitorStatus returns current status and watched branches.
+func (r *Runner) GetMonitorStatus(ctx context.Context) (*MonitorStatus, error) {
+	watches, err := r.st.ListAllBranchWatches(ctx)
+	if err != nil {
+		watches = []domain.BranchWatch{}
+	}
+	openRuns, err := r.st.ListOpenPRRuns(ctx)
+	openPRs := 0
+	if err == nil {
+		openPRs = len(openRuns)
+	}
+
+	r.monitorMu.RLock()
+	defer r.monitorMu.RUnlock()
+
+	res := &MonitorStatus{
+		Running:              true,
+		IntervalSeconds:      90,
+		LastDurationMs:       r.lastDurationMs,
+		WatchesCount:         len(watches),
+		OpenPRsCount:         openPRs,
+		WatchedBranches:      watches,
+		LastTriggeredWatches: r.lastTrigWatches,
+		LastUpdatedPRs:       r.lastUpdatedPRs,
+	}
+	if !r.lastCheckTime.IsZero() {
+		t := r.lastCheckTime
+		res.LastCheckTime = &t
+	}
+	if !r.nextCheckTime.IsZero() {
+		t := r.nextCheckTime
+		res.NextCheckTime = &t
+	}
+	return res, nil
+}
+
+// GetMonitorLogs returns the recent monitor logs within the specified hours (default 8 hours).
+func (r *Runner) GetMonitorLogs(ctx context.Context, hours int) []MonitorLogEntry {
+	if hours <= 0 {
+		hours = 8
+	}
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
+
+	r.monitorMu.RLock()
+	defer r.monitorMu.RUnlock()
+
+	var res []MonitorLogEntry
+	for i := len(r.monitorLogs) - 1; i >= 0; i-- {
+		e := r.monitorLogs[i]
+		if e.Timestamp.After(cutoff) {
+			res = append(res, e)
+		}
+	}
+	return res
+}
+
+// PruneMonitorLogs removes logs older than maxAge (default 8 hours) from memory and disk.
+func (r *Runner) PruneMonitorLogs(maxAge time.Duration) (int, error) {
+	if maxAge <= 0 {
+		maxAge = 8 * time.Hour
+	}
+	cutoff := time.Now().Add(-maxAge)
+
+	r.monitorMu.Lock()
+	origCount := len(r.monitorLogs)
+	var kept []MonitorLogEntry
+	for _, e := range r.monitorLogs {
+		if e.Timestamp.After(cutoff) {
+			kept = append(kept, e)
+		}
+	}
+	r.monitorLogs = kept
+	prunedCount := origCount - len(kept)
+	r.monitorMu.Unlock()
+
+	// Prune disk file monitor.log
+	logFile := filepath.Join(r.cfg.DataDir, "monitor.log")
+	if fi, err := os.Stat(logFile); err == nil && fi.Size() > 0 {
+		content, err := os.ReadFile(logFile)
+		if err == nil {
+			lines := strings.Split(string(content), "\n")
+			var keptLines []string
+			cutoffPrefix := cutoff.Format("2006-01-02 15:04:05")
+			for _, l := range lines {
+				if len(l) > 21 && l[0] == '[' {
+					ts := l[1:20]
+					if ts >= cutoffPrefix {
+						keptLines = append(keptLines, l)
+					}
+				} else if strings.TrimSpace(l) != "" {
+					keptLines = append(keptLines, l)
+				}
+			}
+			// If still over 5MB, retain only the last 3000 lines
+			if len(keptLines) > 3000 {
+				keptLines = keptLines[len(keptLines)-3000:]
+			}
+			_ = os.WriteFile(logFile, []byte(strings.Join(keptLines, "\n")), 0o644)
+		}
+	}
+
+	r.LogMonitor("INFO", "prune", fmt.Sprintf("已执行日志裁剪 (保留最近 %v 内日志，已清理 %d 条旧内存日志)", maxAge, prunedCount))
+	return prunedCount, nil
+}
+
 

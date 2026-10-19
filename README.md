@@ -30,6 +30,18 @@ cd xissue-v0.2.0-darwin-arm64
 ./scripts/install-service.sh
 ```
 
+> 该脚本会自动查找 `bin/xissue` 或发布包根目录下的 `xissue` 可执行文件，并清理 macOS 隔离属性。也可以直接运行 `make install-service` 从源码构建后安装。
+
+### macOS 首次运行被系统拦截（Gatekeeper）
+
+从浏览器下载的发布包可能带有隔离属性，直接执行 `./xissue` 时 macOS 可能将其移入废纸篓。请先修复权限再运行：
+
+```bash
+sudo xattr -r -c xissue
+chmod +x xissue
+./xissue
+```
+
 ---
 
 ## ✨ 核心特性

@@ -4,19 +4,55 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-binary="$root/bin/xissue"
 label="dev.xissue"
 log_dir="$HOME/.xissue"
 log="$log_dir/xissue.log"
 
 os="$(uname -s)"
 
+find_binary() {
+  local cand
+  for cand in "$root/bin/xissue" "$root/xissue" "$root/bin/xissue.exe" "$root/xissue.exe"; do
+    if [[ -f "$cand" ]]; then
+      printf '%s\n' "$cand"
+      return 0
+    fi
+  done
+
+  if [[ -f "$root/Makefile" && -f "$root/go.mod" ]] && command -v make >/dev/null 2>&1; then
+    echo "xIssue binary not found; attempting to build it with make..." >&2
+    if (cd "$root" && make build) >&2; then
+      for cand in "$root/bin/xissue" "$root/bin/xissue.exe"; do
+        if [[ -f "$cand" ]]; then
+          printf '%s\n' "$cand"
+          return 0
+        fi
+      done
+    fi
+  fi
+  return 1
+}
+
+prepare_binary() {
+  local bin="$1"
+  chmod +x "$bin" 2>/dev/null || true
+  if command -v xattr >/dev/null 2>&1; then
+    xattr -r -c "$bin" 2>/dev/null || true
+    xattr -dr com.apple.quarantine "$bin" 2>/dev/null || true
+  fi
+  if [[ ! -x "$bin" ]]; then
+    echo "warning: $bin is not executable; you may need: chmod +x \"$bin\"" >&2
+  fi
+}
+
 case "${1:-install}" in
   install)
-    if [[ ! -x "$binary" ]]; then
-      echo "missing $binary; run: make" >&2
+    if ! binary="$(find_binary)"; then
+      echo "missing xIssue binary; run: make build" >&2
+      echo "on macOS, a downloaded binary may also need: sudo xattr -r -c \"$root/xissue\"" >&2
       exit 1
     fi
+    prepare_binary "$binary"
     mkdir -p "$log_dir"
     if [[ "$os" == "Darwin" ]]; then
       mkdir -p "$HOME/Library/LaunchAgents"
@@ -27,11 +63,11 @@ case "${1:-install}" in
           -e "s|__PATH__|$svc_path|g" \
           -e "s|__LOG__|$log|g" \
           "$root/deploy/dev.xissue.plist" > "$target"
-      # Stop any manually-started xissue holding port 7789 before bootstrapping launchd
       pkill -f "$binary" 2>/dev/null || true
       launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
       launchctl bootstrap "gui/$(id -u)" "$target"
       echo "installed $label -> $target"
+      echo "binary: $binary"
       echo "log: $log"
     else
       mkdir -p "$HOME/.config/systemd/user"
@@ -40,6 +76,7 @@ case "${1:-install}" in
       systemctl --user daemon-reload
       systemctl --user enable --now xissue.service
       echo "installed systemd user service -> $target"
+      echo "binary: $binary"
     fi
     ;;
   uninstall)

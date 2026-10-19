@@ -126,7 +126,9 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		}
 
 		cfgToken := []byte(s.cfg.Token)
+		queryTokenValid := false
 		if q := r.URL.Query().Get("token"); q != "" && subtle.ConstantTimeCompare([]byte(q), cfgToken) == 1 {
+			queryTokenValid = true
 			http.SetCookie(w, &http.Cookie{
 				Name:     "xissue_token",
 				Value:    s.cfg.Token,
@@ -145,7 +147,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			cookie, _ := r.Cookie("xissue_token")
 			authValid := subtle.ConstantTimeCompare([]byte(auth), cfgToken) == 1
 			cookieValid := cookie != nil && subtle.ConstantTimeCompare([]byte(cookie.Value), cfgToken) == 1
-			if !authValid && !cookieValid {
+			if !authValid && !cookieValid && !queryTokenValid {
 				writeErr(w, http.StatusUnauthorized, errors.New("unauthorized"))
 				return
 			}
@@ -1053,8 +1055,8 @@ func (s *Server) handleBatchRunTodo(w http.ResponseWriter, r *http.Request) {
 		Agent string `json:"agent"`
 		Model string `json:"model"`
 	}
-	if r.Body != nil && r.ContentLength > 0 {
-		if err := readJSON(r, &body); err != nil {
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := readJSON(r, &body); err != nil && !errors.Is(err, io.EOF) {
 			writeErr(w, http.StatusBadRequest, err)
 			return
 		}

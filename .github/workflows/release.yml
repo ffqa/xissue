@@ -43,7 +43,7 @@ jobs:
       - name: Build Frontend (embedded into Go binary)
         working-directory: web
         run: |
-          pnpm install --frozen-lockfile
+          pnpm install --no-frozen-lockfile
           pnpm build
 
       - name: Run Go Tests

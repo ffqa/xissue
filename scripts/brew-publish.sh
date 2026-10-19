@@ -152,6 +152,16 @@ mkdir -p "$TMP_TAP/Formula"
 cp Formula/xissue.rb "$TMP_TAP/Formula/xissue.rb"
 
 cd "$TMP_TAP"
+if ! git config user.name >/dev/null 2>&1; then
+  git config user.name "github-actions[bot]"
+fi
+if ! git config user.email >/dev/null 2>&1; then
+  git config user.email "github-actions[bot]@users.noreply.github.com"
+fi
+if [[ -n "${GH_TOKEN:-}" ]]; then
+  git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GH_USER}/${TAP_REPO}.git"
+fi
+
 git add Formula/xissue.rb
 if git diff --cached --quiet; then
   echo "Tap 中的 Formula 无变化，跳过提交。"

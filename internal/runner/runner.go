@@ -92,6 +92,7 @@ type activeRun struct {
 	issueID   int64
 	clientMu  sync.Mutex
 	client    *acp.Client
+	ctx       context.Context
 	cancel    context.CancelFunc
 	done      chan struct{}
 	permMu    sync.Mutex
@@ -120,9 +121,9 @@ type Runner struct {
 	notify     Notifier
 	budget     *budget
 	mu         sync.Mutex
-	active     map[int64]*activeRun   // runID -> activeRun
-	warm       map[int64]*warmSession // runID -> idle warm ACP process
-	allowSet        map[int64]bool         // runID -> allow_always chosen
+	active          map[int64]*activeRun              // runID -> activeRun
+	warm            map[int64]*warmSession            // runID -> idle warm ACP process
+	allowSet        map[int64]map[string]bool         // runID -> allowed ACP tool kinds
 	watchMu         sync.Mutex
 	modelMu         sync.Mutex
 	modelCache      map[string]cachedAgentModels
@@ -144,7 +145,7 @@ func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 		budget:      newBudget(cfg.Runner.MaxConcurrent, cfg.Runner.MemoryBudgetMB),
 		active:      map[int64]*activeRun{},
 		warm:        map[int64]*warmSession{},
-		allowSet:    map[int64]bool{},
+		allowSet:    map[int64]map[string]bool{},
 		modelCache:  map[string]cachedAgentModels{},
 		monitorLogs: []MonitorLogEntry{},
 		automation:  automation.NewEngine(""),
@@ -187,7 +188,7 @@ func (r *Runner) ListAgents() []AgentStatus {
 			Name:         name,
 			Command:      ac.Command,
 			Args:         args,
-			Env:          ac.Env,
+			Env:          maskSensitiveEnv(ac.Env),
 			MemoryMB:     ac.MemoryMB,
 			DefaultModel: ac.DefaultModel,
 			Models:       models,
@@ -196,6 +197,24 @@ func (r *Runner) ListAgents() []AgentStatus {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+func maskSensitiveEnv(env map[string]string) map[string]string {
+	if env == nil {
+		return map[string]string{}
+	}
+	res := make(map[string]string, len(env))
+	for k, v := range env {
+		lk := strings.ToUpper(k)
+		if strings.Contains(lk, "KEY") || strings.Contains(lk, "SECRET") || strings.Contains(lk, "TOKEN") || strings.Contains(lk, "PASS") || strings.Contains(lk, "AUTH") {
+			if len(v) > 0 {
+				res[k] = "******"
+				continue
+			}
+		}
+		res[k] = v
+	}
+	return res
 }
 
 // UpsertAgent creates or updates an agent configuration and persists it to ~/.xissue/config.yaml.
@@ -227,6 +246,14 @@ func (r *Runner) UpsertAgent(name string, ac config.AgentConfig) (*AgentStatus, 
 	if r.cfg.Agents == nil {
 		r.cfg.Agents = map[string]config.AgentConfig{}
 	}
+	oldAgent, existed := r.cfg.Agents[name]
+	if existed && oldAgent.Env != nil && ac.Env != nil {
+		for k, v := range ac.Env {
+			if v == "******" && oldAgent.Env[k] != "" {
+				ac.Env[k] = oldAgent.Env[k]
+			}
+		}
+	}
 	r.cfg.Agents[name] = ac
 	err := r.cfg.Save()
 	r.mu.Unlock()
@@ -243,7 +270,7 @@ func (r *Runner) UpsertAgent(name string, ac config.AgentConfig) (*AgentStatus, 
 		Name:         name,
 		Command:      ac.Command,
 		Args:         ac.Args,
-		Env:          ac.Env,
+		Env:          maskSensitiveEnv(ac.Env),
 		MemoryMB:     ac.MemoryMB,
 		DefaultModel: ac.DefaultModel,
 		Models:       ac.Models,
@@ -564,9 +591,12 @@ func (r *Runner) reserveActiveRun(runID, issueID int64) (*activeRun, bool) {
 	if r.active[runID] != nil {
 		return nil, false
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	act := &activeRun{
 		runID:     runID,
 		issueID:   issueID,
+		ctx:       ctx,
+		cancel:    cancel,
 		done:      make(chan struct{}),
 		perms:     map[string]chan string{},
 		openTools: map[string]string{},
@@ -735,16 +765,16 @@ func (r *Runner) settleOpenTools(act *activeRun, finalStatus string) {
 func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain.Issue, ac config.AgentConfig, prompt string, isResume bool) {
 	runID := act.runID
 	issueID := act.issueID
-	ctx, cancel := context.WithCancel(context.Background())
-	act.cancel = cancel
+	ctx := act.ctx
 	defer func() {
 		if rec := recover(); rec != nil {
 			r.settleOpenTools(act, "failed")
 			r.failRun(runID, issueID, fmt.Sprintf("agent runner panic: %v", rec))
 		}
-		cancel()
+		act.cancel()
 		r.mu.Lock()
 		delete(r.active, runID)
+		delete(r.allowSet, runID)
 		r.mu.Unlock()
 		close(act.done)
 	}()
@@ -755,6 +785,10 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 	}
 	if err := r.budget.acquire(ctx, memMB); err != nil {
 		r.setRunStatus(runID, issueID, domain.RunCancelled, false, true)
+		todo := domain.IssueTodo
+		if u, err := r.st.UpdateIssue(context.Background(), issueID, store.IssuePatch{Status: &todo}); err == nil {
+			r.notify.BroadcastIssueUpdated(u)
+		}
 		return
 	}
 	defer r.budget.release(memMB)
@@ -1021,7 +1055,19 @@ func (r *Runner) handlePermission(ctx context.Context, act *activeRun, req acp.P
 	for _, o := range req.Options {
 		if o.OptionID == chosen && o.Kind == "allow_always" {
 			r.mu.Lock()
-			r.allowSet[act.runID] = true
+			if r.allowSet[act.runID] == nil {
+				r.allowSet[act.runID] = map[string]bool{}
+			}
+			reqKind := ""
+			if req.ToolCall != nil {
+				if k, ok := req.ToolCall["kind"].(string); ok {
+					reqKind = strings.ToLower(k)
+				}
+			}
+			if reqKind == "" {
+				reqKind = "read"
+			}
+			r.allowSet[act.runID][reqKind] = true
 			r.mu.Unlock()
 		}
 	}
@@ -1037,7 +1083,7 @@ func (r *Runner) autoApproveOption(runID int64, kind, title string, tc map[strin
 	r.mu.Lock()
 	alwaysAsk := append([]string(nil), r.cfg.Permissions.AlwaysAskPatterns...)
 	autoAllow := append([]string(nil), r.cfg.Permissions.AutoAllowKinds...)
-	always := r.allowSet[runID]
+	allowedKinds := r.allowSet[runID]
 	r.mu.Unlock()
 
 	for _, pat := range alwaysAsk {
@@ -1046,7 +1092,10 @@ func (r *Runner) autoApproveOption(runID int64, kind, title string, tc map[strin
 		}
 	}
 
-	allowedKind := always
+	allowedKind := false
+	if allowedKinds != nil && (allowedKinds[strings.ToLower(kind)] || allowedKinds["*"]) {
+		allowedKind = true
+	}
 	if !allowedKind {
 		for _, k := range autoAllow {
 			if strings.EqualFold(k, kind) {
@@ -1260,6 +1309,16 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 		results = append(results, res)
 	}
 
+	hasFailures := false
+	succeededRepos := make(map[string]bool)
+	for _, res := range results {
+		if res.Error != "" {
+			hasFailures = true
+		} else if res.Commit != "" {
+			succeededRepos[res.RepoName] = true
+		}
+	}
+
 	if anyPushed {
 		st := domain.RunSubmitted
 		prState := ""
@@ -1294,16 +1353,42 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 		}
 		r.ExportIssueMarkdown(ctx, issue.ID)
 		_, _ = r.ArchiveRun(ctx, run.ID)
-		r.cleanupRunWorkdir(ctx, run, proj)
-		empty := ""
-		if u, err := r.st.UpdateRun(ctx, run.ID, store.RunUpdate{Workdir: &empty}); err == nil {
-			r.notify.BroadcastRunUpdated(u)
+
+		if !hasFailures {
+			r.cleanupRunWorkdir(ctx, run, proj)
+			empty := ""
+			if u, err := r.st.UpdateRun(ctx, run.ID, store.RunUpdate{Workdir: &empty}); err == nil {
+				r.notify.BroadcastRunUpdated(u)
+			}
+		} else {
+			// 部分仓库失败：仅清理已成功的 worktree，保留未提交/未推送的仓库工作区
+			r.cleanupSpecificRepoWorktrees(ctx, run, proj, succeededRepos)
+			for i := range results {
+				if results[i].Error != "" {
+					results[i].Error += fmt.Sprintf(" (未推送修改已保留在工作区: %s/%s)", run.Workdir, results[i].RepoName)
+				}
+			}
 		}
+
 		if firstPRURL != "" {
 			r.pushNotification("pr_status", fmt.Sprintf("[%s] PR 已创建 (Open)", issue.Key), firstPRURL, fmt.Sprintf("/issues/%d", issue.ID), "")
 		}
 	}
 	return results, nil
+}
+
+func (r *Runner) cleanupSpecificRepoWorktrees(ctx context.Context, run *domain.Run, proj *domain.Project, targetRepos map[string]bool) {
+	cctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	_ = ctx
+	for _, repo := range proj.Repos {
+		if targetRepos[repo.Name] {
+			mirror := filepath.Join(r.cfg.MirrorsDir(), fmt.Sprintf("repo-%d.git", repo.ID))
+			wt := filepath.Join(run.Workdir, repo.Name)
+			_ = gitx.RemoveWorktree(cctx, mirror, wt, run.Branch)
+			_ = os.RemoveAll(wt)
+		}
+	}
 }
 
 func (r *Runner) cleanupRunWorkdir(ctx context.Context, run *domain.Run, proj *domain.Project) {

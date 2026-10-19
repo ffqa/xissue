@@ -40,9 +40,20 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const init: RequestInit = { method, credentials: 'same-origin', headers: {} };
+  const headers: Record<string, string> = {
+    'X-XIssue': '1',
+  };
+  try {
+    const token = localStorage.getItem('xissue_token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch {
+    // ignore localStorage errors in non-browser env
+  }
+  const init: RequestInit = { method, credentials: 'same-origin', headers };
   if (body !== undefined) {
-    (init.headers as Record<string, string>)['Content-Type'] = 'application/json';
+    headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
   }
   let res: Response;

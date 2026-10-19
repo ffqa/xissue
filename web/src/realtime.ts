@@ -117,15 +117,29 @@ export function useRealtime(qc: QueryClient) {
     let stopped = false;
     let retry = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let watchdogTimer: ReturnType<typeof setInterval> | undefined;
     let everOpened = false;
+    let lastSeen = Date.now();
 
     const connect = () => {
       if (stopped) return;
       setWsState('connecting');
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      ws = new WebSocket(`${proto}://${location.host}/api/ws`);
+      let url = `${proto}://${location.host}/api/ws`;
+      try {
+        const token = localStorage.getItem('xissue_token');
+        if (token) {
+          url += `?token=${encodeURIComponent(token)}`;
+        }
+      } catch {
+        // ignore storage errors
+      }
+      ws = new WebSocket(url);
+      lastSeen = Date.now();
+
       ws.onopen = () => {
         retry = 0;
+        lastSeen = Date.now();
         setWsState('open');
         if (everOpened) {
           // 重连后补齐：已缓存的事件按 after=seq 增量拉取，其余数据刷新
@@ -134,6 +148,7 @@ export function useRealtime(qc: QueryClient) {
         everOpened = true;
       };
       ws.onmessage = (ev) => {
+        lastSeen = Date.now();
         try {
           handleMessage(qc, JSON.parse(ev.data) as WsMessage);
         } catch (e) {
@@ -148,10 +163,38 @@ export function useRealtime(qc: QueryClient) {
       };
       ws.onerror = () => ws?.close();
     };
+
     connect();
+
+    // 1. 心跳 Watchdog：若超过 45s 未收到任何通信，判定连接已半开挂死，主动重连
+    watchdogTimer = setInterval(() => {
+      if (stopped) return;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        if (Date.now() - lastSeen > 45000) {
+          console.warn('[xissue-ws] 心跳超时（>45s 无数据），主动重置连接');
+          ws.close();
+        }
+      }
+    }, 15000);
+
+    // 2. 页面可见性检测：从后台/休眠切回前台时，主动探测并复活连接
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && !stopped) {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          clearTimeout(timer);
+          connect();
+        } else {
+          qc.invalidateQueries();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
     return () => {
       stopped = true;
       clearTimeout(timer);
+      clearInterval(watchdogTimer);
+      document.removeEventListener('visibilitychange', onVisibility);
       ws?.close();
     };
   }, [qc]);

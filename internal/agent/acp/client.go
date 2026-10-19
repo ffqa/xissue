@@ -383,6 +383,9 @@ func (c *Client) failPending() {
 }
 
 func (c *Client) readLoop(r io.Reader) {
+	defer func() {
+		_ = recover()
+	}()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 1024*1024), 64*1024*1024)
 	for sc.Scan() {
@@ -415,12 +418,18 @@ func (c *Client) readLoop(r io.Reader) {
 }
 
 func (c *Client) stderrLoop(r io.Reader) {
+	defer func() {
+		_ = recover()
+	}()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for sc.Scan() {
 		h := c.handlers()
 		if h.OnEvent != nil {
-			h.OnEvent(Event{Type: "stderr", Data: map[string]any{"text": sc.Text()}})
+			func() {
+				defer func() { _ = recover() }()
+				h.OnEvent(Event{Type: "stderr", Data: map[string]any{"text": sc.Text()}})
+			}()
 		}
 	}
 }
@@ -435,6 +444,11 @@ func (c *Client) reply(id *json.RawMessage, result any, rerr *rpcError) {
 }
 
 func (c *Client) handleRequest(m rpcMsg) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			c.reply(m.ID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}, nil)
+		}
+	}()
 	switch m.Method {
 	case "session/request_permission":
 		var req PermissionRequest
@@ -455,6 +469,9 @@ func (c *Client) handleRequest(m rpcMsg) {
 }
 
 func (c *Client) handleNotification(m rpcMsg) {
+	defer func() {
+		_ = recover()
+	}()
 	h := c.handlers()
 	if m.Method != "session/update" || h.OnEvent == nil || c.suppress.Load() {
 		return

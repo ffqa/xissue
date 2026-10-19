@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/xpier/xissue/internal/domain"
 )
@@ -197,19 +198,23 @@ func GetPRDetails(ctx context.Context, prURL string) (*PRDetailInfo, error) {
 	}
 
 	for _, c := range raw.Comments {
+		t, _ := time.Parse(time.RFC3339, c.CreatedAt)
 		detail.Comments = append(detail.Comments, PRComment{
-			ID:     c.ID,
-			Author: c.Author.Login,
-			Body:   c.Body,
+			ID:        c.ID,
+			Author:    c.Author.Login,
+			Body:      c.Body,
+			CreatedAt: t,
 		})
 	}
 
 	for _, r := range raw.LatestReviews {
+		t, _ := time.Parse(time.RFC3339, r.SubmittedAt)
 		detail.LatestReviews = append(detail.LatestReviews, PRReview{
-			ID:     r.ID,
-			Author: r.Author.Login,
-			Body:   r.Body,
-			State:  strings.ToLower(r.State),
+			ID:          r.ID,
+			Author:      r.Author.Login,
+			Body:        r.Body,
+			State:       strings.ToLower(r.State),
+			SubmittedAt: t,
 		})
 	}
 

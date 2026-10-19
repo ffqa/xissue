@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -68,8 +69,19 @@ func (h *Hub) BroadcastNotification(n *domain.Notification) {
 }
 
 func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
+	patterns := []string{
+		"127.0.0.1:*",
+		"localhost:*",
+		"[::1]:*",
+	}
+	if host, _, err := net.SplitHostPort(r.Host); err == nil && host != "" {
+		patterns = append(patterns, host+":*", host)
+	} else if r.Host != "" {
+		patterns = append(patterns, r.Host+":*", r.Host)
+	}
+
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		InsecureSkipVerify: true, // local / Tailscale origins
+		OriginPatterns: patterns,
 	})
 	if err != nil {
 		return

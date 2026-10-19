@@ -3,11 +3,14 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -56,13 +59,70 @@ func (s *Server) Handler() http.Handler {
 	return s.authMiddleware(s.mux)
 }
 
+func isAllowedHost(hostHeader, listenAddr string) bool {
+	h := hostHeader
+	if host, _, err := net.SplitHostPort(hostHeader); err == nil {
+		h = host
+	}
+	h = strings.ToLower(strings.TrimSpace(h))
+	if h == "127.0.0.1" || h == "localhost" || h == "::1" {
+		return true
+	}
+	if listenAddr != "" {
+		lh := listenAddr
+		if host, _, err := net.SplitHostPort(listenAddr); err == nil {
+			lh = host
+		}
+		lh = strings.ToLower(strings.TrimSpace(lh))
+		if lh != "" && lh != "0.0.0.0" && lh != "::" && lh == h {
+			return true
+		}
+	}
+	return false
+}
+
+func isStateChanging(method string) bool {
+	return method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete || method == http.MethodPatch
+}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1. Host header validation (DNS Rebinding protection)
+		if !isAllowedHost(r.Host, s.cfg.Listen) {
+			http.Error(w, "forbidden: invalid host header", http.StatusForbidden)
+			return
+		}
+
+		// 2. CSRF & Cross-Site protection for state-changing endpoints
+		if isStateChanging(r.Method) && strings.HasPrefix(r.URL.Path, "/api/") {
+			// Check Origin header if present
+			if origin := r.Header.Get("Origin"); origin != "" {
+				u, err := url.Parse(origin)
+				if err != nil || !isAllowedHost(u.Host, s.cfg.Listen) {
+					http.Error(w, "forbidden: cross-origin request rejected", http.StatusForbidden)
+					return
+				}
+			}
+
+			// Require custom header X-XIssue or Authorization to block cross-site simple requests (forms/scripts)
+			authHeader := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			hasCustomHeader := r.Header.Get("X-XIssue") != ""
+			hasValidBearer := s.cfg.Token != "" && subtle.ConstantTimeCompare([]byte(authHeader), []byte(s.cfg.Token)) == 1
+
+			if !hasCustomHeader && !hasValidBearer {
+				http.Error(w, "forbidden: missing X-XIssue header for state-changing request", http.StatusForbidden)
+				return
+			}
+		}
+
+		// 3. Token-based authentication
 		if s.cfg.Token == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if q := r.URL.Query().Get("token"); q != "" && q == s.cfg.Token {
+
+		cfgToken := []byte(s.cfg.Token)
+		if q := r.URL.Query().Get("token"); q != "" && subtle.ConstantTimeCompare([]byte(q), cfgToken) == 1 {
 			http.SetCookie(w, &http.Cookie{
 				Name:     "xissue_token",
 				Value:    s.cfg.Token,
@@ -75,10 +135,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 				return
 			}
 		}
+
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			auth := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			cookie, _ := r.Cookie("xissue_token")
-			if auth != s.cfg.Token && (cookie == nil || cookie.Value != s.cfg.Token) {
+			authValid := subtle.ConstantTimeCompare([]byte(auth), cfgToken) == 1
+			cookieValid := cookie != nil && subtle.ConstantTimeCompare([]byte(cookie.Value), cfgToken) == 1
+			if !authValid && !cookieValid {
 				writeErr(w, http.StatusUnauthorized, errors.New("unauthorized"))
 				return
 			}
@@ -538,11 +601,20 @@ func (s *Server) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, issue)
 }
 
+func (s *Server) cancelIssueRuns(ctx context.Context, issueID int64) {
+	if runs, err := s.st.ListRuns(ctx, issueID); err == nil {
+		for _, run := range runs {
+			_ = s.runner.Cancel(run.ID)
+		}
+	}
+}
+
 func (s *Server) handleDeleteIssue(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
+	s.cancelIssueRuns(r.Context(), id)
 	if err := s.st.DeleteIssue(r.Context(), id); err != nil {
 		writeStoreErr(w, err)
 		return
@@ -557,6 +629,9 @@ func (s *Server) handleBatchDeleteIssues(w http.ResponseWriter, r *http.Request)
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
+	}
+	for _, id := range body.IDs {
+		s.cancelIssueRuns(r.Context(), id)
 	}
 	n, err := s.st.BatchDeleteIssues(r.Context(), body.IDs)
 	if err != nil {
@@ -974,7 +1049,12 @@ func (s *Server) handleBatchRunTodo(w http.ResponseWriter, r *http.Request) {
 		Agent string `json:"agent"`
 		Model string `json:"model"`
 	}
-	_ = readJSON(r, &body)
+	if r.Body != nil && r.ContentLength > 0 {
+		if err := readJSON(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+	}
 	runs, err := s.runner.BatchRunTodoIssues(r.Context(), pid, body.Agent, body.Model)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)

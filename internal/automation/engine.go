@@ -15,6 +15,7 @@ import (
 
 	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/provider"
+	"gopkg.in/yaml.v3"
 )
 
 // PREventContext is passed to Hook scripts and Plugins via stdin.
@@ -69,8 +70,8 @@ func MatchRule(rule domain.AutomationRule, comment *provider.PRComment, review *
 	}
 
 	// 2. Review state check
-	if cond.ReviewState != "" && review != nil {
-		if !strings.EqualFold(review.State, cond.ReviewState) {
+	if cond.ReviewState != "" {
+		if review == nil || !strings.EqualFold(review.State, cond.ReviewState) {
 			return false
 		}
 	}
@@ -204,6 +205,7 @@ func (e *Engine) runScriptWithPayload(ctx context.Context, scriptPath string, pa
 		cmd = exec.CommandContext(tctx, scriptPath)
 	}
 
+	cmd.Dir = filepath.Dir(scriptPath)
 	cmd.Stdin = bytes.NewReader(payloadBytes)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -306,14 +308,14 @@ func (e *Engine) ListPlugins() []domain.PluginInfo {
 		data, err := os.ReadFile(manifestFile)
 		if err == nil {
 			var m struct {
-				Name        string   `json:"name"`
-				Version     string   `json:"version"`
-				Description string   `json:"description"`
-				Author      string   `json:"author"`
-				Events      []string `json:"events"`
-				Enabled     *bool    `json:"enabled"`
+				Name        string   `yaml:"name" json:"name"`
+				Version     string   `yaml:"version" json:"version"`
+				Description string   `yaml:"description" json:"description"`
+				Author      string   `yaml:"author" json:"author"`
+				Events      []string `yaml:"events" json:"events"`
+				Enabled     *bool    `yaml:"enabled" json:"enabled"`
 			}
-			_ = json.Unmarshal(data, &m)
+			_ = yaml.Unmarshal(data, &m)
 			if m.Name != "" {
 				info.Name = m.Name
 			}
@@ -345,11 +347,12 @@ func (e *Engine) getPluginEntrypoint(manifestFile string) string {
 		return "run"
 	}
 	var m struct {
-		Entrypoint string `json:"entrypoint"`
+		Entrypoint string `yaml:"entrypoint" json:"entrypoint"`
 	}
-	_ = json.Unmarshal(data, &m)
-	if m.Entrypoint != "" {
-		return m.Entrypoint
+	_ = yaml.Unmarshal(data, &m)
+	ep := filepath.Clean(strings.TrimSpace(m.Entrypoint))
+	if ep != "" && !filepath.IsAbs(ep) && !strings.HasPrefix(ep, "..") {
+		return ep
 	}
 	return "run"
 }

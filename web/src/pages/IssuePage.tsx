@@ -837,16 +837,19 @@ function ReviewPane({
     queryKey: sel ? qk.file(run.id, sel.repoId, sel.path, 'base') : ['noop'],
     queryFn: () => api.file(run.id, sel!.repoId, sel!.path, 'base'),
     enabled: !!sel,
+    refetchOnWindowFocus: false,
   });
   const workQ = useQuery({
     queryKey: sel ? qk.file(run.id, sel.repoId, sel.path, 'work') : ['noop'],
     queryFn: () => api.file(run.id, sel!.repoId, sel!.path, 'work'),
     enabled: !!sel,
+    refetchOnWindowFocus: false,
   });
 
   const [draft, setDraft] = useState<string>('');
   const [dirty, setDirty] = useState(false);
   const listenerRef = useRef<{ dispose: () => void } | null>(null);
+  const lastSelRef = useRef<string>('');
 
   useEffect(() => {
     return () => {
@@ -855,8 +858,14 @@ function ReviewPane({
   }, []);
 
   useEffect(() => {
-    setDraft(workQ.data?.content ?? '');
-    setDirty(false);
+    const curKey = `${sel?.repoId}:${sel?.path}`;
+    const fileSwitched = lastSelRef.current !== curKey;
+    lastSelRef.current = curKey;
+
+    if (fileSwitched || !dirty) {
+      setDraft(workQ.data?.content ?? '');
+      setDirty(false);
+    }
   }, [workQ.data?.content, sel?.repoId, sel?.path]);
 
   const saveFile = useMutation({

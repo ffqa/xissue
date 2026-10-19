@@ -5,11 +5,14 @@ import (
 	"archive/zip"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -137,20 +140,48 @@ func handleBinaryUpdate(currentVer, exePath string, checkOnly bool) {
 		return
 	}
 
-	assetURL := findMatchingAssetURL(rel, runtime.GOOS, runtime.GOARCH)
+	assetName, assetURL := findMatchingAsset(rel, runtime.GOOS, runtime.GOARCH)
 	if assetURL == "" {
 		fmt.Printf("未找到适配 %s-%s 的发布包，请访问 %s 手动下载。\n",
 			runtime.GOOS, runtime.GOARCH, "https://github.com/ffqa/xissue/releases/latest")
 		return
 	}
 
-	fmt.Printf("正在从 %s 下载发布包...\n", assetURL)
+	fmt.Printf("正在从 %s 下载发布包 (%s)...\n", assetURL, assetName)
 	tmpArchive, err := downloadFile(assetURL)
 	if err != nil {
 		fmt.Printf("下载失败: %v\n", err)
 		return
 	}
 	defer os.Remove(tmpArchive)
+
+	// 完整性校验：下载 SHA256SUMS.txt 并校验包哈希
+	sumsURL := findSumsURL(rel)
+	if sumsURL != "" {
+		fmt.Println("正在获取 SHA256SUMS.txt 进行完整性校验...")
+		tmpSums, err := downloadFile(sumsURL)
+		if err != nil {
+			fmt.Printf("警告: 获取校验和文件失败: %v\n", err)
+		} else {
+			defer os.Remove(tmpSums)
+			sumsBytes, err := os.ReadFile(tmpSums)
+			if err == nil {
+				expectedSHA := parseChecksum(string(sumsBytes), assetName)
+				if expectedSHA != "" {
+					actualSHA, err := computeFileSHA256(tmpArchive)
+					if err != nil {
+						fmt.Printf("计算校验和失败: %v\n", err)
+						return
+					}
+					if !strings.EqualFold(actualSHA, expectedSHA) {
+						fmt.Printf("❌ 校验和不匹配！升级包已被篡改或下载不完整！\n  预期: %s\n  实际: %s\n", expectedSHA, actualSHA)
+						return
+					}
+					fmt.Printf("✓ 完整性校验通过 (SHA256: %s)\n", actualSHA)
+				}
+			}
+		}
+	}
 
 	// 确定安装目标路径：若 exePath 可写且不是只读临时路径，则替换它；否则默认 ~/.local/bin/xissue
 	targetBin := exePath
@@ -188,7 +219,17 @@ func handleBinaryUpdate(currentVer, exePath string, checkOnly bool) {
 func isNewerVersion(current, latest string) bool {
 	cParts := parseVersion(current)
 	lParts := parseVersion(latest)
-	for i := 0; i < len(cParts) && i < len(lParts); i++ {
+	maxLen := len(cParts)
+	if len(lParts) > maxLen {
+		maxLen = len(lParts)
+	}
+	for len(cParts) < maxLen {
+		cParts = append(cParts, 0)
+	}
+	for len(lParts) < maxLen {
+		lParts = append(lParts, 0)
+	}
+	for i := 0; i < maxLen; i++ {
 		if lParts[i] > cParts[i] {
 			return true
 		}
@@ -196,7 +237,7 @@ func isNewerVersion(current, latest string) bool {
 			return false
 		}
 	}
-	return len(lParts) > len(cParts)
+	return false
 }
 
 func parseVersion(v string) []int {
@@ -246,47 +287,107 @@ func fetchLatestRelease() (*githubRelease, error) {
 	return &rel, nil
 }
 
-func findMatchingAssetURL(rel *githubRelease, goos, goarch string) string {
+func findMatchingAsset(rel *githubRelease, goos, goarch string) (string, string) {
 	pattern := fmt.Sprintf("%s-%s", goos, goarch)
 	for _, asset := range rel.Assets {
 		name := strings.ToLower(asset.Name)
 		if strings.Contains(name, pattern) && (strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".zip")) {
+			return asset.Name, asset.BrowserDownloadURL
+		}
+	}
+	return "", ""
+}
+
+func findSumsURL(rel *githubRelease) string {
+	for _, asset := range rel.Assets {
+		if asset.Name == "SHA256SUMS.txt" {
 			return asset.BrowserDownloadURL
 		}
 	}
 	return ""
 }
 
-func downloadFile(url string) (string, error) {
+func parseChecksum(sumsContent, fileName string) string {
+	lines := strings.Split(sumsContent, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.Fields(line)
+		if len(parts) >= 2 {
+			sum := parts[0]
+			name := filepath.Base(parts[1])
+			if name == fileName || parts[1] == fileName {
+				return strings.ToLower(sum)
+			}
+		}
+	}
+	return ""
+}
+
+func computeFileSHA256(filePath string) (string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func isAllowedDownloadURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(u.Host)
+	return host == "github.com" || host == "objects.githubusercontent.com" || strings.HasSuffix(host, ".githubusercontent.com")
+}
+
+func downloadFile(downloadURL string) (string, error) {
+	if !isAllowedDownloadURL(downloadURL) {
+		return "", fmt.Errorf("安全拦截: 非信任下载域 %q", downloadURL)
+	}
+
 	tmp, err := os.CreateTemp("", "xissue-update-*")
 	if err != nil {
 		return "", err
 	}
+	tmpName := tmp.Name()
 	defer tmp.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
 	if err != nil {
+		_ = os.Remove(tmpName)
 		return "", err
 	}
 	req.Header.Set("User-Agent", "xissue-updater")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		_ = os.Remove(tmpName)
 		return "", err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		_ = os.Remove(tmpName)
 		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 
 	if _, err := io.Copy(tmp, resp.Body); err != nil {
+		_ = os.Remove(tmpName)
 		return "", err
 	}
-	return tmp.Name(), nil
+	return tmpName, nil
 }
 
 func extractAndInstallBinary(archivePath, targetBin string) error {

@@ -57,10 +57,14 @@ func lockFor(path string) *sync.Mutex {
 	return m.(*sync.Mutex)
 }
 
-// isLocalDir reports whether remote is an existing local directory.
-func isLocalDir(remote string) bool {
+// IsLocalDir reports whether remote is an existing local directory.
+func IsLocalDir(remote string) bool {
 	st, err := os.Stat(remote)
 	return err == nil && st.IsDir()
+}
+
+func isLocalDir(remote string) bool {
+	return IsLocalDir(remote)
 }
 
 // ensureLocalRepoHasCommit guarantees that an unborn local repository (just `git init` with no commits)
@@ -486,15 +490,28 @@ func MergeBranchToTarget(ctx context.Context, wtDir, mirrorPath, remoteURL, sour
 					if email, _ := Run(ctx, remoteURL, "config", "user.email"); email == "" {
 						args = append([]string{"-c", "user.name=xIssue", "-c", "user.email=xissue@localhost"}, args...)
 					}
-					_, _ = Run(ctx, remoteURL, args...)
+					if out, merr := Run(ctx, remoteURL, args...); merr != nil {
+						_, _ = Run(ctx, remoteURL, "merge", "--abort")
+						return headSHA, fmt.Errorf("合入 %s 失败 (存在冲突或工作区错误): %w, 输出: %s", targetBranch, merr, out)
+					}
 				}
 			} else {
-				// Working tree has uncommitted edits: force-branch or update ref if fast-forward
-				_, _ = Run(ctx, remoteURL, "branch", "-f", targetBranch, sourceBranch)
+				// Working tree has uncommitted edits: verify fast-forward ancestor relationship
+				if _, err := Run(ctx, remoteURL, "merge-base", "--is-ancestor", targetBranch, sourceBranch); err != nil {
+					return headSHA, fmt.Errorf("本地工作区有未提交修改且目标分支 %s 含有独立提交，无法直接合入，请先提交或手动处理", targetBranch)
+				}
+				if _, err := Run(ctx, remoteURL, "update-ref", fmt.Sprintf("refs/heads/%s", targetBranch), sourceBranch); err != nil {
+					return headSHA, fmt.Errorf("更新目标分支 %s 引用失败: %w", targetBranch, err)
+				}
 			}
 		} else {
-			// Checked out branch is different, directly point targetBranch to the new commit
-			_, _ = Run(ctx, remoteURL, "branch", "-f", targetBranch, sourceBranch)
+			// Checked out branch is different: verify ancestor before moving branch
+			if _, err := Run(ctx, remoteURL, "merge-base", "--is-ancestor", targetBranch, sourceBranch); err != nil {
+				return headSHA, fmt.Errorf("目标分支 %s 包含独立提交，无法直接 fast-forward 覆盖，请在本地检出后手动合并", targetBranch)
+			}
+			if _, err := Run(ctx, remoteURL, "branch", "-f", targetBranch, sourceBranch); err != nil {
+				return headSHA, fmt.Errorf("更新目标分支 %s 失败: %w", targetBranch, err)
+			}
 		}
 
 		// Also update mirror's ref

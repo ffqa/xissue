@@ -818,9 +818,21 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 		repo, _ = r.st.GetRepo(ctx, *issue.RepoID)
 	}
 
-	workdir := run.Workdir
-	if workdir == "" && repo != nil {
-		workdir = r.mirrorPath(repo.ID)
+	// 优先定位真实本地仓库工作区，若为空才回退到 run.Workdir
+	workdir := ""
+	if repo != nil && gitx.IsLocalDir(repo.RemoteURL) {
+		workdir = repo.RemoteURL
+	}
+	if workdir == "" && project != nil {
+		for _, rp := range project.Repos {
+			if gitx.IsLocalDir(rp.RemoteURL) {
+				workdir = rp.RemoteURL
+				break
+			}
+		}
+	}
+	if workdir == "" {
+		workdir = run.Workdir
 	}
 
 	merged := false
@@ -852,9 +864,13 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 		// Layer 1: Rules
 		actions := r.automation.EvaluateRules(project.AutomationRules, "pr_comment", &comment, nil)
 
-		// Layer 2: Project Hooks
-		if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
-			actions = append(actions, hookActions...)
+		// Layer 2: Project Hooks (安全门控: 仅受信任人员允许触发本地外部脚本执行，防止恶意外部评论 RCE)
+		if isTrustedAuthor(comment.Author, prDetail.Author, project.AutomationRules) {
+			if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
+				actions = append(actions, hookActions...)
+			}
+		} else {
+			r.LogMonitor("WARN", "automation", fmt.Sprintf("评论作者 @%s 非信任人员，根据安全规则阻断 Layer 2 本地 Hooks 执行", comment.Author))
 		}
 
 		// Layer 3: Plugins
@@ -901,9 +917,13 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 		// Layer 1: Rules
 		actions := r.automation.EvaluateRules(project.AutomationRules, "pr_review", nil, &review)
 
-		// Layer 2: Hooks
-		if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
-			actions = append(actions, hookActions...)
+		// Layer 2: Hooks (安全门控)
+		if isTrustedAuthor(review.Author, prDetail.Author, project.AutomationRules) {
+			if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
+				actions = append(actions, hookActions...)
+			}
+		} else {
+			r.LogMonitor("WARN", "automation", fmt.Sprintf("Review 作者 @%s 非信任人员，根据安全规则阻断 Layer 2 本地 Hooks 执行", review.Author))
 		}
 
 		// Layer 3: Plugins
@@ -994,8 +1014,43 @@ func (r *Runner) DetectProjectHooks(ctx context.Context, projectID int64) []doma
 	if err != nil || len(repos) == 0 {
 		return automation.DetectHooks("")
 	}
+	// 优先在本地工作树目录检测
+	for _, repo := range repos {
+		if gitx.IsLocalDir(repo.RemoteURL) {
+			hooks := automation.DetectHooks(repo.RemoteURL)
+			for _, h := range hooks {
+				if h.Exists && h.Executable {
+					return hooks
+				}
+			}
+		}
+	}
+	for _, repo := range repos {
+		if gitx.IsLocalDir(repo.RemoteURL) {
+			return automation.DetectHooks(repo.RemoteURL)
+		}
+	}
 	mirror := r.mirrorPath(repos[0].ID)
 	return automation.DetectHooks(mirror)
+}
+
+func isTrustedAuthor(author, prAuthor string, rules []domain.AutomationRule) bool {
+	author = strings.TrimSpace(author)
+	if author == "" {
+		return false
+	}
+	if prAuthor != "" && strings.EqualFold(author, prAuthor) {
+		return true
+	}
+	for _, rule := range rules {
+		if rule.Conditions.Author != "" {
+			clean := strings.TrimPrefix(strings.TrimSpace(rule.Conditions.Author), "@")
+			if clean != "" && strings.EqualFold(author, clean) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ListPlugins returns installed ecosystem plugins.

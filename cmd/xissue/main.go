@@ -71,17 +71,20 @@ func main() {
 	}
 
 	if flag.NArg() > 0 && flag.Arg(0) == "mcp" {
-		if flag.NArg() > 1 && flag.Arg(1) == "install" {
-			exe, _ := os.Executable()
-			if exe == "" {
-				exe = "xissue"
+		if flag.NArg() > 1 {
+			sub := strings.ToLower(strings.TrimLeft(flag.Arg(1), "-"))
+			if sub == "install" || sub == "i" {
+				exe, _ := os.Executable()
+				if exe == "" {
+					exe = "xissue"
+				}
+				installed, err := server.InstallMCPTargets(exe, nil)
+				if err != nil {
+					log.Fatalf("mcp install: %v", err)
+				}
+				fmt.Printf("Installed xIssue MCP (%s mcp) into: %s\n", exe, strings.Join(installed, ", "))
+				return
 			}
-			installed, err := server.InstallMCPTargets(exe, nil)
-			if err != nil {
-				log.Fatalf("mcp install: %v", err)
-			}
-			fmt.Printf("Installed xIssue MCP (%s mcp) into: %s\n", exe, strings.Join(installed, ", "))
-			return
 		}
 		runMCPStdio(cfg)
 		return

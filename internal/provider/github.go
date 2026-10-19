@@ -101,3 +101,34 @@ func (github) CreatePR(ctx context.Context, repo domain.Repo, head, base, title,
 	}
 	return strings.TrimSpace(string(b)), nil
 }
+
+// CheckPRStatus queries the current state ("open", "merged", "closed") of a PR by URL.
+// Works even for PRs opened against upstream or third-party repositories.
+func CheckPRStatus(ctx context.Context, prURL string) (state string, title string, err error) {
+	prURL = strings.TrimSpace(prURL)
+	if prURL == "" {
+		return "", "", fmt.Errorf("empty pr url")
+	}
+	b, err := gh(ctx, "pr", "view", prURL, "--json", "state,mergedAt,title")
+	if err != nil {
+		return "", "", err
+	}
+	var res struct {
+		State    string `json:"state"`
+		MergedAt string `json:"mergedAt"`
+		Title    string `json:"title"`
+	}
+	if err := json.Unmarshal(b, &res); err != nil {
+		return "", "", err
+	}
+	st := strings.ToUpper(strings.TrimSpace(res.State))
+	switch {
+	case st == "MERGED" || res.MergedAt != "":
+		return "merged", res.Title, nil
+	case st == "CLOSED":
+		return "closed", res.Title, nil
+	default:
+		return "open", res.Title, nil
+	}
+}
+

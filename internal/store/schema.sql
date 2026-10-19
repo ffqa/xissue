@@ -45,18 +45,23 @@ CREATE TABLE IF NOT EXISTS comments (
 );
 
 CREATE TABLE IF NOT EXISTS runs (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    issue_id   INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    agent      TEXT NOT NULL,
-    status     TEXT NOT NULL,
-    branch     TEXT NOT NULL DEFAULT '',
-    workdir    TEXT NOT NULL DEFAULT '',
-    session_id TEXT NOT NULL DEFAULT '',
-    summary    TEXT NOT NULL DEFAULT '',
-    error      TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL,
-    started_at TEXT,
-    ended_at   TEXT
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_id      INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    agent         TEXT NOT NULL,
+    model         TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL,
+    branch        TEXT NOT NULL DEFAULT '',
+    target_branch TEXT NOT NULL DEFAULT '',
+    workdir       TEXT NOT NULL DEFAULT '',
+    session_id    TEXT NOT NULL DEFAULT '',
+    summary       TEXT NOT NULL DEFAULT '',
+    error         TEXT NOT NULL DEFAULT '',
+    pr_url        TEXT NOT NULL DEFAULT '',
+    pr_state      TEXT NOT NULL DEFAULT '',
+    change_record TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL,
+    started_at    TEXT,
+    ended_at      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_runs_issue ON runs(issue_id);
 
@@ -69,3 +74,28 @@ CREATE TABLE IF NOT EXISTS run_events (
     created_at TEXT NOT NULL,
     UNIQUE(run_id, seq)
 );
+
+CREATE TABLE IF NOT EXISTS branch_watches (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id   INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    repo_id      INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+    branch       TEXT NOT NULL,
+    last_sha     TEXT NOT NULL DEFAULT '',
+    last_message TEXT NOT NULL DEFAULT '',
+    last_author  TEXT NOT NULL DEFAULT '',
+    updated_at   TEXT NOT NULL,
+    UNIQUE(repo_id, branch)
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind       TEXT NOT NULL,
+    title      TEXT NOT NULL,
+    body       TEXT NOT NULL DEFAULT '',
+    link       TEXT NOT NULL DEFAULT '',
+    meta       TEXT NOT NULL DEFAULT '',
+    read       INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(id DESC);
+

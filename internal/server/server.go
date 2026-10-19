@@ -4,9 +4,13 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/xpier/xissue/internal/config"
 	"github.com/xpier/xissue/internal/domain"
@@ -16,7 +20,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.1.0"
+const Version = "0.2.1"
 
 type Server struct {
 	cfg    *config.Config
@@ -38,6 +42,12 @@ func New(cfg *config.Config, st *store.Store) *Server {
 	}
 	s.routes()
 	return s
+}
+
+func (s *Server) Shutdown() {
+	if s.runner != nil {
+		s.runner.Shutdown()
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -78,7 +88,12 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /api/health", s.handleHealth)
+	m.HandleFunc("POST /api/restart", s.handleRestart)
 	m.HandleFunc("GET /api/agents", s.handleAgents)
+	m.HandleFunc("POST /api/agents/reload", s.handleReloadAgents)
+	m.HandleFunc("PUT /api/agents/{name}", s.handleUpsertAgent)
+	m.HandleFunc("DELETE /api/agents/{name}", s.handleDeleteAgent)
+	m.HandleFunc("GET /api/agents/{name}/models", s.handleAgentModels)
 	m.HandleFunc("GET /api/ws", s.hub.serveWS)
 	m.HandleFunc("GET /api/fs/browse", s.handleBrowseDir)
 	m.HandleFunc("GET /api/fs/inspect", s.handleInspectDir)
@@ -105,15 +120,35 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/issues/{id}/runs", s.handleListRuns)
 	m.HandleFunc("POST /api/issues/{id}/runs", s.handleStartRun)
 	m.HandleFunc("GET /api/runs/{id}", s.handleGetRun)
+	m.HandleFunc("DELETE /api/runs/{id}", s.handleDeleteRun)
 	m.HandleFunc("GET /api/runs/{id}/events", s.handleListEvents)
 	m.HandleFunc("POST /api/runs/{id}/message", s.handleSendMessage)
 	m.HandleFunc("POST /api/runs/{id}/permissions/{requestId}", s.handlePermission)
 	m.HandleFunc("POST /api/runs/{id}/cancel", s.handleCancelRun)
 	m.HandleFunc("GET /api/runs/{id}/changes", s.handleRunChanges)
+	m.HandleFunc("GET /api/runs/{id}/archive", s.handleGetRunArchive)
 	m.HandleFunc("GET /api/runs/{id}/file", s.handleReadFile)
 	m.HandleFunc("PUT /api/runs/{id}/file", s.handleWriteFile)
 	m.HandleFunc("POST /api/runs/{id}/submit", s.handleSubmitRun)
 	m.HandleFunc("POST /api/runs/{id}/discard", s.handleDiscardRun)
+
+	m.HandleFunc("POST /api/mcp", s.handleMCP)
+	m.HandleFunc("GET /api/mcp/status", s.handleMCPStatus)
+	m.HandleFunc("POST /api/mcp/install", s.handleMCPInstall)
+
+	m.HandleFunc("GET /api/notifications", s.handleListNotifications)
+	m.HandleFunc("POST /api/notifications/{id}/read", s.handleMarkNotificationRead)
+	m.HandleFunc("POST /api/notifications/read-all", s.handleMarkAllNotificationsRead)
+
+	m.HandleFunc("GET /api/projects/{id}/watches", s.handleListWatches)
+	m.HandleFunc("POST /api/projects/{id}/watches", s.handleAddWatch)
+	m.HandleFunc("DELETE /api/projects/{id}/watches/{watchId}", s.handleDeleteWatch)
+	m.HandleFunc("POST /api/projects/{id}/check-watches", s.handleCheckWatches)
+	m.HandleFunc("POST /api/projects/{id}/batch-run", s.handleBatchRunTodo)
+	m.HandleFunc("POST /api/projects/{id}/cherry-pick", s.handleCherryPick)
+
+	m.HandleFunc("GET /api/repos/{repoId}/branches", s.handleRepoBranches)
+	m.HandleFunc("GET /api/repos/{repoId}/commits", s.handleRepoCommits)
 
 	m.Handle("/", spaHandler())
 }
@@ -128,8 +163,70 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"restarting": true})
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		s.Shutdown()
+		_ = s.st.Close()
+		// When running under launchd/systemd KeepAlive, exiting is enough,
+		// while execSelf also seamlessly replaces the process in foreground terminals.
+		if exe, err := os.Executable(); err == nil {
+			execSelf(exe)
+		}
+		os.Exit(0)
+	}()
+}
+
 func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.runner.ListAgents())
+}
+
+func (s *Server) handleReloadAgents(w http.ResponseWriter, r *http.Request) {
+	list, err := s.runner.ReloadAgents()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleUpsertAgent(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var body config.AgentConfig
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	st, err := s.runner.UpsertAgent(name, body)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if err := s.runner.DeleteAgent(name); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleAgentModels(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	refresh := r.URL.Query().Get("refresh") == "1"
+	res, err := s.runner.ListAgentModels(r.Context(), name, refresh)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) handleBrowseDir(w http.ResponseWriter, r *http.Request) {
@@ -486,13 +583,14 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Agent  string `json:"agent"`
+		Model  string `json:"model"`
 		Prompt string `json:"prompt"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	run, err := s.runner.StartRun(r.Context(), issueID, body.Agent, body.Prompt)
+	run, err := s.runner.StartRun(r.Context(), issueID, body.Agent, body.Model, body.Prompt)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
@@ -591,6 +689,25 @@ func (s *Server) handleRunChanges(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ch)
 }
 
+func (s *Server) handleGetRunArchive(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	dir, err := s.runner.ArchiveRun(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	analysisBytes, _ := os.ReadFile(filepath.Join(dir, "analysis.md"))
+	eventsBytes, _ := os.ReadFile(filepath.Join(dir, "events.log"))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"dir":      dir,
+		"analysis": string(analysisBytes),
+		"events":   string(eventsBytes),
+	})
+}
+
 func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "id")
 	if !ok {
@@ -661,6 +778,188 @@ func (s *Server) handleDiscardRun(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.runner.Delete(r.Context(), id); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	list, err := s.st.ListNotifications(r.Context(), limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleMarkNotificationRead(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.st.MarkNotificationRead(r.Context(), id); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleMarkAllNotificationsRead(w http.ResponseWriter, r *http.Request) {
+	if err := s.st.MarkAllNotificationsRead(r.Context()); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListWatches(w http.ResponseWriter, r *http.Request) {
+	pid, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	list, err := s.st.ListBranchWatches(r.Context(), pid)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleAddWatch(w http.ResponseWriter, r *http.Request) {
+	pid, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var body struct {
+		RepoID int64  `json:"repoId"`
+		Branch string `json:"branch"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	bw, err := s.runner.AddBranchWatch(r.Context(), pid, body.RepoID, body.Branch)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, bw)
+}
+
+func (s *Server) handleDeleteWatch(w http.ResponseWriter, r *http.Request) {
+	pid, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	wid, ok := pathID(w, r, "watchId")
+	if !ok {
+		return
+	}
+	if err := s.st.DeleteBranchWatch(r.Context(), pid, wid); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleCheckWatches(w http.ResponseWriter, r *http.Request) {
+	pid, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	watchesTriggered, prsUpdated, err := s.runner.CheckWatchesAndPRs(r.Context(), pid)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"watchesTriggered": watchesTriggered,
+		"prsUpdated":       prsUpdated,
+	})
+}
+
+func (s *Server) handleBatchRunTodo(w http.ResponseWriter, r *http.Request) {
+	pid, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var body struct {
+		Agent string `json:"agent"`
+		Model string `json:"model"`
+	}
+	_ = readJSON(r, &body)
+	runs, err := s.runner.BatchRunTodoIssues(r.Context(), pid, body.Agent, body.Model)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"started": len(runs),
+		"runs":    runs,
+	})
+}
+
+func (s *Server) handleRepoBranches(w http.ResponseWriter, r *http.Request) {
+	repoID, ok := pathID(w, r, "repoId")
+	if !ok {
+		return
+	}
+	branches, err := s.runner.ListRepoBranches(r.Context(), repoID)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if branches == nil {
+		branches = []string{}
+	}
+	writeJSON(w, http.StatusOK, branches)
+}
+
+func (s *Server) handleRepoCommits(w http.ResponseWriter, r *http.Request) {
+	repoID, ok := pathID(w, r, "repoId")
+	if !ok {
+		return
+	}
+	branch := r.URL.Query().Get("branch")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	commits, err := s.runner.ListRepoCommits(r.Context(), repoID, branch, limit)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if commits == nil {
+		commits = []gitx.CommitInfo{}
+	}
+	writeJSON(w, http.StatusOK, commits)
+}
+
+func (s *Server) handleCherryPick(w http.ResponseWriter, r *http.Request) {
+	pid, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	var req runner.CherryPickRequest
+	if err := readJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	req.ProjectID = pid
+	res, err := s.runner.CherryPick(r.Context(), req)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 // ---------- helpers ----------
 
 func pathID(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
@@ -677,13 +976,20 @@ func readJSON(r *http.Request, out any) error {
 		return nil
 	}
 	defer r.Body.Close()
-	return json.NewDecoder(r.Body).Decode(out)
+	return json.NewDecoder(io.LimitReader(r.Body, 10<<20)).Decode(out)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"json marshal error"}` + "\n"))
+		return
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_, _ = w.Write(append(b, '\n'))
 }
 
 func writeErr(w http.ResponseWriter, status int, err error) {

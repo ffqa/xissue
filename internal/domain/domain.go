@@ -69,6 +69,8 @@ type Issue struct {
 	Status       IssueStatus `json:"status"`
 	ActiveRunID  *int64      `json:"activeRunId"`
 	Awaiting     bool        `json:"awaiting"`
+	PRURL        string      `json:"prUrl"`
+	PRState      string      `json:"prState"` // "" | "open" | "merged" | "closed"
 	CreatedAt    time.Time   `json:"createdAt"`
 	UpdatedAt    time.Time   `json:"updatedAt"`
 }
@@ -101,18 +103,23 @@ func (s RunStatus) Active() bool {
 }
 
 type Run struct {
-	ID        int64      `json:"id"`
-	IssueID   int64      `json:"issueId"`
-	Agent     string     `json:"agent"`
-	Status    RunStatus  `json:"status"`
-	Branch    string     `json:"branch"`
-	Workdir   string     `json:"workdir"`
-	SessionID string     `json:"sessionId"`
-	Summary   string     `json:"summary"`
-	Error     string     `json:"error"`
-	CreatedAt time.Time  `json:"createdAt"`
-	StartedAt *time.Time `json:"startedAt"`
-	EndedAt   *time.Time `json:"endedAt"`
+	ID           int64      `json:"id"`
+	IssueID      int64      `json:"issueId"`
+	Agent        string     `json:"agent"`
+	Model        string     `json:"model"`
+	Status       RunStatus  `json:"status"`
+	Branch       string     `json:"branch"`
+	TargetBranch string     `json:"targetBranch"`
+	Workdir      string     `json:"workdir"`
+	SessionID    string     `json:"sessionId"`
+	Summary      string     `json:"summary"`
+	Error        string     `json:"error"`
+	PRURL        string     `json:"prUrl"`
+	PRState      string     `json:"prState"`
+	ChangeRecord string     `json:"changeRecord"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	StartedAt    *time.Time `json:"startedAt"`
+	EndedAt      *time.Time `json:"endedAt"`
 }
 
 type RunEvent struct {
@@ -123,3 +130,27 @@ type RunEvent struct {
 	Data      json.RawMessage `json:"data"`
 	CreatedAt time.Time       `json:"createdAt"`
 }
+
+type BranchWatch struct {
+	ID          int64     `json:"id"`
+	ProjectID   int64     `json:"projectId"`
+	RepoID      int64     `json:"repoId"`
+	RepoName    string    `json:"repoName"`
+	Branch      string    `json:"branch"`
+	LastSHA     string    `json:"lastSha"`
+	LastMessage string    `json:"lastMessage"`
+	LastAuthor  string    `json:"lastAuthor"`
+	UpdatedAt   time.Time `json:"updatedAt"`
+}
+
+type Notification struct {
+	ID        int64     `json:"id"`
+	Kind      string    `json:"kind"` // pr_status | branch_push | run_done | permission
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`
+	Link      string    `json:"link"`
+	Meta      string    `json:"meta"`
+	Read      bool      `json:"read"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+

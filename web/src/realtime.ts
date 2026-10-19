@@ -1,7 +1,8 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { QueryClient } from '@tanstack/react-query';
 import { api, qk } from './api';
-import type { Issue, Run, RunEvent, WsMessage } from './types';
+import { toast } from './toast';
+import type { Issue, Notification, Run, RunEvent, WsMessage } from './types';
 
 /** 合并事件：按 seq 去重并排序 */
 export function mergeEvents(old: RunEvent[] | undefined, incoming: RunEvent[]): RunEvent[] {
@@ -94,6 +95,16 @@ function handleMessage(qc: QueryClient, msg: WsMessage) {
       qc.setQueryData(qk.issue(issue.id), issue);
       qc.setQueryData<Issue[]>(qk.issues(issue.projectId), (old) => upsertById(old, issue));
       qc.invalidateQueries({ queryKey: qk.issues(issue.projectId) });
+      break;
+    }
+    case 'notification': {
+      const n: Notification = msg.notification;
+      qc.setQueryData<Notification[]>(qk.notifications, (old) => (old ? [n, ...old] : [n]));
+      qc.invalidateQueries({ queryKey: qk.notifications });
+      if (n.kind === 'branch_push') {
+        qc.invalidateQueries({ queryKey: ['watches'] });
+      }
+      toast.info(`🔔 ${n.title}`);
       break;
     }
   }

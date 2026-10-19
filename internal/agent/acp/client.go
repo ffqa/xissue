@@ -73,6 +73,13 @@ type rpcError struct {
 
 func (e *rpcError) Error() string { return fmt.Sprintf("acp error %d: %s", e.Code, e.Message) }
 
+// ModelOption describes one selectable model exposed by the agent via ACP configOptions.
+type ModelOption struct {
+	Value    string `json:"value"`    // e.g. "google/gemini-2.5-flash"
+	Name     string `json:"name"`     // display name
+	Provider string `json:"provider"` // prefix before '/'
+}
+
 // Client is one running agent process with (at most) one active session.
 type Client struct {
 	cmd      *exec.Cmd
@@ -81,6 +88,7 @@ type Client struct {
 	nextID   atomic.Int64
 	pendMu   sync.Mutex
 	pending  map[int64]chan rpcMsg
+	hMu      sync.RWMutex
 	h        Handlers
 	done     chan struct{}
 	exitErr  error
@@ -91,6 +99,8 @@ type Client struct {
 	SessionID    string
 	CanLoad      bool
 	AgentInfo    map[string]any
+	CurrentModel string
+	ModelOptions []ModelOption
 }
 
 // Start spawns the agent and performs the ACP initialize handshake.
@@ -157,15 +167,57 @@ func Start(ctx context.Context, o Options, h Handlers) (*Client, error) {
 	return c, nil
 }
 
+type rawConfigOption struct {
+	ID           string `json:"id"`
+	Category     string `json:"category"`
+	CurrentValue string `json:"currentValue"`
+	Options      []struct {
+		Value string `json:"value"`
+		Name  string `json:"name"`
+	} `json:"options"`
+}
+
+func (c *Client) parseConfigOptions(opts []rawConfigOption) {
+	for _, o := range opts {
+		if o.ID == "model" || o.Category == "model" {
+			c.CurrentModel = o.CurrentValue
+			models := make([]ModelOption, 0, len(o.Options))
+			for _, item := range o.Options {
+				val := strings.TrimSpace(item.Value)
+				if val == "" {
+					continue
+				}
+				prov := "default"
+				if idx := strings.IndexByte(val, '/'); idx > 0 {
+					prov = val[:idx]
+				}
+				name := strings.TrimSpace(item.Name)
+				if name == "" {
+					name = val
+				}
+				models = append(models, ModelOption{
+					Value:    val,
+					Name:     name,
+					Provider: prov,
+				})
+			}
+			c.ModelOptions = models
+			return
+		}
+	}
+}
+
 // NewSession creates a fresh session rooted at cwd.
 func (c *Client) NewSession(ctx context.Context, cwd string) error {
 	var res struct {
-		SessionID string `json:"sessionId"`
+		SessionID     string            `json:"sessionId"`
+		ConfigOptions []rawConfigOption `json:"configOptions"`
 	}
 	if err := c.call(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}}, &res); err != nil {
 		return err
 	}
 	c.SessionID = res.SessionID
+	c.parseConfigOptions(res.ConfigOptions)
 	return nil
 }
 
@@ -176,10 +228,34 @@ func (c *Client) LoadSession(ctx context.Context, cwd, sessionID string) error {
 	}
 	c.suppress.Store(true)
 	defer c.suppress.Store(false)
-	if err := c.call(ctx, "session/load", map[string]any{"sessionId": sessionID, "cwd": cwd, "mcpServers": []any{}}, nil); err != nil {
+	var res struct {
+		ConfigOptions []rawConfigOption `json:"configOptions"`
+	}
+	if err := c.call(ctx, "session/load", map[string]any{"sessionId": sessionID, "cwd": cwd, "mcpServers": []any{}}, &res); err != nil {
 		return err
 	}
 	c.SessionID = sessionID
+	c.parseConfigOptions(res.ConfigOptions)
+	return nil
+}
+
+// SetModel switches the session's active model via ACP session/set_config_option.
+func (c *Client) SetModel(ctx context.Context, model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil
+	}
+	var res struct {
+		ConfigOptions []rawConfigOption `json:"configOptions"`
+	}
+	if err := c.call(ctx, "session/set_config_option", map[string]any{
+		"sessionId": c.SessionID,
+		"configId":  "model",
+		"value":     model,
+	}, &res); err != nil {
+		return err
+	}
+	c.parseConfigOptions(res.ConfigOptions)
 	return nil
 }
 
@@ -193,6 +269,32 @@ func (c *Client) Prompt(ctx context.Context, text string) (string, error) {
 		"prompt":    []any{map[string]any{"type": "text", "text": text}},
 	}, &res)
 	return res.StopReason, err
+}
+
+// SetHandlers updates the event and permission callbacks (used when reusing a warm Client across turns).
+func (c *Client) SetHandlers(h Handlers) {
+	c.hMu.Lock()
+	c.h = h
+	c.hMu.Unlock()
+}
+
+func (c *Client) handlers() Handlers {
+	c.hMu.RLock()
+	defer c.hMu.RUnlock()
+	return c.h
+}
+
+// Alive reports whether the underlying agent process is still running.
+func (c *Client) Alive() bool {
+	if c == nil {
+		return false
+	}
+	select {
+	case <-c.done:
+		return false
+	default:
+		return true
+	}
 }
 
 // Cancel asks the agent to stop the current turn.
@@ -316,8 +418,9 @@ func (c *Client) stderrLoop(r io.Reader) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for sc.Scan() {
-		if c.h.OnEvent != nil {
-			c.h.OnEvent(Event{Type: "stderr", Data: map[string]any{"text": sc.Text()}})
+		h := c.handlers()
+		if h.OnEvent != nil {
+			h.OnEvent(Event{Type: "stderr", Data: map[string]any{"text": sc.Text()}})
 		}
 	}
 }
@@ -337,8 +440,9 @@ func (c *Client) handleRequest(m rpcMsg) {
 		var req PermissionRequest
 		_ = json.Unmarshal(m.Params, &req)
 		optionID := ""
-		if c.h.OnPermission != nil {
-			optionID = c.h.OnPermission(c.ctx, req)
+		h := c.handlers()
+		if h.OnPermission != nil {
+			optionID = h.OnPermission(c.ctx, req)
 		}
 		if optionID == "" {
 			c.reply(m.ID, map[string]any{"outcome": map[string]any{"outcome": "cancelled"}}, nil)
@@ -351,7 +455,8 @@ func (c *Client) handleRequest(m rpcMsg) {
 }
 
 func (c *Client) handleNotification(m rpcMsg) {
-	if m.Method != "session/update" || c.h.OnEvent == nil || c.suppress.Load() {
+	h := c.handlers()
+	if m.Method != "session/update" || h.OnEvent == nil || c.suppress.Load() {
 		return
 	}
 	var p struct {
@@ -365,20 +470,20 @@ func (c *Client) handleNotification(m rpcMsg) {
 	switch kind {
 	case "agent_message_chunk":
 		if t := contentText(u["content"]); t != "" {
-			c.h.OnEvent(Event{Type: "message", Data: map[string]any{"text": t}})
+			h.OnEvent(Event{Type: "message", Data: map[string]any{"text": t}})
 		}
 	case "agent_thought_chunk":
 		if t := contentText(u["content"]); t != "" {
-			c.h.OnEvent(Event{Type: "thought", Data: map[string]any{"text": t}})
+			h.OnEvent(Event{Type: "thought", Data: map[string]any{"text": t}})
 		}
 	case "tool_call":
 		delete(u, "sessionUpdate")
-		c.h.OnEvent(Event{Type: "tool_call", Data: u})
+		h.OnEvent(Event{Type: "tool_call", Data: u})
 	case "tool_call_update":
 		delete(u, "sessionUpdate")
-		c.h.OnEvent(Event{Type: "tool_call_update", Data: u})
+		h.OnEvent(Event{Type: "tool_call_update", Data: u})
 	case "plan":
-		c.h.OnEvent(Event{Type: "plan", Data: map[string]any{"entries": u["entries"]}})
+		h.OnEvent(Event{Type: "plan", Data: map[string]any{"entries": u["entries"]}})
 	}
 }
 

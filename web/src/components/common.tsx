@@ -28,11 +28,13 @@ export function Modal({
   onClose,
   children,
   footer,
+  size = 'md',
 }: {
   title: ReactNode;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  size?: 'md' | 'lg' | 'xl';
 }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -41,7 +43,7 @@ export function Modal({
   }, [onClose]);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog">
+      <div className={`modal modal-${size}`} role="dialog">
         <div className="modal-h">
           <h2 className="grow">{title}</h2>
           <button className="ghost sm" onClick={onClose}>
@@ -98,6 +100,11 @@ export function RunStatusTag({ status }: { status: string }) {
 }
 
 export function editorUrl(template: string | undefined, absPath: string): string | null {
-  if (!template) return null;
-  return template.replace('{path}', absPath);
+  if (!template || !absPath) return null;
+  const encoded = absPath
+    .split('/')
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+  return template.replace('{path}', encoded);
 }
+

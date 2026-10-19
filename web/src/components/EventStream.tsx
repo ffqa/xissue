@@ -53,11 +53,26 @@ export interface BuiltView {
   pendingPerms: PermItem[];
 }
 
+const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'submitted', 'discarded']);
+
 export function buildView(events: RunEvent[]): BuiltView {
   const items: Item[] = [];
   const tools = new Map<string, ToolItem>();
   const perms = new Map<string, PermItem>();
   let plan: PlanEntry[] | null = null;
+
+  const settleOpenToolsAndPerms = (finalToolStatus: 'completed' | 'failed') => {
+    for (const t of tools.values()) {
+      if (t.status === 'in_progress' || t.status === 'pending') {
+        t.status = finalToolStatus;
+      }
+    }
+    for (const p of perms.values()) {
+      if (!p.resolved) {
+        p.resolved = { optionId: 'cancelled', auto: true };
+      }
+    }
+  };
 
   for (const ev of events) {
     const d = ev.data ?? {};
@@ -75,12 +90,26 @@ export function buildView(events: RunEvent[]): BuiltView {
         break;
       }
       case 'user':
+        // Starting a new user follow-up turn settles any dangling tools from the previous turn
+        settleOpenToolsAndPerms('completed');
+        items.push({ kind: 'user', key: `e${ev.seq}`, text: asText(d.text) });
+        break;
       case 'system':
-        items.push({ kind: ev.type, key: `e${ev.seq}`, text: asText(d.text) });
+        items.push({ kind: 'system', key: `e${ev.seq}`, text: asText(d.text) });
         break;
-      case 'status':
-        items.push({ kind: 'status', key: `e${ev.seq}`, status: asText(d.status) });
+      case 'status': {
+        const st = asText(d.status);
+        if (TERMINAL_RUN_STATUSES.has(st)) {
+          settleOpenToolsAndPerms(st === 'failed' || st === 'cancelled' ? 'failed' : 'completed');
+          if (st === 'completed' && plan) {
+            plan = plan.map((entry) =>
+              entry.status === 'in_progress' ? { ...entry, status: 'completed' } : entry,
+            );
+          }
+        }
+        items.push({ kind: 'status', key: `e${ev.seq}`, status: st });
         break;
+      }
       case 'tool_call': {
         const id = asText(d.toolCallId) || `seq${ev.seq}`;
         const existing = tools.get(id);
@@ -202,6 +231,13 @@ const TOOL_STATUS_CLASS: Record<string, string> = {
   failed: 'st-failed',
 };
 
+const TOOL_STATUS_LABEL: Record<string, string> = {
+  pending: '等待中',
+  in_progress: '执行中…',
+  completed: '已完成',
+  failed: '失败',
+};
+
 function ToolView({ t }: { t: ToolItem }) {
   return (
     <details className="tool">
@@ -209,7 +245,7 @@ function ToolView({ t }: { t: ToolItem }) {
         <span className={`dot ${TOOL_STATUS_CLASS[t.status] ?? ''}`} title={t.status} />
         {t.toolKind && <span className="tool-kind">{t.toolKind}</span>}
         <span className="grow ellipsis">{t.title}</span>
-        <span className="dim small">{t.status}</span>
+        <span className="dim small">{TOOL_STATUS_LABEL[t.status] ?? t.status}</span>
       </summary>
       <div className="tool-body">
         {t.rawInput !== undefined && (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { DiffEditor } from '@monaco-editor/react';
@@ -13,8 +13,11 @@ import {
   RunStatusTag,
 } from '../components/common';
 import { EventStream } from '../components/EventStream';
+import { AgentManagerModal } from '../components/AgentManagerModal';
+import { formatChangeRecord } from '../components/CherryPickModal';
 import { languageOf } from '../monaco';
 import { fetchRunEvents } from '../realtime';
+import { useTheme } from '../theme';
 import { toast } from '../toast';
 import {
   ACTIVE_RUN_STATUSES,
@@ -59,8 +62,14 @@ export default function IssuePage() {
 
   const [tab, setTab] = useState<'log' | 'diff'>('log');
   const [agent, setAgent] = useState<string>('');
+  const [selectedProvider, setSelectedProvider] = useState<string>('');
+  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [customModel, setCustomModel] = useState<string>('');
   const [prompt, setPrompt] = useState<string>('');
   const [newOpen, setNewOpen] = useState(false);
+  const [agentMgrOpen, setAgentMgrOpen] = useState(false);
+  const [archiveModalData, setArchiveModalData] = useState<{ dir: string; analysis: string; events: string } | null>(null);
+  const [archiveTab, setArchiveTab] = useState<'analysis' | 'events'>('analysis');
 
   useEffect(() => {
     if (!agent && agentsQ.data && agentsQ.data.length > 0) {
@@ -68,6 +77,87 @@ export default function IssuePage() {
       setAgent(avail.name);
     }
   }, [agent, agentsQ.data]);
+
+  const modelsQ = useQuery({
+    queryKey: qk.agentModels(agent),
+    queryFn: () => api.agentModels(agent),
+    enabled: !!agent && newOpen,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  useEffect(() => {
+    if (!modelsQ.data) return;
+    const { currentModel, customModels, providers, models } = modelsQ.data;
+    if (
+      selectedProvider &&
+      (selectedProvider === '__custom__' ||
+        selectedProvider === '__bound__' ||
+        providers.includes(selectedProvider))
+    ) {
+      return;
+    }
+    if ((customModels?.length ?? 0) > 0) {
+      setSelectedProvider('__bound__');
+      if (currentModel && customModels.includes(currentModel)) {
+        setSelectedModel(currentModel);
+      } else {
+        setSelectedModel(customModels[0]);
+      }
+      return;
+    }
+    if (currentModel && currentModel.includes('/')) {
+      const [prov] = currentModel.split('/');
+      if (providers.includes(prov)) {
+        setSelectedProvider(prov);
+        setSelectedModel(currentModel);
+        return;
+      }
+    }
+    if (providers.length > 0) {
+      const p0 = providers[0];
+      setSelectedProvider(p0);
+      const firstModel = models.find((m) => m.provider === p0);
+      setSelectedModel(firstModel ? firstModel.value : '');
+    } else {
+      setSelectedProvider('');
+      setSelectedModel('');
+    }
+  }, [modelsQ.data, selectedProvider]);
+
+  const handleAgentChange = (nextAgent: string) => {
+    setAgent(nextAgent);
+    setSelectedProvider('');
+    setSelectedModel('');
+    setCustomModel('');
+  };
+
+  const handleProviderChange = (nextProv: string) => {
+    setSelectedProvider(nextProv);
+    if (nextProv === '' || nextProv === '__custom__') {
+      setSelectedModel('');
+      return;
+    }
+    if (nextProv === '__bound__') {
+      const bound = modelsQ.data?.customModels ?? [];
+      const cur = modelsQ.data?.currentModel ?? '';
+      setSelectedModel(cur && bound.includes(cur) ? cur : (bound[0] ?? ''));
+      return;
+    }
+    const list = (modelsQ.data?.models ?? []).filter((m) => m.provider === nextProv);
+    const cur = modelsQ.data?.currentModel ?? '';
+    if (cur && list.some((m) => m.value === cur)) {
+      setSelectedModel(cur);
+    } else {
+      setSelectedModel(list[0]?.value ?? '');
+    }
+  };
+
+  const effectiveModel =
+    selectedProvider === '__custom__'
+      ? customModel.trim()
+      : selectedProvider === ''
+        ? ''
+        : selectedModel.trim();
 
   const [commentText, setCommentText] = useState('');
   const [pubOpen, setPubOpen] = useState(false);
@@ -112,7 +202,12 @@ export default function IssuePage() {
   });
 
   const startRun = useMutation({
-    mutationFn: () => api.startRun(id, { agent, prompt: prompt.trim() || undefined }),
+    mutationFn: () =>
+      api.startRun(id, {
+        agent,
+        model: effectiveModel || undefined,
+        prompt: prompt.trim() || undefined,
+      }),
     onSuccess: (r) => {
       setSelectedRunId(r.id);
       setPrompt('');
@@ -148,6 +243,19 @@ export default function IssuePage() {
     },
   });
 
+  const deleteRun = useMutation({
+    mutationFn: (runId: number) => api.deleteRun(runId),
+    onSuccess: (_, runId) => {
+      toast.success(`Run #${runId} 及其工作区已删除`);
+      if (selectedRunId === runId) {
+        setSelectedRunId(null);
+      }
+      qc.invalidateQueries({ queryKey: qk.runs(id) });
+      qc.invalidateQueries({ queryKey: qk.issue(id) });
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
   const isRunning = currentRun ? ACTIVE_RUN_STATUSES.includes(currentRun.status) : false;
 
   return (
@@ -180,7 +288,14 @@ export default function IssuePage() {
             {issue && (
               <select
                 value={issue.status}
-                onChange={(e) => updateIssue.mutate({ status: e.target.value as IssueStatus })}
+                onChange={(e) => {
+                  const next = e.target.value as IssueStatus;
+                  if (next === 'running' && !isRunning) {
+                    startRun.mutate();
+                  } else {
+                    updateIssue.mutate({ status: next });
+                  }
+                }}
               >
                 {ISSUE_STATUSES.map((s) => (
                   <option key={s} value={s}>
@@ -260,12 +375,68 @@ export default function IssuePage() {
                 <select value={currentRun?.id ?? ''} onChange={(e) => setSelectedRunId(Number(e.target.value))}>
                   {runs.map((r) => (
                     <option key={r.id} value={r.id}>
-                      #{r.id} · {r.agent} · {fmtTime(r.createdAt)}
+                      #{r.id} · {r.agent}{r.model ? ` (${r.model})` : ''} · {fmtTime(r.createdAt)}
                     </option>
                   ))}
                 </select>
                 {currentRun && <RunStatusTag status={currentRun.status} />}
-                {currentRun?.branch && <span className="badge mono">{currentRun.branch}</span>}
+                {currentRun?.model && <span className="badge mono" title="使用的模型">{currentRun.model}</span>}
+                {currentRun?.branch && (
+                  <span className="badge mono">
+                    {currentRun.branch}
+                    {currentRun.targetBranch ? ` : ${currentRun.targetBranch}` : ''}
+                  </span>
+                )}
+                {currentRun?.prUrl && (
+                  <a
+                    href={currentRun.prUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className={`badge ${
+                      currentRun.prState === 'merged'
+                        ? 'pr-merged'
+                        : currentRun.prState === 'closed'
+                          ? 'pr-closed'
+                          : 'pr-open'
+                    }`}
+                  >
+                    {currentRun.prState === 'merged'
+                      ? '🟣 PR Merged ↗'
+                      : currentRun.prState === 'closed'
+                        ? '🔴 PR Closed ↗'
+                        : '🟢 PR Open ↗'}
+                  </a>
+                )}
+                {currentRun?.changeRecord && (
+                  <button
+                    type="button"
+                    className="sm ghost"
+                    title="复制标准改动记录到剪贴板"
+                    onClick={() => {
+                      navigator.clipboard.writeText(currentRun.changeRecord);
+                      toast.success('已复制标准改动记录到剪贴板');
+                    }}
+                  >
+                    📋 复制改动记录
+                  </button>
+                )}
+                {currentRun && (
+                  <button
+                    type="button"
+                    className="sm ghost"
+                    title="查看保存在 ~/.xissue/issue/ 下的纯文本复盘与执行日志"
+                    onClick={async () => {
+                      try {
+                        const arch = await api.runArchive(currentRun.id);
+                        setArchiveModalData(arch);
+                      } catch (e) {
+                        toast.error((e as Error).message);
+                      }
+                    }}
+                  >
+                    📁 文本复盘归档
+                  </button>
+                )}
                 {currentRun?.workdir && healthQ.data?.editorUrlTemplate && (
                   <a
                     className="btn sm"
@@ -283,6 +454,17 @@ export default function IssuePage() {
             {isRunning && (
               <button className="danger sm" onClick={() => cancelRun.mutate()} disabled={cancelRun.isPending}>
                 取消运行
+              </button>
+            )}
+            {currentRun && !isRunning && (
+              <button
+                className="danger sm"
+                disabled={deleteRun.isPending}
+                onClick={() =>
+                  confirm(`确认删除 Run #${currentRun.id} 及其本地工作区目录？`) && deleteRun.mutate(currentRun.id)
+                }
+              >
+                🗑 删除此工作区
               </button>
             )}
             <button className="primary sm" onClick={() => setNewOpen(true)}>
@@ -333,7 +515,9 @@ export default function IssuePage() {
                 </>
               ) : (
                 <ReviewPane
+                  key={currentRun.id}
                   run={currentRun}
+                  isRunning={isRunning}
                   issueTitle={issue?.title ?? ''}
                   editorTemplate={healthQ.data?.editorUrlTemplate}
                 />
@@ -354,6 +538,10 @@ export default function IssuePage() {
           onClose={() => setNewOpen(false)}
           footer={
             <>
+              <button type="button" onClick={() => setAgentMgrOpen(true)}>
+                ⚙ 配置 Agent 与模型…
+              </button>
+              <span className="grow" />
               <button onClick={() => setNewOpen(false)}>取消</button>
               <button
                 className="primary"
@@ -367,14 +555,94 @@ export default function IssuePage() {
         >
           <label className="field">
             选择 Agent
-            <select value={agent} onChange={(e) => setAgent(e.target.value)}>
+            <select value={agent} onChange={(e) => handleAgentChange(e.target.value)}>
               {(agentsQ.data ?? []).map((a) => (
                 <option key={a.name} value={a.name} disabled={!a.available}>
-                  {a.name} ({a.command}){a.available ? '' : ' - 未安装'}
+                  {a.name} ({a.command}){a.defaultModel ? ` · 默认: ${a.defaultModel}` : ''}
+                  {a.available ? '' : ' - 未安装'}
                 </option>
               ))}
             </select>
           </label>
+
+          <div className="row" style={{ gap: 10, alignItems: 'flex-end' }}>
+            <label className="field" style={{ flex: 1 }}>
+              Provider（模型服务商）
+              <select
+                value={selectedProvider}
+                onChange={(e) => handleProviderChange(e.target.value)}
+                disabled={modelsQ.isLoading}
+              >
+                <option value="">
+                  默认（{modelsQ.data?.currentModel || '使用 Agent 默认配置'}）
+                </option>
+                {(modelsQ.data?.customModels?.length ?? 0) > 0 && (
+                  <option value="__bound__">★ 已绑定常用模型 ({modelsQ.data!.customModels.length})</option>
+                )}
+                {(modelsQ.data?.providers ?? []).map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+                <option value="__custom__">自定义输入 (provider/model)…</option>
+              </select>
+            </label>
+
+            {selectedProvider === '__bound__' && (
+              <label className="field" style={{ flex: 2 }}>
+                选择已绑定模型
+                <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
+                  {(modelsQ.data?.customModels ?? []).map((m) => (
+                    <option key={m} value={m}>
+                      {m === modelsQ.data?.currentModel ? `${m} (当前默认)` : m}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {selectedProvider && selectedProvider !== '__custom__' && selectedProvider !== '__bound__' && (
+              <label className="field" style={{ flex: 2 }}>
+                选择模型 (Model)
+                <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)}>
+                  {(modelsQ.data?.models ?? [])
+                    .filter((m) => m.provider === selectedProvider)
+                    .map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.value === modelsQ.data?.currentModel ? `${m.value} (当前默认)` : m.value}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            )}
+
+            <button
+              type="button"
+              className="sm"
+              title="重新从 Agent 探测可用 Provider 和模型列表"
+              disabled={modelsQ.isFetching || !agent}
+              onClick={async () => {
+                const fresh = await api.agentModels(agent, true);
+                qc.setQueryData(qk.agentModels(agent), fresh);
+                toast.info(`已刷新 ${agent} 模型列表（共 ${fresh.models.length} 个）`);
+              }}
+            >
+              {modelsQ.isFetching ? '加载中…' : '↻ 刷新模型'}
+            </button>
+          </div>
+
+          {selectedProvider === '__custom__' && (
+            <label className="field">
+              自定义 Provider / 模型标识
+              <input
+                className="mono"
+                placeholder="例如：openai/gpt-5.4 或 google/gemini-2.5-pro"
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+              />
+            </label>
+          )}
+
           <label className="field">
             附加说明（可选，会随 Issue 正文与各仓库信息一并传给 Agent）
             <textarea
@@ -386,6 +654,8 @@ export default function IssuePage() {
           </label>
         </Modal>
       )}
+
+      {agentMgrOpen && <AgentManagerModal onClose={() => setAgentMgrOpen(false)} />}
 
       {/* 编辑 Issue 弹窗 */}
       {editOpen && (
@@ -442,6 +712,83 @@ export default function IssuePage() {
           </label>
         </Modal>
       )}
+
+      {/* 文本复盘归档弹窗 */}
+      {archiveModalData && (
+        <Modal
+          title={`📁 文本复盘归档 (Run #${currentRun?.id})`}
+          size="lg"
+          onClose={() => setArchiveModalData(null)}
+          footer={
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(archiveModalData.dir);
+                  toast.success('已复制归档目录路径到剪贴板');
+                }}
+              >
+                📋 复制归档路径
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const text = archiveTab === 'analysis' ? archiveModalData.analysis : archiveModalData.events;
+                  navigator.clipboard.writeText(text);
+                  toast.success('已复制文本内容到剪贴板');
+                }}
+              >
+                📋 复制当前文本
+              </button>
+              <span className="grow" />
+              <button className="primary" onClick={() => setArchiveModalData(null)}>
+                关闭
+              </button>
+            </>
+          }
+        >
+          <div className="col" style={{ gap: 10 }}>
+            <div className="row small muted" style={{ wordBreak: 'break-all' }}>
+              <span>本地归档目录：</span>
+              <code className="mono" style={{ color: 'var(--accent)' }}>{archiveModalData.dir}</code>
+            </div>
+            <div className="tabs" style={{ background: 'transparent', padding: 0 }}>
+              <button
+                type="button"
+                className={`tab${archiveTab === 'analysis' ? ' active' : ''}`}
+                onClick={() => setArchiveTab('analysis')}
+              >
+                📄 分析摘要 (analysis.md)
+              </button>
+              <button
+                type="button"
+                className={`tab${archiveTab === 'events' ? ' active' : ''}`}
+                onClick={() => setArchiveTab('events')}
+              >
+                📜 完整事件流 (events.log)
+              </button>
+            </div>
+            <div
+              style={{
+                maxHeight: '60vh',
+                overflow: 'auto',
+                background: 'var(--bg-2)',
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+                padding: 14,
+              }}
+            >
+              {archiveTab === 'analysis' ? (
+                <Markdown>{archiveModalData.analysis || '暂无分析记录'}</Markdown>
+              ) : (
+                <pre className="mono small" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                  {archiveModalData.events || '暂无事件日志'}
+                </pre>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -450,14 +797,17 @@ export default function IssuePage() {
 
 function ReviewPane({
   run,
+  isRunning,
   issueTitle,
   editorTemplate,
 }: {
   run: Run;
+  isRunning: boolean;
   issueTitle: string;
   editorTemplate?: string;
 }) {
   const qc = useQueryClient();
+  const [theme] = useTheme();
   const changesQ = useQuery({ queryKey: qk.changes(run.id), queryFn: () => api.changes(run.id) });
   const groups: RepoChanges[] = changesQ.data ?? [];
 
@@ -486,6 +836,13 @@ function ReviewPane({
 
   const [draft, setDraft] = useState<string>('');
   const [dirty, setDirty] = useState(false);
+  const listenerRef = useRef<{ dispose: () => void } | null>(null);
+
+  useEffect(() => {
+    return () => {
+      listenerRef.current?.dispose();
+    };
+  }, []);
 
   useEffect(() => {
     setDraft(workQ.data?.content ?? '');
@@ -493,10 +850,11 @@ function ReviewPane({
   }, [workQ.data?.content, sel?.repoId, sel?.path]);
 
   const saveFile = useMutation({
-    mutationFn: () => api.saveFile(run.id, sel!.repoId, sel!.path, draft),
-    onSuccess: () => {
+    mutationFn: (args: { repoId: number; path: string; content: string }) =>
+      api.saveFile(run.id, args.repoId, args.path, args.content),
+    onSuccess: (_, args) => {
       setDirty(false);
-      qc.setQueryData(qk.file(run.id, sel!.repoId, sel!.path, 'work'), { content: draft });
+      qc.setQueryData(qk.file(run.id, args.repoId, args.path, 'work'), { content: args.content });
       qc.invalidateQueries({ queryKey: qk.changes(run.id) });
       toast.success('文件已保存');
     },
@@ -505,7 +863,9 @@ function ReviewPane({
   const [subMode, setSubMode] = useState<'pr' | 'push' | null>(null);
   const [subTitle, setSubTitle] = useState(issueTitle);
   const [subCommit, setSubCommit] = useState(issueTitle);
-  const [subBody, setSubBody] = useState('');
+  const [subTargetBranch, setSubTargetBranch] = useState(run.targetBranch || 'main');
+  const [subItemsText, setSubItemsText] = useState('');
+  const [subRemark, setSubRemark] = useState('');
   const [results, setResults] = useState<SubmitResult[] | null>(null);
 
   useEffect(() => {
@@ -513,13 +873,34 @@ function ReviewPane({
     setSubCommit(issueTitle);
   }, [issueTitle]);
 
+  // Auto-populate concise change items when opening submit modal
+  const openSubmitModal = (mode: 'pr' | 'push') => {
+    if (!subItemsText.trim()) {
+      const lines: string[] = [];
+      if (issueTitle.trim()) lines.push(issueTitle.trim());
+      for (const g of groups) {
+        for (const f of g.files.slice(0, 6)) {
+          const act = f.status === 'A' ? '新增' : f.status === 'D' ? '删除' : '修改';
+          lines.push(`${act} ${f.path} (+${f.additions}/-${f.deletions})`);
+        }
+      }
+      setSubItemsText(lines.join('\n'));
+    }
+    setSubMode(mode);
+  };
+
   const submit = useMutation({
     mutationFn: (mode: 'pr' | 'push') =>
       api.submit(run.id, {
         mode,
         title: subTitle.trim(),
         commitMessage: subCommit.trim(),
-        body: subBody,
+        targetBranch: subTargetBranch.trim() || undefined,
+        changeItems: subItemsText
+          .split('\n')
+          .map((s) => s.trim())
+          .filter(Boolean),
+        remark: subRemark.trim(),
       }),
     onSuccess: (r) => {
       setResults(r.results);
@@ -528,8 +909,9 @@ function ReviewPane({
       qc.invalidateQueries({ queryKey: qk.runs(run.issueId) });
       qc.invalidateQueries({ queryKey: qk.issue(run.issueId) });
       qc.invalidateQueries({ queryKey: qk.comments(run.issueId) });
-      toast.success('提交完成');
+      toast.success('提交完成，已生成标准改动记录');
     },
+    onError: (e) => toast.error((e as Error).message),
   });
 
   const discard = useMutation({
@@ -546,6 +928,14 @@ function ReviewPane({
   const absPath = sel && run.workdir ? `${run.workdir}/${sel.repoName}/${sel.path}` : '';
   const openHref = absPath ? editorUrl(editorTemplate, absPath) : null;
 
+  const previewRecord = formatChangeRecord(
+    subItemsText.split('\n'),
+    run.branch,
+    subTargetBranch || 'main',
+    subMode === 'pr' ? '(创建 PR 后自动填入链接)' : '无 (仅推送分支)',
+    subRemark,
+  );
+
   return (
     <div className="review">
       <div className="review-actions">
@@ -554,35 +944,59 @@ function ReviewPane({
           ⟳ 刷新
         </button>
         <span className="grow" />
-        <button className="sm" disabled={totalFiles === 0} onClick={() => setSubMode('push')}>
+        <button className="sm" disabled={totalFiles === 0 || isRunning} onClick={() => openSubmitModal('push')}>
           仅提交并推送
         </button>
-        <button className="primary sm" disabled={totalFiles === 0} onClick={() => setSubMode('pr')}>
+        <button className="primary sm" disabled={totalFiles === 0 || isRunning} onClick={() => openSubmitModal('pr')}>
           提交并提 PR
         </button>
         <button
           className="danger sm"
+          disabled={isRunning || discard.isPending}
           onClick={() => confirm('确认丢弃本次 Run 的 worktree 和未推送分支？') && discard.mutate()}
         >
           丢弃
         </button>
       </div>
 
-      {results && (
-        <div className="results">
-          {results.map((r) => (
-            <div key={r.repoId} className="row">
+      {(results || run.changeRecord) && (
+        <div className="results" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {results?.map((r) => (
+            <div key={r.repoId} className="row" style={{ flexWrap: 'wrap' }}>
               <b>{r.repoName}</b>
-              <span className="mono dim">{r.branch}</span>
+              <span className="mono dim">
+                {r.branch} : {r.targetBranch}
+              </span>
               {r.commit && <span className="mono muted">{r.commit.slice(0, 8)}</span>}
               {r.prUrl && (
-                <a href={r.prUrl} target="_blank" rel="noreferrer">
+                <a href={r.prUrl} target="_blank" rel="noreferrer" className="badge pr-open">
                   {r.prUrl} ↗
                 </a>
               )}
               {r.error && <span className="st-failed">{r.error}</span>}
             </div>
           ))}
+          {(results?.[0]?.changeRecord || run.changeRecord) && (
+            <div className="panel" style={{ padding: 10, background: 'var(--bg)' }}>
+              <div className="row" style={{ marginBottom: 4 }}>
+                <b className="small">📋 标准改动记录（备查）</b>
+                <span className="grow" />
+                <button
+                  type="button"
+                  className="sm ghost"
+                  onClick={() => {
+                    navigator.clipboard.writeText(results?.[0]?.changeRecord || run.changeRecord);
+                    toast.success('已复制标准改动记录');
+                  }}
+                >
+                  📋 复制
+                </button>
+              </div>
+              <pre className="mono small" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+                {results?.[0]?.changeRecord || run.changeRecord}
+              </pre>
+            </div>
+          )}
         </div>
       )}
 
@@ -624,7 +1038,11 @@ function ReviewPane({
                   {sel.repoName}/{sel.path}
                 </span>
                 {dirty && <span className="badge">已修改未保存</span>}
-                <button className="primary sm" disabled={!dirty || saveFile.isPending} onClick={() => saveFile.mutate()}>
+                <button
+                  className="primary sm"
+                  disabled={!dirty || saveFile.isPending}
+                  onClick={() => saveFile.mutate({ repoId: sel.repoId, path: sel.path, content: draft })}
+                >
                   保存修改
                 </button>
                 {openHref && (
@@ -635,7 +1053,7 @@ function ReviewPane({
               </div>
               <div className="diff-editor">
                 <DiffEditor
-                  theme="vs-dark"
+                  theme={theme === 'dark' ? 'vs-dark' : 'light'}
                   language={languageOf(sel.path)}
                   original={baseQ.data?.content ?? ''}
                   modified={workQ.data?.content ?? ''}
@@ -648,8 +1066,9 @@ function ReviewPane({
                     scrollBeyondLastLine: false,
                   }}
                   onMount={(editor) => {
+                    listenerRef.current?.dispose();
                     const mod = editor.getModifiedEditor();
-                    mod.onDidChangeModelContent(() => {
+                    listenerRef.current = mod.onDidChangeModelContent(() => {
                       setDraft(mod.getValue());
                       setDirty(true);
                     });
@@ -665,7 +1084,8 @@ function ReviewPane({
 
       {subMode && (
         <Modal
-          title={subMode === 'pr' ? '提交并创建 Pull Request' : '提交并推送分支'}
+          title={subMode === 'pr' ? '提交并创建 Pull Request（自动生成改动记录）' : '提交并推送分支（自动生成改动记录）'}
+          size="lg"
           onClose={() => setSubMode(null)}
           footer={
             <>
@@ -675,29 +1095,87 @@ function ReviewPane({
                 disabled={!subCommit.trim() || submit.isPending}
                 onClick={() => submit.mutate(subMode)}
               >
-                {submit.isPending ? '处理中…' : '确认'}
+                {submit.isPending ? '处理中…' : subMode === 'pr' ? '确认提交并创建 PR' : '确认提交并推送'}
               </button>
             </>
           }
         >
-          <label className="field">
-            Commit Message
-            <input value={subCommit} onChange={(e) => setSubCommit(e.target.value)} />
-          </label>
-          {subMode === 'pr' && (
-            <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="col" style={{ gap: 10 }}>
+              <div className="row" style={{ gap: 8 }}>
+                <label className="field grow">
+                  Commit Message
+                  <input value={subCommit} onChange={(e) => setSubCommit(e.target.value)} />
+                </label>
+                <label className="field" style={{ width: 150 }}>
+                  目标基准分支
+                  <input
+                    className="mono"
+                    value={subTargetBranch}
+                    onChange={(e) => setSubTargetBranch(e.target.value)}
+                    placeholder="main"
+                  />
+                </label>
+              </div>
+              {subMode === 'pr' && (
+                <label className="field">
+                  PR 标题
+                  <input value={subTitle} onChange={(e) => setSubTitle(e.target.value)} />
+                </label>
+              )}
               <label className="field">
-                PR 标题
-                <input value={subTitle} onChange={(e) => setSubTitle(e.target.value)} />
+                本次改动要点（每行一条，自动编号 a. / b. / c.，简明扼要）
+                <textarea
+                  rows={5}
+                  value={subItemsText}
+                  onChange={(e) => setSubItemsText(e.target.value)}
+                  placeholder={'修复 xxx 问题\n完善 yyy 逻辑'}
+                />
               </label>
               <label className="field">
-                PR 描述（可选，留空将自动附上 Issue 链接与跨仓库关联）
-                <textarea rows={6} value={subBody} onChange={(e) => setSubBody(e.target.value)} />
+                备注（可选）
+                <input
+                  value={subRemark}
+                  onChange={(e) => setSubRemark(e.target.value)}
+                  placeholder="例如：关联上游 PR / 回归测试通过"
+                />
               </label>
-            </>
-          )}
+            </div>
+
+            <div className="col" style={{ gap: 6 }}>
+              <div className="row">
+                <span className="small muted">标准改动记录实时预览（将写入 PR 描述与 Issue 备注）：</span>
+                <span className="grow" />
+                <button
+                  type="button"
+                  className="sm ghost"
+                  onClick={() => {
+                    navigator.clipboard.writeText(previewRecord);
+                    toast.success('已复制预览记录');
+                  }}
+                >
+                  📋 复制
+                </button>
+              </div>
+              <pre
+                className="mono small"
+                style={{
+                  flex: 1,
+                  background: 'var(--bg)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 6,
+                  padding: 12,
+                  whiteSpace: 'pre-wrap',
+                  margin: 0,
+                }}
+              >
+                {previewRecord}
+              </pre>
+            </div>
+          </div>
         </Modal>
       )}
     </div>
   );
 }
+

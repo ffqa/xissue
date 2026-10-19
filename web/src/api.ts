@@ -1,11 +1,19 @@
 import type {
+  AgentConfigInput,
   AgentInfo,
+  AgentModels,
+  BranchWatch,
   BrowseResult,
+  CherryPickRequest,
+  CherryPickResult,
   Comment,
+  CommitInfo,
   Health,
   InspectResult,
   Issue,
   IssueStatus,
+  MCPStatus,
+  Notification,
   Project,
   Repo,
   RepoChanges,
@@ -68,9 +76,22 @@ const q = (params: Record<string, string | number>) =>
 
 export const api = {
   health: () => get<Health>('/api/health'),
+  restartServer: () => post<{ restarting: boolean }>('/api/restart'),
   agents: () => get<AgentInfo[]>('/api/agents'),
+  reloadAgents: () => post<AgentInfo[]>('/api/agents/reload'),
+  upsertAgent: (name: string, b: AgentConfigInput) => put<AgentInfo>(`/api/agents/${encodeURIComponent(name)}`, b),
+  deleteAgent: (name: string) => del<void>(`/api/agents/${encodeURIComponent(name)}`),
+  agentModels: (name: string, refresh?: boolean) =>
+    get<AgentModels>(`/api/agents/${encodeURIComponent(name)}/models${refresh ? '?refresh=1' : ''}`),
   browseDir: (path?: string) => get<BrowseResult>(`/api/fs/browse${path ? `?${q({ path })}` : ''}`),
   inspectDir: (path: string) => get<InspectResult>(`/api/fs/inspect?${q({ path })}`),
+
+  mcpStatus: () => get<MCPStatus>('/api/mcp/status'),
+  mcpInstall: (targets?: string[]) => post<MCPStatus & { installed: string[] }>('/api/mcp/install', { targets }),
+
+  notifications: (limit = 50) => get<Notification[]>(`/api/notifications?limit=${limit}`),
+  markNotificationRead: (id: number) => post<void>(`/api/notifications/${id}/read`),
+  markAllNotificationsRead: () => post<void>('/api/notifications/read-all'),
 
   projects: () => get<Project[]>('/api/projects'),
   createProject: (b: { name: string; description: string }) => post<Project>('/api/projects', b),
@@ -80,6 +101,22 @@ export const api = {
   addRepo: (projectId: number, b: RepoInput) => post<Repo>(`/api/projects/${projectId}/repos`, b),
   deleteRepo: (projectId: number, repoId: number) => del<void>(`/api/projects/${projectId}/repos/${repoId}`),
   syncProject: (id: number) => post<{ imported: number }>(`/api/projects/${id}/sync`),
+
+  watches: (projectId: number) => get<BranchWatch[]>(`/api/projects/${projectId}/watches`),
+  addWatch: (projectId: number, b: { repoId: number; branch: string }) =>
+    post<BranchWatch>(`/api/projects/${projectId}/watches`, b),
+  deleteWatch: (projectId: number, watchId: number) =>
+    del<void>(`/api/projects/${projectId}/watches/${watchId}`),
+  checkWatches: (projectId: number) =>
+    post<{ watchesTriggered: number; prsUpdated: number }>(`/api/projects/${projectId}/check-watches`),
+  batchRunTodo: (projectId: number, b?: { agent?: string; model?: string }) =>
+    post<{ started: number; runs: Run[] }>(`/api/projects/${projectId}/batch-run`, b ?? {}),
+  cherryPick: (projectId: number, b: CherryPickRequest) =>
+    post<CherryPickResult>(`/api/projects/${projectId}/cherry-pick`, b),
+
+  repoBranches: (repoId: number) => get<string[]>(`/api/repos/${repoId}/branches`),
+  repoCommits: (repoId: number, branch?: string, limit = 30) =>
+    get<CommitInfo[]>(`/api/repos/${repoId}/commits?${q({ branch: branch ?? '', limit })}`),
 
   issues: (projectId: number) => get<Issue[]>(`/api/projects/${projectId}/issues`),
   createIssue: (projectId: number, b: { title: string; body: string; labels?: string[] }) =>
@@ -92,8 +129,10 @@ export const api = {
   addComment: (issueId: number, body: string) => post<Comment>(`/api/issues/${issueId}/comments`, { body }),
 
   runs: (issueId: number) => get<Run[]>(`/api/issues/${issueId}/runs`),
-  startRun: (issueId: number, b: { agent: string; prompt?: string }) => post<Run>(`/api/issues/${issueId}/runs`, b),
+  startRun: (issueId: number, b: { agent: string; model?: string; prompt?: string }) =>
+    post<Run>(`/api/issues/${issueId}/runs`, b),
   run: (id: number) => get<Run>(`/api/runs/${id}`),
+  deleteRun: (id: number) => del<void>(`/api/runs/${id}`),
   events: (runId: number, after?: number) =>
     get<RunEvent[]>(`/api/runs/${runId}/events${after !== undefined ? `?after=${after}` : ''}`),
   sendMessage: (runId: number, text: string) => post<void>(`/api/runs/${runId}/message`, { text }),
@@ -107,14 +146,22 @@ export const api = {
     put<void>(`/api/runs/${runId}/file?${q({ repoId, path })}`, { content }),
   submit: (runId: number, b: SubmitRequest) => post<{ results: SubmitResult[] }>(`/api/runs/${runId}/submit`, b),
   discard: (runId: number) => post<void>(`/api/runs/${runId}/discard`),
+  runArchive: (runId: number) =>
+    get<{ dir: string; analysis: string; events: string }>(`/api/runs/${runId}/archive`),
 };
 
 /** react-query keys */
 export const qk = {
   health: ['health'] as const,
   agents: ['agents'] as const,
+  agentModels: (name: string) => ['agentModels', name] as const,
+  mcpStatus: ['mcpStatus'] as const,
+  notifications: ['notifications'] as const,
   projects: ['projects'] as const,
   project: (id: number) => ['project', id] as const,
+  watches: (projectId: number) => ['watches', projectId] as const,
+  repoBranches: (repoId: number) => ['repoBranches', repoId] as const,
+  repoCommits: (repoId: number, branch: string) => ['repoCommits', repoId, branch] as const,
   issues: (projectId: number) => ['issues', projectId] as const,
   issue: (id: number) => ['issue', id] as const,
   comments: (issueId: number) => ['comments', issueId] as const,
@@ -124,3 +171,4 @@ export const qk = {
   changes: (runId: number) => ['changes', runId] as const,
   file: (runId: number, repoId: number, path: string, side: string) => ['file', runId, repoId, path, side] as const,
 };
+

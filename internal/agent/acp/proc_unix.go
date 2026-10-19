@@ -5,6 +5,7 @@ package acp
 import (
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // setProcAttrs puts the agent in its own process group so we can kill its children too.
@@ -13,8 +14,13 @@ func setProcAttrs(cmd *exec.Cmd) {
 }
 
 func killGroup(cmd *exec.Cmd) {
-	if cmd.Process == nil {
+	if cmd == nil || cmd.Process == nil {
 		return
 	}
-	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	pid := cmd.Process.Pid
+	_ = syscall.Kill(-pid, syscall.SIGTERM)
+	go func() {
+		time.Sleep(2 * time.Second)
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+	}()
 }

@@ -35,6 +35,12 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schemaSQL); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	// Incremental column migrations for existing databases.
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN model TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN target_branch TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN pr_state TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN change_record TEXT NOT NULL DEFAULT ''`)
 	return &Store{db: db}, nil
 }
 
@@ -199,14 +205,16 @@ func (s *Store) DeleteRepo(ctx context.Context, projectID, repoID int64) error {
 
 const issueCols = `i.id, i.project_id, i.key, i.source, i.repo_id, i.remote_number, i.remote_url, i.title, i.body, i.labels, i.status, i.created_at, i.updated_at,
   (SELECT r.id FROM runs r WHERE r.issue_id=i.id ORDER BY r.id DESC LIMIT 1),
-  (SELECT r.status FROM runs r WHERE r.issue_id=i.id ORDER BY r.id DESC LIMIT 1)`
+  (SELECT r.status FROM runs r WHERE r.issue_id=i.id ORDER BY r.id DESC LIMIT 1),
+  COALESCE((SELECT r.pr_url FROM runs r WHERE r.issue_id=i.id AND r.pr_url != '' ORDER BY r.id DESC LIMIT 1), ''),
+  COALESCE((SELECT r.pr_state FROM runs r WHERE r.issue_id=i.id AND r.pr_url != '' ORDER BY r.id DESC LIMIT 1), '')`
 
 func scanIssue(sc interface{ Scan(...any) error }) (domain.Issue, error) {
 	var i domain.Issue
 	var repoID, num, runID sql.NullInt64
 	var labels, c, u string
 	var runStatus sql.NullString
-	err := sc.Scan(&i.ID, &i.ProjectID, &i.Key, &i.Source, &repoID, &num, &i.RemoteURL, &i.Title, &i.Body, &labels, &i.Status, &c, &u, &runID, &runStatus)
+	err := sc.Scan(&i.ID, &i.ProjectID, &i.Key, &i.Source, &repoID, &num, &i.RemoteURL, &i.Title, &i.Body, &labels, &i.Status, &c, &u, &runID, &runStatus, &i.PRURL, &i.PRState)
 	if err != nil {
 		return i, err
 	}
@@ -375,19 +383,19 @@ func (s *Store) AddComment(ctx context.Context, issueID int64, author, body stri
 
 // ---------- Runs ----------
 
-const runCols = `id, issue_id, agent, status, branch, workdir, session_id, summary, error, created_at, started_at, ended_at`
+const runCols = `id, issue_id, agent, model, status, branch, target_branch, workdir, session_id, summary, error, pr_url, pr_state, change_record, created_at, started_at, ended_at`
 
 func scanRun(sc interface{ Scan(...any) error }) (domain.Run, error) {
 	var r domain.Run
 	var c string
 	var st, en sql.NullString
-	err := sc.Scan(&r.ID, &r.IssueID, &r.Agent, &r.Status, &r.Branch, &r.Workdir, &r.SessionID, &r.Summary, &r.Error, &c, &st, &en)
+	err := sc.Scan(&r.ID, &r.IssueID, &r.Agent, &r.Model, &r.Status, &r.Branch, &r.TargetBranch, &r.Workdir, &r.SessionID, &r.Summary, &r.Error, &r.PRURL, &r.PRState, &r.ChangeRecord, &c, &st, &en)
 	r.CreatedAt, r.StartedAt, r.EndedAt = parseTime(c), parseTimePtr(st), parseTimePtr(en)
 	return r, err
 }
 
-func (s *Store) CreateRun(ctx context.Context, issueID int64, agent string) (*domain.Run, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO runs(issue_id, agent, status, created_at) VALUES(?,?,?,?)`, issueID, agent, domain.RunQueued, now())
+func (s *Store) CreateRun(ctx context.Context, issueID int64, agent, model string) (*domain.Run, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT INTO runs(issue_id, agent, model, status, created_at) VALUES(?,?,?,?,?)`, issueID, agent, model, domain.RunQueued, now())
 	if err != nil {
 		return nil, err
 	}
@@ -420,6 +428,11 @@ func (s *Store) ListRuns(ctx context.Context, issueID int64) ([]domain.Run, erro
 	return out, rows.Err()
 }
 
+func (s *Store) DeleteRun(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM runs WHERE id=?`, id)
+	return err
+}
+
 // ListActiveRuns returns runs that were in progress (used to recover after restart).
 func (s *Store) ListActiveRuns(ctx context.Context) ([]domain.Run, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT `+runCols+` FROM runs WHERE status IN ('queued','starting','running','awaiting_permission')`)
@@ -438,16 +451,39 @@ func (s *Store) ListActiveRuns(ctx context.Context) ([]domain.Run, error) {
 	return out, rows.Err()
 }
 
+// ListOpenPRRuns returns runs that have an open PR URL to monitor.
+func (s *Store) ListOpenPRRuns(ctx context.Context) ([]domain.Run, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+runCols+` FROM runs WHERE pr_url != '' AND (pr_state = '' OR pr_state = 'open') ORDER BY id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.Run{}
+	for rows.Next() {
+		r, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // RunUpdate holds optional fields to change on a run.
 type RunUpdate struct {
-	Status    *domain.RunStatus
-	Branch    *string
-	Workdir   *string
-	SessionID *string
-	Summary   *string
-	Error     *string
-	Started   bool
-	Ended     bool
+	Status       *domain.RunStatus
+	Model        *string
+	Branch       *string
+	TargetBranch *string
+	Workdir      *string
+	SessionID    *string
+	Summary      *string
+	Error        *string
+	PRURL        *string
+	PRState      *string
+	ChangeRecord *string
+	Started      bool
+	Ended        bool
 }
 
 func (s *Store) UpdateRun(ctx context.Context, id int64, u RunUpdate) (*domain.Run, error) {
@@ -456,8 +492,14 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, u RunUpdate) (*domain.R
 	if u.Status != nil {
 		add("status", *u.Status)
 	}
+	if u.Model != nil {
+		add("model", *u.Model)
+	}
 	if u.Branch != nil {
 		add("branch", *u.Branch)
+	}
+	if u.TargetBranch != nil {
+		add("target_branch", *u.TargetBranch)
 	}
 	if u.Workdir != nil {
 		add("workdir", *u.Workdir)
@@ -470,6 +512,15 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, u RunUpdate) (*domain.R
 	}
 	if u.Error != nil {
 		add("error", *u.Error)
+	}
+	if u.PRURL != nil {
+		add("pr_url", *u.PRURL)
+	}
+	if u.PRState != nil {
+		add("pr_state", *u.PRState)
+	}
+	if u.ChangeRecord != nil {
+		add("change_record", *u.ChangeRecord)
 	}
 	if u.Started {
 		add("started_at", now())
@@ -523,3 +574,144 @@ func (s *Store) ListEvents(ctx context.Context, runID, afterSeq int64) ([]domain
 	}
 	return out, rows.Err()
 }
+
+// ---------- Branch Watches ----------
+
+const watchCols = `w.id, w.project_id, w.repo_id, COALESCE(r.name, ''), w.branch, w.last_sha, w.last_message, w.last_author, w.updated_at`
+
+func scanBranchWatch(sc interface{ Scan(...any) error }) (domain.BranchWatch, error) {
+	var w domain.BranchWatch
+	var u string
+	err := sc.Scan(&w.ID, &w.ProjectID, &w.RepoID, &w.RepoName, &w.Branch, &w.LastSHA, &w.LastMessage, &w.LastAuthor, &u)
+	w.UpdatedAt = parseTime(u)
+	return w, err
+}
+
+func (s *Store) ListBranchWatches(ctx context.Context, projectID int64) ([]domain.BranchWatch, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+watchCols+` FROM branch_watches w LEFT JOIN repos r ON r.id=w.repo_id WHERE w.project_id=? ORDER BY w.id DESC`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.BranchWatch{}
+	for rows.Next() {
+		w, err := scanBranchWatch(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListAllBranchWatches(ctx context.Context) ([]domain.BranchWatch, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+watchCols+` FROM branch_watches w LEFT JOIN repos r ON r.id=w.repo_id ORDER BY w.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.BranchWatch{}
+	for rows.Next() {
+		w, err := scanBranchWatch(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetBranchWatch(ctx context.Context, id int64) (*domain.BranchWatch, error) {
+	w, err := scanBranchWatch(s.db.QueryRowContext(ctx, `SELECT `+watchCols+` FROM branch_watches w LEFT JOIN repos r ON r.id=w.repo_id WHERE w.id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return &w, err
+}
+
+func (s *Store) UpsertBranchWatch(ctx context.Context, projectID, repoID int64, branch, sha, msg, author string) (*domain.BranchWatch, error) {
+	t := now()
+	res, err := s.db.ExecContext(ctx, `INSERT INTO branch_watches(project_id, repo_id, branch, last_sha, last_message, last_author, updated_at)
+		VALUES(?,?,?,?,?,?,?)
+		ON CONFLICT(repo_id, branch) DO UPDATE SET last_sha=excluded.last_sha, last_message=excluded.last_message, last_author=excluded.last_author, updated_at=excluded.updated_at`,
+		projectID, repoID, branch, sha, msg, author, t)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	if id == 0 {
+		_ = s.db.QueryRowContext(ctx, `SELECT id FROM branch_watches WHERE repo_id=? AND branch=?`, repoID, branch).Scan(&id)
+	}
+	return s.GetBranchWatch(ctx, id)
+}
+
+func (s *Store) UpdateBranchWatchTip(ctx context.Context, id int64, sha, msg, author string) (*domain.BranchWatch, error) {
+	_, err := s.db.ExecContext(ctx, `UPDATE branch_watches SET last_sha=?, last_message=?, last_author=?, updated_at=? WHERE id=?`, sha, msg, author, now(), id)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetBranchWatch(ctx, id)
+}
+
+func (s *Store) DeleteBranchWatch(ctx context.Context, projectID, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM branch_watches WHERE id=? AND project_id=?`, id, projectID)
+	return err
+}
+
+// ---------- Notifications ----------
+
+func scanNotification(sc interface{ Scan(...any) error }) (domain.Notification, error) {
+	var n domain.Notification
+	var readInt int
+	var c string
+	err := sc.Scan(&n.ID, &n.Kind, &n.Title, &n.Body, &n.Link, &n.Meta, &readInt, &c)
+	n.Read = readInt != 0
+	n.CreatedAt = parseTime(c)
+	return n, err
+}
+
+func (s *Store) CreateNotification(ctx context.Context, kind, title, body, link, meta string) (*domain.Notification, error) {
+	t := now()
+	res, err := s.db.ExecContext(ctx, `INSERT INTO notifications(kind, title, body, link, meta, read, created_at) VALUES(?,?,?,?,?,0,?)`,
+		kind, title, body, link, meta, t)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	n, err := scanNotification(s.db.QueryRowContext(ctx, `SELECT id, kind, title, body, link, meta, read, created_at FROM notifications WHERE id=?`, id))
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
+func (s *Store) ListNotifications(ctx context.Context, limit int) ([]domain.Notification, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, kind, title, body, link, meta, read, created_at FROM notifications ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.Notification{}
+	for rows.Next() {
+		n, err := scanNotification(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) MarkNotificationRead(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE notifications SET read=1 WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) MarkAllNotificationsRead(ctx context.Context) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE notifications SET read=1 WHERE read=0`)
+	return err
+}
+

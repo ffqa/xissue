@@ -63,8 +63,12 @@ func (r *Runner) ExportIssueMarkdown(ctx context.Context, issueID int64) {
 
 	dir := filepath.Join(r.cfg.IssuesDir(), fmt.Sprintf("project-%d", issue.ProjectID))
 	_ = os.MkdirAll(dir, 0o755)
-	safeKey := strings.NewReplacer("/", "_", "#", "-").Replace(issue.Key)
-	_ = os.WriteFile(filepath.Join(dir, safeKey+".md"), []byte(b.String()), 0o644)
+	safeKey := strings.NewReplacer("/", "_", "#", "-", "..", "_").Replace(issue.Key)
+	target := filepath.Join(dir, safeKey+".md")
+	tmp := fmt.Sprintf("%s.tmp.%d", target, time.Now().UnixNano())
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err == nil {
+		_ = os.Rename(tmp, target)
+	}
 }
 
 func buildWorkspaceAGENTS(proj *domain.Project, issue *domain.Issue) string {
@@ -85,9 +89,10 @@ func buildWorkspaceAGENTS(proj *domain.Project, issue *domain.Issue) string {
 	if strings.TrimSpace(issue.Body) != "" {
 		b.WriteString(issue.Body + "\n\n")
 	}
-	b.WriteString("## Guidelines\n")
+	b.WriteString("## Guidelines & Safety Rules\n")
 	b.WriteString("- Make changes directly inside the repository subdirectories above.\n")
 	b.WriteString("- Do NOT run `git push`; xIssue handles committing, pushing, and opening PRs after human review.\n")
+	b.WriteString("- Do NOT run `pkill xissue`, `killall xissue`, `make stop`, `make restart`, `make deploy`, or `install-service.sh`, and do NOT bind to port 7789 — xIssue itself is supervising your process on port 7789.\n")
 	b.WriteString("- Run the configured test command(s) before finishing and summarize your changes clearly.\n")
 	return b.String()
 }

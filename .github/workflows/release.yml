@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.2.0)'
+        required: true
+        default: 'v0.2.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      - name: Build Frontend (embedded into Go binary)
+        working-directory: web
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Run Go Tests
+        run: go test -race ./...
+
+      - name: Cross-Compile Release Archives
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          fi
+          mkdir -p dist/release
+
+          build_archive() {
+            local goos="$1"
+            local goarch="$2"
+            local ext="$3"
+            local pkg="xissue-${VERSION}-${goos}-${goarch}"
+            local stage="dist/stage/${pkg}"
+            mkdir -p "${stage}/scripts"
+
+            GOOS="${goos}" GOARCH="${goarch}" go build -trimpath -ldflags="-s -w" -o "${stage}/xissue${ext}" ./cmd/xissue
+            cp README.md "${stage}/"
+            cp scripts/install-service.sh scripts/uninstall-service.sh "${stage}/scripts/" 2>/dev/null || true
+
+            if [ "${goos}" = "windows" ]; then
+              (cd "dist/stage" && zip -rq "../release/${pkg}.zip" "${pkg}")
+            else
+              tar -C "dist/stage" -czf "dist/release/${pkg}.tar.gz" "${pkg}"
+            fi
+          }
+
+          build_archive darwin arm64 ""
+          build_archive darwin amd64 ""
+          build_archive linux amd64 ""
+          build_archive linux arm64 ""
+          build_archive windows amd64 ".exe"
+
+          (cd dist/release && shasum -a 256 * > SHA256SUMS.txt)
+          ls -lh dist/release
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/release/*.tar.gz
+            dist/release/*.zip
+            dist/release/SHA256SUMS.txt

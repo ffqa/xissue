@@ -39,6 +39,8 @@ export interface Issue {
   status: IssueStatus;
   activeRunId: number | null;
   awaiting: boolean;
+  prUrl: string;
+  prState: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -68,12 +70,17 @@ export interface Run {
   id: number;
   issueId: number;
   agent: string;
+  model: string;
   status: RunStatus;
   branch: string;
+  targetBranch: string;
   workdir: string;
   sessionId: string;
   summary: string;
   error: string;
+  prUrl: string;
+  prState: string;
+  changeRecord: string;
   createdAt: string;
   startedAt: string | null;
   endedAt: string | null;
@@ -125,7 +132,36 @@ export interface Health {
 export interface AgentInfo {
   name: string;
   command: string;
+  args: string[];
+  env?: Record<string, string>;
+  memoryMB: number;
+  defaultModel: string;
+  models: string[];
   available: boolean;
+}
+
+export interface AgentConfigInput {
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  memoryMB: number;
+  defaultModel: string;
+  models: string[];
+}
+
+export interface ModelOption {
+  value: string;
+  name: string;
+  provider: string;
+}
+
+export interface AgentModels {
+  agent: string;
+  currentModel: string;
+  defaultModel: string;
+  customModels: string[];
+  providers: string[];
+  models: ModelOption[];
 }
 
 export type FileStatus = 'M' | 'A' | 'D' | 'R' | '?';
@@ -148,8 +184,10 @@ export interface SubmitResult {
   repoId: number;
   repoName: string;
   branch: string;
+  targetBranch: string;
   commit: string;
   prUrl: string;
+  changeRecord: string;
   error: string;
 }
 
@@ -158,6 +196,9 @@ export interface SubmitRequest {
   title?: string;
   body?: string;
   commitMessage?: string;
+  targetBranch?: string;
+  changeItems?: string[];
+  remark?: string;
 }
 
 export interface RepoInput {
@@ -198,7 +239,78 @@ export interface InspectResult {
   repos: InspectedRepo[];
 }
 
+export interface BranchWatch {
+  id: number;
+  projectId: number;
+  repoId: number;
+  repoName: string;
+  branch: string;
+  lastSha: string;
+  lastMessage: string;
+  lastAuthor: string;
+  updatedAt: string;
+}
+
+export interface CommitInfo {
+  sha: string;
+  shortSha: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+
+export interface Notification {
+  id: number;
+  kind: 'pr_status' | 'branch_push' | 'run_done' | 'permission' | string;
+  title: string;
+  body: string;
+  link: string;
+  meta: string;
+  read: boolean;
+  createdAt: string;
+}
+
+export interface MCPTargetStatus {
+  id: string;
+  name: string;
+  configPath: string;
+  detected: boolean;
+  installed: boolean;
+}
+
+export interface MCPStatus {
+  binaryPath: string;
+  httpUrl: string;
+  targets: MCPTargetStatus[];
+}
+
+export interface CherryPickRequest {
+  repoId: number;
+  issueId?: number;
+  sourceBranch: string;
+  targetBranch: string;
+  newBranch?: string;
+  shas: string[];
+  mode: 'pr' | 'push';
+  title?: string;
+  changeItems?: string[];
+  remark?: string;
+}
+
+export interface CherryPickResult {
+  issueId: number;
+  issueKey: string;
+  runId: number;
+  branch: string;
+  targetBranch: string;
+  commit: string;
+  prUrl: string;
+  changeRecord: string;
+}
+
 export type WsMessage =
   | { type: 'run_event'; runId: number; issueId: number; event: RunEvent }
   | { type: 'run_updated'; run: Run }
-  | { type: 'issue_updated'; issue: Issue };
+  | { type: 'issue_updated'; issue: Issue }
+  | { type: 'notification'; notification: Notification };
+

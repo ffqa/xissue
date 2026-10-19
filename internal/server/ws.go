@@ -60,6 +60,13 @@ func (h *Hub) BroadcastIssueUpdated(issue *domain.Issue) {
 	})
 }
 
+func (h *Hub) BroadcastNotification(n *domain.Notification) {
+	h.broadcast(map[string]any{
+		"type":         "notification",
+		"notification": n,
+	})
+}
+
 func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
 		InsecureSkipVerify: true, // local / Tailscale origins
@@ -80,10 +87,20 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	ctx := conn.CloseRead(r.Context())
+	pingTicker := time.NewTicker(25 * time.Second)
+	defer pingTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-pingTicker.C:
+			pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := conn.Ping(pctx)
+			cancel()
+			if err != nil {
+				return
+			}
 		case msg := <-ch:
 			wctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 			err := conn.Write(wctx, websocket.MessageText, msg)

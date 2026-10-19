@@ -1,11 +1,20 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
+	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
 
 	"github.com/xpier/xissue/internal/config"
 	"github.com/xpier/xissue/internal/server"
@@ -41,6 +50,23 @@ func main() {
 		cfg.Token = *token
 	}
 
+	if flag.NArg() > 0 && flag.Arg(0) == "mcp" {
+		if flag.NArg() > 1 && flag.Arg(1) == "install" {
+			exe, _ := os.Executable()
+			if exe == "" {
+				exe = "xissue"
+			}
+			installed, err := server.InstallMCPTargets(exe, nil)
+			if err != nil {
+				log.Fatalf("mcp install: %v", err)
+			}
+			fmt.Printf("Installed xIssue MCP (%s mcp) into: %s\n", exe, strings.Join(installed, ", "))
+			return
+		}
+		runMCPStdio(cfg)
+		return
+	}
+
 	for _, dir := range []string{cfg.DataDir, cfg.MirrorsDir(), cfg.RunsDir(), cfg.IssuesDir()} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			log.Fatalf("mkdir %s: %v", dir, err)
@@ -54,8 +80,67 @@ func main() {
 	defer st.Close()
 
 	srv := server.New(cfg, st)
+	httpSrv := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		log.Printf("xIssue shutting down gracefully...")
+		srv.Shutdown()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpSrv.Shutdown(ctx)
+	}()
+
 	log.Printf("xIssue v%s listening on http://%s (data: %s)", server.Version, cfg.Listen, cfg.DataDir)
-	if err := http.ListenAndServe(cfg.Listen, srv.Handler()); err != nil {
+	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
+
+// runMCPStdio bridges standard MCP JSON-RPC 2.0 over stdin/stdout to the running xIssue HTTP server.
+func runMCPStdio(cfg *config.Config) {
+	addr := cfg.Listen
+	if strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	} else if strings.HasPrefix(addr, "0.0.0.0:") {
+		addr = "127.0.0.1:" + strings.TrimPrefix(addr, "0.0.0.0:")
+	}
+	endpoint := "http://" + addr + "/api/mcp"
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	sc := bufio.NewScanner(os.Stdin)
+	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	for sc.Scan() {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		req, err := http.NewRequest("POST", endpoint, bytes.NewReader(line))
+		if err != nil {
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if cfg.Token != "" {
+			req.Header.Set("Authorization", "Bearer "+cfg.Token)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "xissue mcp forward error: %v\n", err)
+			continue
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		body = bytes.TrimSpace(body)
+		if len(body) > 0 && resp.StatusCode == http.StatusOK {
+			os.Stdout.Write(body)
+			os.Stdout.Write([]byte("\n"))
+		}
+	}
+}
+

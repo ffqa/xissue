@@ -31,13 +31,15 @@ deploy: build service-restart ## 一键编译前后端并重启后台常驻服�
 
 run: ## 前台直接启动已编译的 bin/xissue（若未编译则先构建）
 	@test -x $(BINARY) || $(MAKE) build
+	xattr -r -c ./$(BINARY) 2>/dev/null || true
 	./$(BINARY)
 
 dev: ## 前台使用 go run 启动后端服务
 	go run ./cmd/xissue
 
 install-service: build ## 构建并安装/启用系统级后台自启服务 (macOS launchd / Linux systemd)
-	chmod +x ./scripts/install-service.sh
+	chmod +x ./scripts/install-service.sh ./$(BINARY)
+	xattr -r -c ./$(BINARY) 2>/dev/null || true
 	./scripts/install-service.sh install
 
 mcp-install: server ## 一键将 xIssue MCP 插件写入本机所有 IDE / Agent 配置 (opencode / claude / cursor / windsurf)

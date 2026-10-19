@@ -116,6 +116,16 @@ class Xissue < Formula
     error_log_path var/"log/xissue.log"
   end
 
+  def caveats
+    <<~EOS
+      启动后台常驻服务方式（二选一）：
+      1. Homebrew 服务管理:
+         brew services start ffqa/tap/xissue
+      2. xIssue 自管服务 (推荐，开机自启):
+         xissue service install
+    EOS
+  end
+
   test do
     assert_match "xissue", shell_output("#{bin}/xissue version")
   end

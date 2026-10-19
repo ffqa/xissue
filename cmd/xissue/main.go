@@ -32,6 +32,7 @@ func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: xissue [options] [subcommand]\n\n")
 		fmt.Fprintf(os.Stderr, "Subcommands:\n")
+		fmt.Fprintf(os.Stderr, "  service [cmd]        管理开机自启常驻服务 (install/uninstall/status/restart)\n")
 		fmt.Fprintf(os.Stderr, "  update [--check]     检查并升级 xIssue (支持 Homebrew / 独立二进制自更新)\n")
 		fmt.Fprintf(os.Stderr, "  mcp [--install]      运行或注册 MCP JSON-RPC 服务到本机 IDE / Agent\n")
 		fmt.Fprintf(os.Stderr, "  version              打印当前版本并退出\n\n")
@@ -42,6 +43,11 @@ func main() {
 
 	if *showVer || (flag.NArg() > 0 && flag.Arg(0) == "version") {
 		fmt.Println("xissue v" + server.Version)
+		return
+	}
+
+	if flag.NArg() > 0 && flag.Arg(0) == "service" {
+		runService(flag.Args()[1:])
 		return
 	}
 

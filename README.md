@@ -17,7 +17,9 @@ xIssue 提供多种安装与运行方式（已内置完整前端与数据引擎�
 brew tap ffqa/tap
 brew install ffqa/tap/xissue
 
-# 2. 启动常驻后台自启服务（默认监听 http://127.0.0.1:7789）
+# 2. 安装并启动系统级常驻自启服务（二选一）：
+xissue service install               # 推荐：xIssue 内置自管服务（开机自启）
+# 或使用 Homebrew 托管：
 brew services start ffqa/tap/xissue
 
 # 3. （可选）一键把 xIssue MCP 插件注册到本机所有主流 IDE / CLI Agent
@@ -26,20 +28,30 @@ xissue mcp --install
 
 ### 方式二：下载预编译 Release 单文件运行
 
-可以直接从 [GitHub Releases](https://github.com/ffqa/xissue/releases) 下载对应系统的包：
+可以直接从 [GitHub Releases](https://github.com/ffqa/xissue/releases) 下载对应系统的预编译包：
 
 ```bash
 # 1. 下载最新发布包（以 macOS Apple Silicon 为例，架构可选：darwin-arm64 / darwin-amd64 / linux-amd64 / linux-arm64）
 curl -fL "$(curl -s https://api.github.com/repos/ffqa/xissue/releases/latest | grep "browser_download_url.*darwin-arm64.tar.gz" | cut -d '"' -f 4)" | tar -xz
 cd xissue-*-darwin-arm64
 
-# 2. 安装为开机自启常驻服务（launchd / systemd）
-./scripts/install-service.sh
+# 2. 一键安装为开机自启常驻服务（自动复制到 ~/.local/bin 并生成配置，无需保留解压包）
+./xissue service install
 ```
 
 > **安全与持久化保障**：
-> `install-service.sh` 安装时会自动将 `xissue` 安装到 `$HOME/.local/bin/xissue` 并清理系统隔离属性。
-> LaunchAgent plist / systemd 服务配置**直接指向持久化目录**，安装完成后可安全删除下载解压的临时目录，服务完全不受影响。
+> `xissue service install` 会自动将二进制复制安装到 `$HOME/.local/bin/xissue` 并清理 macOS 隔离属性。
+> LaunchAgent plist（macOS）与 systemd（Linux）配置**100% 固定指向持久化路径**，安装完成后可立刻删除下载解压的目录，常驻后台服务完全不受影响！
+
+### 🛠️ 常驻后台服务管理命令 (`xissue service`)
+
+无论通过 Homebrew 安装还是预编译包安装，均可直接使用 `xissue service` 管理后台常驻服务：
+
+```bash
+xissue service status     # 查看常驻服务运行状态与 7789 端口监听
+xissue service restart    # 重启常驻服务
+xissue service uninstall  # 停止并卸载常驻自启服务
+```
 
 ### 🔄 检查与版本自动升级 (`xissue update`)
 

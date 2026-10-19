@@ -23,8 +23,13 @@ interface Repo {
   testCommand: string;     // 可选
 }
 
+type DevMode = "single_main" | "main_dev";
+
 interface Project {
   id: number; name: string; description: string;
+  devMode: DevMode;        // "single_main" (默认直合本地 main) | "main_dev" (必须提 PR 到 dev)
+  targetBranch: string;    // 默认目标分支，如 "main" 或 "dev"
+  autoPrOnConfirm: boolean;
   repos: Repo[];
   createdAt: string; updatedAt: string;
 }
@@ -116,7 +121,7 @@ interface RunEvent {
 | GET | `/api/runs/{id}/changes` | `[{ repoId, repoName, branch, files: [{ path, status, additions, deletions }] }]`，status 为 `M/A/D/R/?` |
 | GET | `/api/runs/{id}/file?repoId=&path=&side=base\|work` | `{ content: string }`，base 为默认分支版本 |
 | PUT | `/api/runs/{id}/file?repoId=&path=` | `{ content }` 保存到工作区 |
-| POST | `/api/runs/{id}/submit` | `{ mode: "pr" \| "push", title?, body?, commitMessage? }` → `{ results: [{ repoId, repoName, branch, commit, prUrl, error }] }` |
+| POST | `/api/runs/{id}/submit` | `{ mode: "merge_local" \| "pr" \| "push", title?, body?, commitMessage?, targetBranch?, changeItems?, remark? }` → `{ results: [{ repoId, repoName, branch, targetBranch, commit, prUrl, changeRecord, error }] }` |
 | POST | `/api/runs/{id}/discard` | 删除 worktree 与分支 |
 
 ## WebSocket

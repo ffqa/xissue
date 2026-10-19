@@ -8,6 +8,7 @@ import type {
   CherryPickResult,
   Comment,
   CommitInfo,
+  DevMode,
   Health,
   InspectResult,
   Issue,
@@ -94,11 +95,18 @@ export const api = {
   markAllNotificationsRead: () => post<void>('/api/notifications/read-all'),
 
   projects: () => get<Project[]>('/api/projects'),
-  createProject: (b: { name: string; description: string }) => post<Project>('/api/projects', b),
+  createProject: (b: { name: string; description: string; devMode?: DevMode }) =>
+    post<Project>('/api/projects', b),
   project: (id: number) => get<Project>(`/api/projects/${id}`),
   updateProject: (
     id: number,
-    b: { name?: string; description?: string; targetBranch?: string; autoPrOnConfirm?: boolean },
+    b: {
+      name?: string;
+      description?: string;
+      devMode?: DevMode;
+      targetBranch?: string;
+      autoPrOnConfirm?: boolean;
+    },
   ) => patch<Project>(`/api/projects/${id}`, b),
   deleteProject: (id: number) => del<void>(`/api/projects/${id}`),
   addRepo: (projectId: number, b: RepoInput) => post<Repo>(`/api/projects/${projectId}/repos`, b),

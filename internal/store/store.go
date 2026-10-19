@@ -41,7 +41,8 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN pr_state TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN change_record TEXT NOT NULL DEFAULT ''`)
-	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN target_branch TEXT NOT NULL DEFAULT 'dev'`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN dev_mode TEXT NOT NULL DEFAULT 'single_main'`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN target_branch TEXT NOT NULL DEFAULT 'main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1`)
 	return &Store{db: db}, nil
 }
@@ -73,20 +74,29 @@ func nullInt(ns sql.NullInt64) *int64 {
 
 // ---------- Projects ----------
 
-const projectCols = `id, name, description, target_branch, auto_pr_on_confirm, created_at, updated_at`
+const projectCols = `id, name, description, dev_mode, target_branch, auto_pr_on_confirm, created_at, updated_at`
 
 func scanProject(s interface{ Scan(...any) error }) (domain.Project, error) {
 	var p domain.Project
 	var c, u string
 	var autoPR int
-	err := s.Scan(&p.ID, &p.Name, &p.Description, &p.TargetBranch, &autoPR, &c, &u)
+	var devMode string
+	err := s.Scan(&p.ID, &p.Name, &p.Description, &devMode, &p.TargetBranch, &autoPR, &c, &u)
 	if err != nil {
 		return p, err
 	}
 	p.CreatedAt, p.UpdatedAt = parseTime(c), parseTime(u)
 	p.AutoPROnConfirm = autoPR != 0
+	p.DevMode = domain.DevMode(devMode)
+	if p.DevMode != domain.DevModeMainDev && p.DevMode != domain.DevModeSingleMain {
+		p.DevMode = domain.DevModeSingleMain
+	}
 	if p.TargetBranch == "" {
-		p.TargetBranch = "dev"
+		if p.DevMode == domain.DevModeMainDev {
+			p.TargetBranch = "dev"
+		} else {
+			p.TargetBranch = "main"
+		}
 	}
 	return p, nil
 }
@@ -130,10 +140,18 @@ func (s *Store) GetProject(ctx context.Context, id int64) (*domain.Project, erro
 	return &p, err
 }
 
-func (s *Store) CreateProject(ctx context.Context, name, desc string) (*domain.Project, error) {
+func (s *Store) CreateProject(ctx context.Context, name, desc string, devMode ...domain.DevMode) (*domain.Project, error) {
 	t := now()
-	res, err := s.db.ExecContext(ctx, `INSERT INTO projects(name, description, target_branch, auto_pr_on_confirm, created_at, updated_at) VALUES(?,?,?,?,?,?)`,
-		name, desc, "dev", 1, t, t)
+	dm := domain.DevModeSingleMain
+	if len(devMode) > 0 && devMode[0] == domain.DevModeMainDev {
+		dm = domain.DevModeMainDev
+	}
+	targetBranch := "main"
+	if dm == domain.DevModeMainDev {
+		targetBranch = "dev"
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO projects(name, description, dev_mode, target_branch, auto_pr_on_confirm, created_at, updated_at) VALUES(?,?,?,?,?,?,?)`,
+		name, desc, string(dm), targetBranch, 1, t, t)
 	if err != nil {
 		return nil, err
 	}
@@ -142,10 +160,11 @@ func (s *Store) CreateProject(ctx context.Context, name, desc string) (*domain.P
 }
 
 type ProjectPatch struct {
-	Name            *string `json:"name"`
-	Description     *string `json:"description"`
-	TargetBranch    *string `json:"targetBranch"`
-	AutoPROnConfirm *bool   `json:"autoPrOnConfirm"`
+	Name            *string         `json:"name"`
+	Description     *string         `json:"description"`
+	DevMode         *domain.DevMode `json:"devMode"`
+	TargetBranch    *string         `json:"targetBranch"`
+	AutoPROnConfirm *bool           `json:"autoPrOnConfirm"`
 }
 
 func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch) (*domain.Project, error) {
@@ -159,10 +178,22 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 	if patch.Description != nil {
 		p.Description = *patch.Description
 	}
+	if patch.DevMode != nil {
+		dm := *patch.DevMode
+		if dm == domain.DevModeMainDev {
+			p.DevMode = domain.DevModeMainDev
+		} else {
+			p.DevMode = domain.DevModeSingleMain
+		}
+	}
 	if patch.TargetBranch != nil {
 		p.TargetBranch = strings.TrimSpace(*patch.TargetBranch)
-		if p.TargetBranch == "" {
+	}
+	if p.TargetBranch == "" {
+		if p.DevMode == domain.DevModeMainDev {
 			p.TargetBranch = "dev"
+		} else {
+			p.TargetBranch = "main"
 		}
 	}
 	if patch.AutoPROnConfirm != nil {
@@ -172,8 +203,8 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 	if p.AutoPROnConfirm {
 		autoInt = 1
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, target_branch=?, auto_pr_on_confirm=?, updated_at=? WHERE id=?`,
-		p.Name, p.Description, p.TargetBranch, autoInt, now(), id); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, dev_mode=?, target_branch=?, auto_pr_on_confirm=?, updated_at=? WHERE id=?`,
+		p.Name, p.Description, string(p.DevMode), p.TargetBranch, autoInt, now(), id); err != nil {
 		return nil, err
 	}
 	return s.GetProject(ctx, id)

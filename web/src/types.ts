@@ -12,10 +12,13 @@ export interface Repo {
   testCommand: string;
 }
 
+export type DevMode = 'single_main' | 'main_dev';
+
 export interface Project {
   id: number;
   name: string;
   description: string;
+  devMode?: DevMode;
   targetBranch: string;
   autoPrOnConfirm: boolean;
   repos: Repo[];
@@ -194,7 +197,7 @@ export interface SubmitResult {
 }
 
 export interface SubmitRequest {
-  mode: 'pr' | 'push';
+  mode: 'pr' | 'push' | 'merge_local';
   title?: string;
   body?: string;
   commitMessage?: string;

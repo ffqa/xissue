@@ -26,10 +26,18 @@ type Repo struct {
 	TestCommand   string   `json:"testCommand"`
 }
 
+type DevMode string
+
+const (
+	DevModeSingleMain DevMode = "single_main" // 单一 main 模式（默认直接提到本地 main，可提 PR 到 main）
+	DevModeMainDev    DevMode = "main_dev"    // main 和 dev 模式（默认提 PR 到 dev，可提 PR 到 main）
+)
+
 type Project struct {
 	ID              int64     `json:"id"`
 	Name            string    `json:"name"`
 	Description     string    `json:"description"`
+	DevMode         DevMode   `json:"devMode"`
 	TargetBranch    string    `json:"targetBranch"`
 	AutoPROnConfirm bool      `json:"autoPrOnConfirm"`
 	Repos           []Repo    `json:"repos"`

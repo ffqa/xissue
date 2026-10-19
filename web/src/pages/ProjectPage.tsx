@@ -7,6 +7,7 @@ import { LocalDirPickerModal } from '../components/LocalDirPicker';
 import { CherryPickModal } from '../components/CherryPickModal';
 import { toast } from '../toast';
 import {
+  type DevMode,
   type InspectResult,
   type Issue,
   type IssueStatus,
@@ -130,16 +131,17 @@ export default function ProjectPage() {
   });
 
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [cfgTargetBranch, setCfgTargetBranch] = useState('dev');
+  const [cfgDevMode, setCfgDevMode] = useState<DevMode>('single_main');
+  const [cfgTargetBranch, setCfgTargetBranch] = useState('main');
   const [cfgAutoPR, setCfgAutoPR] = useState(true);
 
   const updateProjectMut = useMutation({
-    mutationFn: (b: { targetBranch?: string; autoPrOnConfirm?: boolean }) =>
+    mutationFn: (b: { devMode?: DevMode; targetBranch?: string; autoPrOnConfirm?: boolean }) =>
       api.updateProject(id, b),
     onSuccess: (updated) => {
       qc.setQueryData(qk.project(id), updated);
       setSettingsOpen(false);
-      toast.success('项目工作流设置已保存');
+      toast.success('项目开发模式与工作流设置已保存');
     },
     onError: (e) => toast.error((e as Error).message),
   });
@@ -402,13 +404,16 @@ export default function ProjectPage() {
         <button
           className="ghost"
           onClick={() => {
-            setCfgTargetBranch(p?.targetBranch || 'dev');
+            const curMode = p?.devMode || 'single_main';
+            setCfgDevMode(curMode);
+            setCfgTargetBranch(p?.targetBranch || (curMode === 'main_dev' ? 'dev' : 'main'));
             setCfgAutoPR(p?.autoPrOnConfirm ?? true);
             setSettingsOpen(true);
           }}
-          title="设置 PR 默认目标基准分支（如 dev）及验收自动提 PR 策略，避免直接合入 main 触发自动打包"
+          title="设置项目的开发模式（单一 main vs main 和 dev）与分支合并/PR策略"
         >
-          ⚙️ PR目标: <code className="mono" style={{ color: 'var(--accent)' }}>{p?.targetBranch || 'dev'}</code>
+          ⚙️ 模式: <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{p?.devMode === 'main_dev' ? 'main+dev (PR)' : '单一 main'}</span>
+          <span className="dim" style={{ marginLeft: 4 }}>({p?.targetBranch || (p?.devMode === 'main_dev' ? 'dev' : 'main')})</span>
         </button>
         <button className="primary" onClick={() => setIssueOpen(true)}>
           + 新建 Issue
@@ -939,7 +944,7 @@ export default function ProjectPage() {
 
       {settingsOpen && (
         <Modal
-          title="⚙️ 项目工作流与分支合并策略设置"
+          title="⚙️ 项目开发模式与工作流设置"
           size="md"
           onClose={() => setSettingsOpen(false)}
           footer={
@@ -950,6 +955,7 @@ export default function ProjectPage() {
                 disabled={!cfgTargetBranch.trim() || updateProjectMut.isPending}
                 onClick={() =>
                   updateProjectMut.mutate({
+                    devMode: cfgDevMode,
                     targetBranch: cfgTargetBranch.trim(),
                     autoPrOnConfirm: cfgAutoPR,
                   })
@@ -960,18 +966,88 @@ export default function ProjectPage() {
             </>
           }
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div>
+              <label style={{ fontWeight: 600, marginBottom: 8, display: 'block', fontSize: 13 }}>
+                选择项目开发模式 (Dev Mode)
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <div
+                  onClick={() => {
+                    setCfgDevMode('single_main');
+                    if (cfgTargetBranch === 'dev') setCfgTargetBranch('main');
+                  }}
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 8,
+                    border: `2px solid ${cfgDevMode === 'single_main' ? 'var(--accent)' : 'var(--border)'}`,
+                    background: cfgDevMode === 'single_main' ? 'var(--bg-2)' : 'var(--bg-1)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  <div className="row" style={{ gap: 6, fontWeight: 600, marginBottom: 4 }}>
+                    <input
+                      type="radio"
+                      name="dev_mode"
+                      checked={cfgDevMode === 'single_main'}
+                      onChange={() => {
+                        setCfgDevMode('single_main');
+                        if (cfgTargetBranch === 'dev') setCfgTargetBranch('main');
+                      }}
+                    />
+                    <span>🌱 单一 main 模式</span>
+                  </div>
+                  <div className="small muted" style={{ lineHeight: 1.4 }}>
+                    改完后<b>默认直接提到本地 main</b>，也可选择提交 PR 到 main。适合单人开发或未配置 CI 打包的项目。
+                  </div>
+                </div>
+
+                <div
+                  onClick={() => {
+                    setCfgDevMode('main_dev');
+                    if (cfgTargetBranch === 'main') setCfgTargetBranch('dev');
+                  }}
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 8,
+                    border: `2px solid ${cfgDevMode === 'main_dev' ? 'var(--accent)' : 'var(--border)'}`,
+                    background: cfgDevMode === 'main_dev' ? 'var(--bg-2)' : 'var(--bg-1)',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  <div className="row" style={{ gap: 6, fontWeight: 600, marginBottom: 4 }}>
+                    <input
+                      type="radio"
+                      name="dev_mode"
+                      checked={cfgDevMode === 'main_dev'}
+                      onChange={() => {
+                        setCfgDevMode('main_dev');
+                        if (cfgTargetBranch === 'main') setCfgTargetBranch('dev');
+                      }}
+                    />
+                    <span>🌿 main 和 dev 模式</span>
+                  </div>
+                  <div className="small muted" style={{ lineHeight: 1.4 }}>
+                    <b>必须提 PR</b>！默认提交 PR 到 <code>dev</code> (pr→dev)，避免 main 一提交就自动打包；后续由 dev 合入 main。
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <label className="field">
-              PR 默认目标基准分支 (Target Branch)
+              默认目标基准分支 (Target Branch)
               <input
                 className="mono"
                 value={cfgTargetBranch}
                 onChange={(e) => setCfgTargetBranch(e.target.value)}
-                placeholder="dev"
-                autoFocus
+                placeholder={cfgDevMode === 'main_dev' ? 'dev' : 'main'}
               />
               <span className="small dim">
-                💡 推荐设为 <code>dev</code>。Issue 改完后 PR 将默认提到此分支，待集成验证后再由 dev 合入 main，避免 main 一提交就自动打包触发构建/发布。
+                {cfgDevMode === 'main_dev'
+                  ? '💡 双分支模式下推荐为 dev。改动将提交 PR 到此分支，不碰 main，防止触发自动构建。'
+                  : '💡 单一 main 模式下默认为 main。改完直接合入此本地分支。'}
               </span>
             </label>
 
@@ -982,7 +1058,7 @@ export default function ProjectPage() {
                 className="sm ghost"
                 onClick={() => setCfgTargetBranch('dev')}
               >
-                dev (推荐)
+                dev
               </button>
               <button
                 type="button"
@@ -1011,7 +1087,7 @@ export default function ProjectPage() {
                 onChange={(e) => setCfgAutoPR(e.target.checked)}
               />
               <span style={{ fontSize: 13 }}>
-                <b>改完验收通过后自动创建 PR</b>（向上述目标基准分支发起 PR，生成标准改动记录）
+                <b>改完验收通过后自动提交/提 PR</b>（根据当前开发模式执行合入或发起 PR，并记录变更）
               </span>
             </label>
           </div>

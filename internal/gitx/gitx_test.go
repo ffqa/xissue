@@ -1,6 +1,8 @@
 package gitx
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -33,5 +35,61 @@ func TestValidateSHA(t *testing.T) {
 		if err := ValidateSHA(sha); err == nil {
 			t.Errorf("expected %q to be invalid, got nil", sha)
 		}
+	}
+}
+
+func TestMergeBranchToTargetLocal(t *testing.T) {
+	ctx := t.Context()
+	localDir := t.TempDir()
+
+	// Init local repo with main branch and an initial commit
+	if _, err := Run(ctx, localDir, "init", "-b", "main"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	_, _ = Run(ctx, localDir, "config", "user.name", "Tester")
+	_, _ = Run(ctx, localDir, "config", "user.email", "tester@example.com")
+	if _, err := Run(ctx, localDir, "commit", "--allow-empty", "-m", "init"); err != nil {
+		t.Fatalf("initial commit: %v", err)
+	}
+
+	// Create a bare mirror
+	mirrorDir := t.TempDir()
+	if err := EnsureMirror(ctx, localDir, mirrorDir); err != nil {
+		t.Fatalf("EnsureMirror: %v", err)
+	}
+
+	// Create worktree on branch feat-1
+	wtDir := t.TempDir()
+	if err := AddWorktree(ctx, mirrorDir, wtDir, "feat-1", "main"); err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+	defer RemoveWorktree(ctx, mirrorDir, wtDir, "feat-1")
+
+	// Commit a new file in worktree
+	newFile := filepath.Join(wtDir, "hello.txt")
+	if err := os.WriteFile(newFile, []byte("world\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	sha, err := CommitAll(ctx, wtDir, "add hello.txt")
+	if err != nil {
+		t.Fatalf("CommitAll: %v", err)
+	}
+
+	// Merge branch feat-1 into main
+	headSHA, err := MergeBranchToTarget(ctx, wtDir, mirrorDir, localDir, "feat-1", "main", "merge feat-1")
+	if err != nil {
+		t.Fatalf("MergeBranchToTarget: %v", err)
+	}
+	if headSHA != sha {
+		t.Errorf("expected headSHA %s, got %s", sha, headSHA)
+	}
+
+	// Verify localDir has hello.txt
+	content, err := os.ReadFile(filepath.Join(localDir, "hello.txt"))
+	if err != nil {
+		t.Fatalf("localDir missing hello.txt after merge: %v", err)
+	}
+	if string(content) != "world\n" {
+		t.Errorf("unexpected content: %q", string(content))
 	}
 }

@@ -453,3 +453,71 @@ func CherryPickAndPush(ctx context.Context, mirror, tempDir, newBranch, targetBa
 	return headSHA, subjects, nil
 }
 
+// MergeBranchToTarget merges sourceBranch directly into targetBranch locally or on remote,
+// bypassing PR workflow.
+// If remoteURL is a local directory, it integrates directly into that local repo.
+// Otherwise, it pushes the worktree commits directly to the remote target branch.
+func MergeBranchToTarget(ctx context.Context, wtDir, mirrorPath, remoteURL, sourceBranch, targetBranch, commitMsg string) (headSHA string, err error) {
+	if err := ValidateBranchName(sourceBranch); err != nil {
+		return "", err
+	}
+	if err := ValidateBranchName(targetBranch); err != nil {
+		return "", err
+	}
+	headSHA, err = Run(ctx, wtDir, "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("rev-parse HEAD: %w", err)
+	}
+
+	// 1. If remoteURL is a local directory (plain / local repo)
+	if isLocalDir(remoteURL) {
+		// First push the source branch to the local directory's repo so it receives the commits.
+		_ = Push(ctx, wtDir, sourceBranch)
+
+		// Check current branch of the local directory.
+		curBranch, err := Run(ctx, remoteURL, "rev-parse", "--abbrev-ref", "HEAD")
+		if err == nil && curBranch == targetBranch {
+			st, _ := Run(ctx, remoteURL, "status", "--porcelain")
+			if strings.TrimSpace(st) == "" {
+				// Clean working tree, directly fast-forward / merge.
+				if _, err := Run(ctx, remoteURL, "merge", "--ff-only", sourceBranch); err != nil {
+					// Fall back to merge commit
+					args := []string{"merge", "-m", fmt.Sprintf("Merge %s into %s", sourceBranch, targetBranch), sourceBranch}
+					if email, _ := Run(ctx, remoteURL, "config", "user.email"); email == "" {
+						args = append([]string{"-c", "user.name=xIssue", "-c", "user.email=xissue@localhost"}, args...)
+					}
+					_, _ = Run(ctx, remoteURL, args...)
+				}
+			} else {
+				// Working tree has uncommitted edits: force-branch or update ref if fast-forward
+				_, _ = Run(ctx, remoteURL, "branch", "-f", targetBranch, sourceBranch)
+			}
+		} else {
+			// Checked out branch is different, directly point targetBranch to the new commit
+			_, _ = Run(ctx, remoteURL, "branch", "-f", targetBranch, sourceBranch)
+		}
+
+		// Also update mirror's ref
+		if mirrorPath != "" {
+			_, _ = Run(ctx, mirrorPath, "fetch", "origin")
+		}
+		return headSHA, nil
+	}
+
+	// 2. Remote repository (GitHub / GitLab / etc.):
+	// First push source branch so work is preserved on remote.
+	_ = Push(ctx, wtDir, sourceBranch)
+
+	// Attempt to push directly into targetBranch (fast-forward).
+	_, pushErr := Run(ctx, wtDir, "push", "origin", sourceBranch+":"+targetBranch)
+	if pushErr != nil {
+		// If direct push fails (e.g. non-fast-forward), return informative error
+		return headSHA, fmt.Errorf("push to %s: %w", targetBranch, pushErr)
+	}
+
+	if mirrorPath != "" {
+		_, _ = Run(ctx, mirrorPath, "fetch", "origin")
+	}
+	return headSHA, nil
+}
+

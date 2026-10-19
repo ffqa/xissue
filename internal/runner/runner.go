@@ -1204,7 +1204,18 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 			items = deriveChangeItems(issue.Title, files)
 		}
 
-		if req.Mode == "pr" {
+		if req.Mode == "merge_local" {
+			mirror := filepath.Join(r.cfg.MirrorsDir(), fmt.Sprintf("repo-%d.git", repo.ID))
+			msha, merr := gitx.MergeBranchToTarget(ctx, wt, mirror, repo.RemoteURL, run.Branch, targetBranch, commitMsg)
+			if merr != nil {
+				res.Error = fmt.Sprintf("直接合入 %s 失败: %v", targetBranch, merr)
+			} else {
+				if msha != "" {
+					res.Commit = msha
+				}
+				res.PRURL = fmt.Sprintf("(已直接合入 %s)", targetBranch)
+			}
+		} else if req.Mode == "pr" {
 			p := provider.For(repo.Provider)
 			if p.Caps().PRs {
 				preRecord := FormatChangeRecord(items, run.Branch, targetBranch, "(创建中)", req.Remark)
@@ -1228,7 +1239,11 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 			}
 		}
 
-		record := FormatChangeRecord(items, run.Branch, targetBranch, res.PRURL, req.Remark)
+		prDisplay := res.PRURL
+		if prDisplay == "" && req.Mode == "push" {
+			prDisplay = "(仅推送分支，未提 PR)"
+		}
+		record := FormatChangeRecord(items, run.Branch, targetBranch, prDisplay, req.Remark)
 		res.ChangeRecord = record
 		lastChangeRecord = record
 		results = append(results, res)

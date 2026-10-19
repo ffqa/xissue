@@ -22,6 +22,7 @@ import { toast } from '../toast';
 import {
   ACTIVE_RUN_STATUSES,
   ISSUE_STATUSES,
+  type DevMode,
   type IssueStatus,
   type RepoChanges,
   type Run,
@@ -521,6 +522,7 @@ export default function IssuePage() {
                   issueTitle={issue?.title ?? ''}
                   editorTemplate={healthQ.data?.editorUrlTemplate}
                   targetBranch={project?.targetBranch}
+                  devMode={project?.devMode}
                   autoPrOnConfirm={project?.autoPrOnConfirm}
                 />
               )}
@@ -802,13 +804,15 @@ function ReviewPane({
   isRunning,
   issueTitle,
   editorTemplate,
-  targetBranch = 'dev',
+  devMode = 'single_main',
+  targetBranch = 'main',
   autoPrOnConfirm = true,
 }: {
   run: Run;
   isRunning: boolean;
   issueTitle: string;
   editorTemplate?: string;
+  devMode?: DevMode;
   targetBranch?: string;
   autoPrOnConfirm?: boolean;
 }) {
@@ -866,10 +870,12 @@ function ReviewPane({
     },
   });
 
-  const [subMode, setSubMode] = useState<'pr' | 'push' | null>(null);
+  const [subMode, setSubMode] = useState<'pr' | 'push' | 'merge_local' | null>(null);
   const [subTitle, setSubTitle] = useState(issueTitle);
   const [subCommit, setSubCommit] = useState(issueTitle);
-  const [subTargetBranch, setSubTargetBranch] = useState(run.targetBranch || targetBranch || 'dev');
+  const [subTargetBranch, setSubTargetBranch] = useState(
+    run.targetBranch || targetBranch || (devMode === 'main_dev' ? 'dev' : 'main'),
+  );
   const [subItemsText, setSubItemsText] = useState('');
   const [subRemark, setSubRemark] = useState('');
   const [results, setResults] = useState<SubmitResult[] | null>(null);
@@ -879,8 +885,10 @@ function ReviewPane({
       setSubTargetBranch(run.targetBranch);
     } else if (targetBranch) {
       setSubTargetBranch(targetBranch);
+    } else {
+      setSubTargetBranch(devMode === 'main_dev' ? 'dev' : 'main');
     }
-  }, [run.targetBranch, targetBranch]);
+  }, [run.targetBranch, targetBranch, devMode]);
 
   useEffect(() => {
     setSubTitle(issueTitle);
@@ -888,7 +896,10 @@ function ReviewPane({
   }, [issueTitle]);
 
   // Auto-populate concise change items when opening submit modal
-  const openSubmitModal = (mode: 'pr' | 'push') => {
+  const openSubmitModal = (mode: 'pr' | 'push' | 'merge_local', branch?: string) => {
+    if (branch) {
+      setSubTargetBranch(branch);
+    }
     if (!subItemsText.trim()) {
       const lines: string[] = [];
       if (issueTitle.trim()) lines.push(issueTitle.trim());
@@ -904,7 +915,7 @@ function ReviewPane({
   };
 
   const submit = useMutation({
-    mutationFn: (mode: 'pr' | 'push') =>
+    mutationFn: (mode: 'pr' | 'push' | 'merge_local') =>
       api.submit(run.id, {
         mode,
         title: subTitle.trim(),
@@ -945,8 +956,12 @@ function ReviewPane({
   const previewRecord = formatChangeRecord(
     subItemsText.split('\n'),
     run.branch,
-    subTargetBranch || 'main',
-    subMode === 'pr' ? '(创建 PR 后自动填入链接)' : '无 (仅推送分支)',
+    subTargetBranch || (devMode === 'main_dev' ? 'dev' : 'main'),
+    subMode === 'merge_local'
+      ? `(已直接合入本地 ${subTargetBranch || 'main'})`
+      : subMode === 'pr'
+      ? '(创建 PR 后自动填入链接)'
+      : '无 (仅推送分支)',
     subRemark,
   );
 
@@ -967,27 +982,64 @@ function ReviewPane({
               borderRadius: 6,
               border: '1px solid var(--border)',
             }}
-            title="PR 目标基准分支，避免直接合入 main 触发自动打包"
+            title={
+              devMode === 'main_dev'
+                ? 'main+dev 模式：PR 将默认提交到 dev，避免直接合入 main 触发自动打包'
+                : '单一 main 模式：改动将直接合入本地 main 分支'
+            }
           >
-            <span className="small muted">PR 目标基准:</span>
+            <span className="small muted">模式:</span>
             <code className="mono small" style={{ color: 'var(--accent)' }}>
-              {subTargetBranch || 'dev'}
+              {devMode === 'main_dev' ? `main+dev (PR → ${subTargetBranch || 'dev'})` : '单一 main (本地合入)'}
             </code>
           </div>
         )}
         <span className="grow" />
-        <button
-          className="primary sm"
-          disabled={totalFiles === 0 || isRunning || submit.isPending}
-          onClick={() => openSubmitModal('pr')}
-          title={`改完确认后自动创建 PR 到 ${subTargetBranch || 'dev'}，避免直接合入 main 触发自动打包`}
-        >
-          {submit.isPending
-            ? '创建中…'
-            : autoPrOnConfirm
-            ? `🚀 确认改动并自动创建 PR (→ ${subTargetBranch || 'dev'})`
-            : `提交并创建 PR (→ ${subTargetBranch || 'dev'})`}
-        </button>
+
+        {devMode === 'single_main' ? (
+          <>
+            <button
+              className="primary sm"
+              disabled={totalFiles === 0 || isRunning || submit.isPending}
+              onClick={() => openSubmitModal('merge_local', 'main')}
+              title="改完确认后直接合入本地 main 分支并标记完成"
+            >
+              {submit.isPending ? '合入中…' : '⚡ 确认并合入本地 main'}
+            </button>
+            <button
+              className="sm ghost"
+              disabled={totalFiles === 0 || isRunning || submit.isPending}
+              onClick={() => openSubmitModal('pr', 'main')}
+              title="在远端平台发起 Pull Request 到 main 分支"
+            >
+              提 PR 到 main
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              className="primary sm"
+              disabled={totalFiles === 0 || isRunning || submit.isPending}
+              onClick={() => openSubmitModal('pr', subTargetBranch || 'dev')}
+              title={`改完确认后自动创建 PR 到 ${subTargetBranch || 'dev'}，避免直接合入 main 触发自动打包`}
+            >
+              {submit.isPending
+                ? '创建中…'
+                : autoPrOnConfirm
+                ? `🚀 确认改动并提 PR (→ ${subTargetBranch || 'dev'})`
+                : `提 PR (→ ${subTargetBranch || 'dev'})`}
+            </button>
+            <button
+              className="sm ghost"
+              disabled={totalFiles === 0 || isRunning || submit.isPending}
+              onClick={() => openSubmitModal('pr', 'main')}
+              title="用于紧急修复(Hotfix)，直接提 PR 到 main 分支"
+            >
+              提 PR 到 main
+            </button>
+          </>
+        )}
+
         <button
           className="sm ghost"
           disabled={totalFiles === 0 || isRunning}
@@ -1130,7 +1182,13 @@ function ReviewPane({
 
       {subMode && (
         <Modal
-          title={subMode === 'pr' ? '提交并创建 Pull Request（自动生成改动记录）' : '提交并推送分支（自动生成改动记录）'}
+          title={
+            subMode === 'merge_local'
+              ? '⚡ 确认并合入本地目标分支（自动生成改动记录）'
+              : subMode === 'pr'
+              ? '🚀 提交并创建 Pull Request（自动生成改动记录）'
+              : '☁️ 提交并推送分支（自动生成改动记录）'
+          }
           size="lg"
           onClose={() => setSubMode(null)}
           footer={
@@ -1141,13 +1199,52 @@ function ReviewPane({
                 disabled={!subCommit.trim() || submit.isPending}
                 onClick={() => submit.mutate(subMode)}
               >
-                {submit.isPending ? '处理中…' : subMode === 'pr' ? '确认提交并创建 PR' : '确认提交并推送'}
+                {submit.isPending
+                  ? '处理中…'
+                  : subMode === 'merge_local'
+                  ? '确认并直接合入本地'
+                  : subMode === 'pr'
+                  ? '确认提交并创建 PR'
+                  : '确认提交并推送'}
               </button>
             </>
           }
         >
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div className="col" style={{ gap: 10 }}>
+              <div
+                className="row"
+                style={{
+                  gap: 8,
+                  padding: '4px 0',
+                  borderBottom: '1px solid var(--border)',
+                  marginBottom: 2,
+                }}
+              >
+                <span className="small muted">提交方式:</span>
+                <button
+                  type="button"
+                  className={`sm ${subMode === 'merge_local' ? 'primary' : 'ghost'}`}
+                  onClick={() => setSubMode('merge_local')}
+                >
+                  ⚡ 合入本地分支
+                </button>
+                <button
+                  type="button"
+                  className={`sm ${subMode === 'pr' ? 'primary' : 'ghost'}`}
+                  onClick={() => setSubMode('pr')}
+                >
+                  🚀 创建 PR
+                </button>
+                <button
+                  type="button"
+                  className={`sm ${subMode === 'push' ? 'primary' : 'ghost'}`}
+                  onClick={() => setSubMode('push')}
+                >
+                  ☁️ 仅推送
+                </button>
+              </div>
+
               <div className="row" style={{ gap: 8 }}>
                 <label className="field grow">
                   Commit Message
@@ -1159,17 +1256,9 @@ function ReviewPane({
                     className="mono"
                     value={subTargetBranch}
                     onChange={(e) => setSubTargetBranch(e.target.value)}
-                    placeholder="dev"
+                    placeholder="main"
                   />
                   <div className="row" style={{ gap: 4, marginTop: 4 }}>
-                    <button
-                      type="button"
-                      className="sm ghost"
-                      style={{ fontSize: 11, padding: '0 4px', height: 20 }}
-                      onClick={() => setSubTargetBranch('dev')}
-                    >
-                      dev
-                    </button>
                     <button
                       type="button"
                       className="sm ghost"
@@ -1177,6 +1266,14 @@ function ReviewPane({
                       onClick={() => setSubTargetBranch('main')}
                     >
                       main
+                    </button>
+                    <button
+                      type="button"
+                      className="sm ghost"
+                      style={{ fontSize: 11, padding: '0 4px', height: 20 }}
+                      onClick={() => setSubTargetBranch('dev')}
+                    >
+                      dev
                     </button>
                   </div>
                 </label>

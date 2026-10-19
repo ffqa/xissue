@@ -21,7 +21,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.3"
+const Version = "0.2.4"
 
 type Server struct {
 	cfg    *config.Config
@@ -281,8 +281,9 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		DevMode     *domain.DevMode `json:"devMode"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -292,7 +293,11 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("name is required"))
 		return
 	}
-	p, err := s.st.CreateProject(r.Context(), strings.TrimSpace(body.Name), body.Description)
+	var dm []domain.DevMode
+	if body.DevMode != nil {
+		dm = append(dm, *body.DevMode)
+	}
+	p, err := s.st.CreateProject(r.Context(), strings.TrimSpace(body.Name), body.Description, dm...)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return

@@ -467,8 +467,12 @@ func injectJSONMap(path, topKey, entryKey string, entryVal any) error {
 	if err != nil {
 		return err
 	}
+	var perm os.FileMode = 0o644
+	if info, err := os.Stat(path); err == nil {
+		perm = info.Mode().Perm()
+	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(out, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(tmp, append(out, '\n'), perm); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

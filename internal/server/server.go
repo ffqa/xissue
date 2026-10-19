@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -20,7 +21,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.1"
+const Version = "0.2.2"
 
 type Server struct {
 	cfg    *config.Config
@@ -105,6 +106,7 @@ func (s *Server) routes() {
 	m.HandleFunc("DELETE /api/projects/{id}", s.handleDeleteProject)
 
 	m.HandleFunc("POST /api/projects/{id}/repos", s.handleAddRepo)
+	m.HandleFunc("POST /api/projects/{id}/repos/refresh", s.handleRefreshRepos)
 	m.HandleFunc("DELETE /api/projects/{id}/repos/{repoId}", s.handleDeleteRepo)
 	m.HandleFunc("POST /api/projects/{id}/sync", s.handleSyncProject)
 
@@ -247,6 +249,19 @@ func (s *Server) handleInspectDir(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+func (s *Server) refreshProjectRepos(ctx context.Context, p *domain.Project) {
+	if p == nil {
+		return
+	}
+	for i := range p.Repos {
+		if gitx.DetectRepoRemote(ctx, &p.Repos[i]) {
+			if updated, err := s.st.UpdateRepo(ctx, p.Repos[i]); err == nil {
+				p.Repos[i] = *updated
+			}
+		}
+	}
+}
+
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	list, err := s.st.ListProjects(r.Context())
 	if err != nil {
@@ -255,6 +270,9 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	if list == nil {
 		list = []domain.Project{}
+	}
+	for i := range list {
+		s.refreshProjectRepos(r.Context(), &list[i])
 	}
 	writeJSON(w, http.StatusOK, list)
 }
@@ -290,6 +308,21 @@ func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	s.refreshProjectRepos(r.Context(), p)
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (s *Server) handleRefreshRepos(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	p, err := s.st.GetProject(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	s.refreshProjectRepos(r.Context(), p)
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -372,11 +405,13 @@ func (s *Server) handleSyncProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	repos, err := s.st.ListRepos(r.Context(), projectID)
+	p, err := s.st.GetProject(r.Context(), projectID)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
+		writeStoreErr(w, err)
 		return
 	}
+	s.refreshProjectRepos(r.Context(), p)
+	repos := p.Repos
 	imported := 0
 	for _, repo := range repos {
 		p := provider.For(repo.Provider)

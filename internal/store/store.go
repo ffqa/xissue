@@ -196,6 +196,15 @@ func (s *Store) CreateRepo(ctx context.Context, r domain.Repo) (*domain.Repo, er
 	return s.GetRepo(ctx, id)
 }
 
+func (s *Store) UpdateRepo(ctx context.Context, r domain.Repo) (*domain.Repo, error) {
+	_, err := s.db.ExecContext(ctx, `UPDATE repos SET name=?, provider=?, remote_url=?, owner_repo=?, default_branch=?, test_command=? WHERE id=? AND project_id=?`,
+		r.Name, r.Provider, r.RemoteURL, r.OwnerRepo, r.DefaultBranch, r.TestCommand, r.ID, r.ProjectID)
+	if err != nil {
+		return nil, err
+	}
+	return s.GetRepo(ctx, r.ID)
+}
+
 func (s *Store) DeleteRepo(ctx context.Context, projectID, repoID int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM repos WHERE id=? AND project_id=?`, repoID, projectID)
 	return err

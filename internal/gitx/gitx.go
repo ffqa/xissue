@@ -105,6 +105,9 @@ func EnsureMirror(ctx context.Context, remote, path string) error {
 			return err
 		}
 	}
+	if remote != "" {
+		_, _ = Run(ctx, path, "config", "remote.origin.url", remote)
+	}
 	// Always ensure the fetch refspec is set so `fetch origin` populates refs/remotes/origin/*.
 	if _, err := Run(ctx, path, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"); err != nil {
 		return err

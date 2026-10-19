@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/xpier/xissue/internal/domain"
 )
 
 // DirEntry represents one directory in the server's filesystem browser.
@@ -287,3 +289,56 @@ func parseRemote(raw string) (string, string) {
 		return "plain", path
 	}
 }
+
+// DetectRepoRemote inspects an existing Repo and checks if its remote or local directory
+// has configured or changed remote URLs (e.g. after user pushes a plain local repo to GitHub).
+// It returns true if any field on repo was updated.
+func DetectRepoRemote(ctx context.Context, repo *domain.Repo) bool {
+	changed := false
+	remoteCandidate := repo.RemoteURL
+
+	if isLocalDir(repo.RemoteURL) {
+		// Check local repository's remotes (origin first)
+		if u, err := Run(ctx, repo.RemoteURL, "remote", "get-url", "origin"); err == nil && strings.TrimSpace(u) != "" {
+			remoteCandidate = strings.TrimSpace(u)
+		} else if remList, err := Run(ctx, repo.RemoteURL, "remote"); err == nil {
+			first := splitLines(remList)
+			if len(first) > 0 {
+				if u, err := Run(ctx, repo.RemoteURL, "remote", "get-url", first[0]); err == nil && strings.TrimSpace(u) != "" {
+					remoteCandidate = strings.TrimSpace(u)
+				}
+			}
+		}
+	}
+
+	if remoteCandidate != "" && remoteCandidate != repo.RemoteURL {
+		prov, ownerRepo := parseRemote(remoteCandidate)
+		if prov != "plain" || repo.Provider == domain.ProviderPlain {
+			if repo.RemoteURL != remoteCandidate {
+				repo.RemoteURL = remoteCandidate
+				changed = true
+			}
+			if repo.Provider != domain.Provider(prov) {
+				repo.Provider = domain.Provider(prov)
+				changed = true
+			}
+			if repo.OwnerRepo != ownerRepo && ownerRepo != "" {
+				repo.OwnerRepo = ownerRepo
+				changed = true
+			}
+		}
+	} else if repo.RemoteURL != "" {
+		prov, ownerRepo := parseRemote(repo.RemoteURL)
+		if prov != string(repo.Provider) && prov != "plain" {
+			repo.Provider = domain.Provider(prov)
+			changed = true
+		}
+		if ownerRepo != repo.OwnerRepo && ownerRepo != "" {
+			repo.OwnerRepo = ownerRepo
+			changed = true
+		}
+	}
+
+	return changed
+}
+

@@ -176,8 +176,18 @@ export default function ProjectPage() {
   const sync = useMutation({
     mutationFn: () => api.syncProject(id),
     onSuccess: (r) => {
+      refreshProject();
       toast.success(`已从平台同步 ${r.imported} 个新 Issue 到待办池`);
       qc.invalidateQueries({ queryKey: qk.issues(id) });
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const refreshReposMut = useMutation({
+    mutationFn: () => api.refreshRepos(id),
+    onSuccess: (updated) => {
+      qc.setQueryData(qk.project(id), updated);
+      toast.success('已刷新并自动识别各仓库最新的远端 Git 平台配置');
     },
     onError: (e) => toast.error((e as Error).message),
   });
@@ -333,6 +343,14 @@ export default function ProjectPage() {
         <div className="panel">
           <div className="panel-h">
             <h3 className="grow">📦 关联仓库 ({(p?.repos ?? []).length})</h3>
+            <button
+              className="sm"
+              title="自动检测本地仓库是否已添加远程或推送到 GitHub/GitLab 平台并自动更新识别"
+              disabled={refreshReposMut.isPending}
+              onClick={() => refreshReposMut.mutate()}
+            >
+              {refreshReposMut.isPending ? '检测中…' : '↻ 刷新识别'}
+            </button>
             <button className="sm" onClick={() => setPickerOpen(true)}>
               📂 选择本地仓库
             </button>

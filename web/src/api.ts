@@ -101,6 +101,7 @@ export const api = {
   addRepo: (projectId: number, b: RepoInput) => post<Repo>(`/api/projects/${projectId}/repos`, b),
   deleteRepo: (projectId: number, repoId: number) => del<void>(`/api/projects/${projectId}/repos/${repoId}`),
   syncProject: (id: number) => post<{ imported: number }>(`/api/projects/${id}/sync`),
+  refreshRepos: (id: number) => post<Project>(`/api/projects/${id}/repos/refresh`),
 
   watches: (projectId: number) => get<BranchWatch[]>(`/api/projects/${projectId}/watches`),
   addWatch: (projectId: number, b: { repoId: number; branch: string }) =>

@@ -97,3 +97,14 @@ jobs:
             dist/release/*.tar.gz
             dist/release/*.zip
             dist/release/SHA256SUMS.txt
+
+      - name: Update Homebrew Tap Formula
+        env:
+          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          fi
+          bash scripts/brew-publish.sh "${VERSION}" || echo "Homebrew Tap update skipped or requires TAP_GITHUB_TOKEN secret"
+

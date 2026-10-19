@@ -117,6 +117,8 @@ export default function ProjectPage() {
   const [doneSearchText, setDoneSearchText] = useState('');
 
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
+  const [syncMenuOpen, setSyncMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
 
   const deleteIssueMut = useMutation({
     mutationFn: (issueId: number) => api.deleteIssue(issueId),
@@ -427,34 +429,81 @@ export default function ProjectPage() {
           <h1>{p?.name ?? '加载中…'}</h1>
           {p?.description && <div className="muted small">{p.description}</div>}
         </div>
-        <button
-          onClick={() => checkWatchesMut.mutate()}
-          disabled={checkWatchesMut.isPending}
-          title="立即拉取监控分支的新推送，并通过 gh CLI 检查所有已提交 PR（含跨库/上游 PR）的合并状态"
-        >
-          {checkWatchesMut.isPending ? '检查中…' : '🔄 检查 PR & 分支状态'}
-        </button>
-        <button
-          onClick={() => {
-            setCpInitRepoId(p?.repos?.[0]?.id);
-            setCpInitBranch(undefined);
-            setCpOpen(true);
-          }}
-          disabled={(p?.repos ?? []).length === 0}
-          title="从指定分支勾选 Commit，Cherry-Pick 到目标分支创建 PR 并生成标准改动记录"
-        >
-          🍒 Cherry-Pick 提 PR
-        </button>
-        <button onClick={() => sync.mutate()} disabled={sync.isPending}>
-          {sync.isPending ? '同步中…' : '⟳ 同步平台 Issue'}
-        </button>
+        <div className="dropdown-wrap">
+          <button
+            className="ghost"
+            onClick={() => setSyncMenuOpen(!syncMenuOpen)}
+            disabled={sync.isPending || checkWatchesMut.isPending || pullMut.isPending}
+            title="代码拉取、Issue 同步与状态检查"
+          >
+            {sync.isPending || checkWatchesMut.isPending || pullMut.isPending ? '同步中…' : '🔄 同步 ▾'}
+          </button>
+          {syncMenuOpen && (
+            <>
+              <div
+                style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+                onClick={() => setSyncMenuOpen(false)}
+              />
+              <div className="dropdown-menu">
+                <button
+                  className="dropdown-item"
+                  disabled={sync.isPending}
+                  onClick={() => {
+                    setSyncMenuOpen(false);
+                    sync.mutate();
+                  }}
+                  title="拉取平台最新 Issue 并同步到本地"
+                >
+                  ⟳ 同步 Issue
+                </button>
+                <button
+                  className="dropdown-item"
+                  disabled={checkWatchesMut.isPending}
+                  onClick={() => {
+                    setSyncMenuOpen(false);
+                    checkWatchesMut.mutate();
+                  }}
+                  title="立即拉取监控分支新推送，并检查所有 PR 合并状态"
+                >
+                  🔄 检查状态
+                </button>
+                <button
+                  className="dropdown-item"
+                  disabled={pullMut.isPending}
+                  onClick={() => {
+                    setSyncMenuOpen(false);
+                    pullMut.mutate();
+                  }}
+                  title="拉取远端所有仓库最新代码并同步到本地工作区"
+                >
+                  📥 拉取代码
+                </button>
+                <div className="dropdown-divider" />
+                <button
+                  className="dropdown-item"
+                  disabled={(p?.repos ?? []).length === 0}
+                  onClick={() => {
+                    setSyncMenuOpen(false);
+                    setCpInitRepoId(p?.repos?.[0]?.id);
+                    setCpInitBranch(undefined);
+                    setCpOpen(true);
+                  }}
+                  title="从指定分支选择 Commit，Cherry-Pick 提 PR"
+                >
+                  🍒 Cherry-Pick
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
         <button
           className="ghost"
           onClick={() => setPrModalOpen(true)}
-          title="查看并直接处理项目的所有 Pull Requests"
+          title="查看并处理项目的所有 Pull Requests"
           style={{ position: 'relative' }}
         >
-          🔀 PR 管理
+          🔀 PR
           {openPRCount > 0 && (
             <span
               style={{
@@ -471,14 +520,7 @@ export default function ProjectPage() {
             </span>
           )}
         </button>
-        <button
-          className="ghost"
-          onClick={() => pullMut.mutate()}
-          disabled={pullMut.isPending}
-          title="拉取远端所有仓库最新代码并同步到本地工作区"
-        >
-          {pullMut.isPending ? '拉取中…' : '📥 同步拉取 (Pull)'}
-        </button>
+
         <button
           className="ghost"
           onClick={() => {
@@ -490,25 +532,9 @@ export default function ProjectPage() {
             setSettingsTab('mode');
             setSettingsOpen(true);
           }}
-          title="设置项目的开发模式（单一 main vs main 和 dev）与分支合并/PR策略"
+          title={`项目设置：${p?.devMode === 'main_dev' ? 'main+dev (PR)' : '单一 main'} 模式，自动化与 Hooks`}
         >
-          ⚙️ 模式: <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{p?.devMode === 'main_dev' ? 'main+dev (PR)' : '单一 main'}</span>
-          <span className="dim" style={{ marginLeft: 4 }}>({p?.targetBranch || (p?.devMode === 'main_dev' ? 'dev' : 'main')})</span>
-        </button>
-        <button
-          className="ghost"
-          onClick={() => {
-            const curMode = p?.devMode || 'single_main';
-            setCfgDevMode(curMode);
-            setCfgTargetBranch(p?.targetBranch || (curMode === 'main_dev' ? 'dev' : 'main'));
-            setCfgAutoPR(p?.autoPrOnConfirm ?? true);
-            setCfgAutomationRules(p?.automationRules ?? []);
-            setSettingsTab('automation');
-            setSettingsOpen(true);
-          }}
-          title="配置基于 PR 评论/Report 的自动化规则、项目 Hooks 脚本与插件生态"
-        >
-          ⚡ 自动化
+          ⚙️ 设置
           {(p?.automationRules?.filter((r) => r.enabled)?.length ?? 0) > 0 && (
             <span
               style={{
@@ -525,17 +551,41 @@ export default function ProjectPage() {
             </span>
           )}
         </button>
+
         <button className="primary" onClick={() => setIssueOpen(true)}>
           + 新建 Issue
         </button>
-        <button
-          className="ghost"
-          onClick={() => setDeleteProjectOpen(true)}
-          style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.35)' }}
-          title="彻底删除此项目及其所有 Issue、Worktree 与关联数据"
-        >
-          🗑️ 删除项目
-        </button>
+
+        <div className="dropdown-wrap">
+          <button
+            className="ghost icon-btn"
+            onClick={() => setMoreMenuOpen(!moreMenuOpen)}
+            title="更多操作"
+            style={{ minWidth: 32, padding: '0 8px', letterSpacing: '2px', fontWeight: 'bold' }}
+          >
+            ···
+          </button>
+          {moreMenuOpen && (
+            <>
+              <div
+                style={{ position: 'fixed', inset: 0, zIndex: 40 }}
+                onClick={() => setMoreMenuOpen(false)}
+              />
+              <div className="dropdown-menu">
+                <button
+                  className="dropdown-item danger"
+                  onClick={() => {
+                    setMoreMenuOpen(false);
+                    setDeleteProjectOpen(true);
+                  }}
+                  title="彻底删除此项目及其所有 Issue、Worktree 与关联数据"
+                >
+                  🗑️ 删除项目
+                </button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* 仓库与分支监控双栏面板 */}
@@ -556,13 +606,13 @@ export default function ProjectPage() {
               disabled={refreshReposMut.isPending}
               onClick={() => refreshReposMut.mutate()}
             >
-              {refreshReposMut.isPending ? '检测中…' : '↻ 刷新识别'}
+              {refreshReposMut.isPending ? '刷新中…' : '↻ 刷新'}
             </button>
             <button className="sm" onClick={() => setPickerOpen(true)}>
-              📂 选择本地仓库
+              📂 选择仓库
             </button>
             <button className="sm" onClick={() => setRepoOpen(true)}>
-              + 手动添加
+              + 添加
             </button>
           </div>
           <div className="panel-b repo-list">
@@ -592,7 +642,7 @@ export default function ProjectPage() {
         {/* 分支监控 Watch + Notification */}
         <div className="panel">
           <div className="panel-h" style={{ flexWrap: 'wrap' }}>
-            <h3 className="grow">👁 分支推送监控 ({watches.length})</h3>
+            <h3 className="grow">👁 最新推送 ({watches.length})</h3>
             {(p?.repos ?? []).length > 0 && (
               <div className="row" style={{ gap: 6 }}>
                 <select
@@ -619,7 +669,7 @@ export default function ProjectPage() {
                   disabled={addWatchMut.isPending}
                   onClick={() => addWatchMut.mutate()}
                 >
-                  + 监控分支
+                  + 监控
                 </button>
               </div>
             )}

@@ -424,3 +424,54 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
   .review-body { grid-template-columns: 1fr; grid-template-rows: 160px 1fr; }
   .file-tree { border-right: none; border-bottom: 1px solid var(--border); }
 }
+
+/* ---- Dropdown Menu ---- */
+.dropdown-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 150px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s ease;
+  white-space: nowrap;
+}
+.dropdown-item:hover {
+  background: var(--bg-2);
+}
+.dropdown-item.danger {
+  color: var(--red);
+}
+.dropdown-item.danger:hover {
+  background: rgba(220, 38, 38, 0.12);
+}
+.dropdown-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 3px 0;
+}

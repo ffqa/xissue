@@ -5,3 +5,4 @@ web/node_modules/
 internal/server/dist/*
 !internal/server/dist/index.html
 !internal/server/dist/.gitkeep
+.qoder/

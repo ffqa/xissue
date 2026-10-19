@@ -132,3 +132,98 @@ func CheckPRStatus(ctx context.Context, prURL string) (state string, title strin
 	}
 }
 
+func (github) ListPRs(ctx context.Context, repo domain.Repo, state string) ([]RemotePR, error) {
+	if err := requireOwnerRepo(repo); err != nil {
+		return nil, err
+	}
+	state = strings.ToLower(strings.TrimSpace(state))
+	if state == "" {
+		state = "open"
+	}
+	args := []string{"pr", "list", "-R", repo.OwnerRepo, "--limit", "100",
+		"--json", "number,title,body,state,url,headRefName,baseRefName,author,labels,createdAt,updatedAt"}
+	if state != "all" {
+		args = append(args, "--state", state)
+	} else {
+		args = append(args, "--state", "all")
+	}
+	b, err := gh(ctx, args...)
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		Number      int64  `json:"number"`
+		Title       string `json:"title"`
+		Body        string `json:"body"`
+		State       string `json:"state"`
+		URL         string `json:"url"`
+		HeadRefName string `json:"headRefName"`
+		BaseRefName string `json:"baseRefName"`
+		Author      struct {
+			Login string `json:"login"`
+		} `json:"author"`
+		Labels []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+		CreatedAt string `json:"createdAt"`
+		UpdatedAt string `json:"updatedAt"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil, err
+	}
+	out := make([]RemotePR, 0, len(raw))
+	for _, r := range raw {
+		labels := []string{}
+		for _, l := range r.Labels {
+			labels = append(labels, l.Name)
+		}
+		st := strings.ToLower(strings.TrimSpace(r.State))
+		out = append(out, RemotePR{
+			Number:     r.Number,
+			Title:      r.Title,
+			Body:       r.Body,
+			State:      st,
+			URL:        r.URL,
+			HeadBranch: r.HeadRefName,
+			BaseBranch: r.BaseRefName,
+			Author:     r.Author.Login,
+			Labels:     labels,
+			CreatedAt:  r.CreatedAt,
+			UpdatedAt:  r.UpdatedAt,
+			RepoID:     repo.ID,
+			RepoName:   repo.Name,
+		})
+	}
+	return out, nil
+}
+
+func (github) MergePR(ctx context.Context, repo domain.Repo, number int64, method string) (string, error) {
+	if err := requireOwnerRepo(repo); err != nil {
+		return "", err
+	}
+	method = strings.ToLower(strings.TrimSpace(method))
+	flag := "--squash"
+	switch method {
+	case "merge":
+		flag = "--merge"
+	case "rebase":
+		flag = "--rebase"
+	default:
+		flag = "--squash"
+	}
+	b, err := gh(ctx, "pr", "merge", strconv.FormatInt(number, 10), "-R", repo.OwnerRepo, flag)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
+func (github) ClosePR(ctx context.Context, repo domain.Repo, number int64) error {
+	if err := requireOwnerRepo(repo); err != nil {
+		return err
+	}
+	_, err := gh(ctx, "pr", "close", strconv.FormatInt(number, 10), "-R", repo.OwnerRepo)
+	return err
+}
+
+

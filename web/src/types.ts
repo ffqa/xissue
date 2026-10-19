@@ -313,6 +313,23 @@ export interface CherryPickResult {
   changeRecord: string;
 }
 
+export interface RemotePR {
+  number: number;
+  title: string;
+  body: string;
+  state: 'open' | 'merged' | 'closed';
+  url: string;
+  headBranch: string;
+  baseBranch: string;
+  author: string;
+  labels: string[];
+  createdAt: string;
+  updatedAt: string;
+  mergedAt?: string;
+  repoId: number;
+  repoName: string;
+}
+
 export type WsMessage =
   | { type: 'run_event'; runId: number; issueId: number; event: RunEvent }
   | { type: 'run_updated'; run: Run }

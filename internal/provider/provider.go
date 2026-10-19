@@ -20,6 +20,24 @@ type RemoteIssue struct {
 	URL    string
 }
 
+// RemotePR is a pull request fetched from a platform.
+type RemotePR struct {
+	Number     int64    `json:"number"`
+	Title      string   `json:"title"`
+	Body       string   `json:"body"`
+	State      string   `json:"state"` // "open", "merged", "closed"
+	URL        string   `json:"url"`
+	HeadBranch string   `json:"headBranch"`
+	BaseBranch string   `json:"baseBranch"`
+	Author     string   `json:"author"`
+	Labels     []string `json:"labels"`
+	CreatedAt  string   `json:"createdAt"`
+	UpdatedAt  string   `json:"updatedAt"`
+	MergedAt   string   `json:"mergedAt,omitempty"`
+	RepoID     int64    `json:"repoId"`
+	RepoName   string   `json:"repoName"`
+}
+
 // Caps describes what a provider can do; missing features fall back to local handling.
 type Caps struct {
 	Issues bool
@@ -33,6 +51,9 @@ type Provider interface {
 	CreateIssue(ctx context.Context, repo domain.Repo, title, body string) (*RemoteIssue, error)
 	Comment(ctx context.Context, repo domain.Repo, number int64, body string) error
 	CreatePR(ctx context.Context, repo domain.Repo, head, base, title, body string) (url string, err error)
+	ListPRs(ctx context.Context, repo domain.Repo, state string) ([]RemotePR, error)
+	MergePR(ctx context.Context, repo domain.Repo, number int64, method string) (string, error)
+	ClosePR(ctx context.Context, repo domain.Repo, number int64) error
 }
 
 // For returns the provider implementation for a repo.
@@ -67,4 +88,13 @@ func (plain) CreateIssue(context.Context, domain.Repo, string, string) (*RemoteI
 func (plain) Comment(context.Context, domain.Repo, int64, string) error { return ErrUnsupported }
 func (plain) CreatePR(context.Context, domain.Repo, string, string, string, string) (string, error) {
 	return "", ErrUnsupported
+}
+func (plain) ListPRs(context.Context, domain.Repo, string) ([]RemotePR, error) {
+	return nil, nil
+}
+func (plain) MergePR(context.Context, domain.Repo, int64, string) (string, error) {
+	return "", ErrUnsupported
+}
+func (plain) ClosePR(context.Context, domain.Repo, int64) error {
+	return ErrUnsupported
 }

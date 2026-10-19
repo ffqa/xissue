@@ -476,3 +476,103 @@ func (r *Runner) BatchRunTodoIssues(ctx context.Context, projectID int64, agentN
 	}
 	return started, nil
 }
+
+// ListProjectPRs lists PRs across all repos of the given project.
+func (r *Runner) ListProjectPRs(ctx context.Context, projectID int64, state string) ([]provider.RemotePR, error) {
+	repos, err := r.st.ListRepos(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	var all []provider.RemotePR
+	for _, repo := range repos {
+		p := provider.For(repo.Provider)
+		if !p.Caps().PRs {
+			continue
+		}
+		prs, err := p.ListPRs(ctx, repo, state)
+		if err != nil {
+			continue
+		}
+		all = append(all, prs...)
+	}
+	return all, nil
+}
+
+// PullProjectRepos pulls the latest remote commits into bare mirrors and into local repo directories.
+func (r *Runner) PullProjectRepos(ctx context.Context, projectID int64) ([]string, error) {
+	repos, err := r.st.ListRepos(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	var updated []string
+	for _, repo := range repos {
+		// 1. Update mirror
+		mirror := filepath.Join(r.cfg.MirrorsDir(), fmt.Sprintf("repo-%d.git", repo.ID))
+		if _, statErr := os.Stat(mirror); statErr == nil {
+			_, _ = gitx.Run(ctx, mirror, "fetch", "--prune", "origin")
+		}
+
+		// 2. If it's a local directory repository, pull latest into its working tree if clean
+		if _, statErr := os.Stat(repo.RemoteURL); statErr == nil {
+			branch, _ := gitx.Run(ctx, repo.RemoteURL, "rev-parse", "--abbrev-ref", "HEAD")
+			target := repo.DefaultBranch
+			if target == "" {
+				target = "main"
+			}
+			st, _ := gitx.Run(ctx, repo.RemoteURL, "status", "--porcelain")
+			if strings.TrimSpace(st) == "" && (branch == target || branch == "dev") {
+				_, _ = gitx.Run(ctx, repo.RemoteURL, "pull", "--ff-only")
+			} else {
+				_, _ = gitx.Run(ctx, repo.RemoteURL, "fetch", "--prune", "origin")
+			}
+		}
+		updated = append(updated, repo.Name)
+	}
+	// Also trigger watch & PR status check to keep issues in sync
+	_, _, _ = r.CheckWatchesAndPRs(ctx, projectID)
+	return updated, nil
+}
+
+// MergeProjectPR merges a PR in the given repository, and immediately pulls changes locally.
+func (r *Runner) MergeProjectPR(ctx context.Context, projectID, repoID, number int64, method string) (string, error) {
+	repo, err := r.st.GetRepo(ctx, repoID)
+	if err != nil {
+		return "", err
+	}
+	p := provider.For(repo.Provider)
+	if !p.Caps().PRs {
+		return "", fmt.Errorf("仓库 %s 不支持 PR 合并操作", repo.Name)
+	}
+	msg, err := p.MergePR(ctx, *repo, number, method)
+	if err != nil {
+		return "", err
+	}
+
+	// Immediately pull latest code into mirrors and local directories
+	_, _ = r.PullProjectRepos(ctx, projectID)
+
+	// Check and update any linked runs and issues
+	_, _, _ = r.CheckWatchesAndPRs(ctx, projectID)
+
+	r.pushNotification("pr_status", fmt.Sprintf("[%s] PR #%d 已合并", repo.Name, number), fmt.Sprintf("合并方式：%s\n%s", method, msg), fmt.Sprintf("/projects/%d", projectID), "")
+	return msg, nil
+}
+
+// CloseProjectPR closes a PR in the given repository.
+func (r *Runner) CloseProjectPR(ctx context.Context, projectID, repoID, number int64) error {
+	repo, err := r.st.GetRepo(ctx, repoID)
+	if err != nil {
+		return err
+	}
+	p := provider.For(repo.Provider)
+	if !p.Caps().PRs {
+		return fmt.Errorf("仓库 %s 不支持 PR 操作", repo.Name)
+	}
+	if err := p.ClosePR(ctx, *repo, number); err != nil {
+		return err
+	}
+	_, _, _ = r.CheckWatchesAndPRs(ctx, projectID)
+	r.pushNotification("pr_status", fmt.Sprintf("[%s] PR #%d 已关闭", repo.Name, number), "", fmt.Sprintf("/projects/%d", projectID), "")
+	return nil
+}
+

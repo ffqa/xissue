@@ -5,6 +5,7 @@ import { api, qk } from '../api';
 import { Crumbs, fmtTime, Modal } from '../components/common';
 import { LocalDirPickerModal } from '../components/LocalDirPicker';
 import { CherryPickModal } from '../components/CherryPickModal';
+import { PRListModal } from '../components/PRListModal';
 import { toast } from '../toast';
 import {
   type DevMode,
@@ -246,6 +247,24 @@ export default function ProjectPage() {
     onError: (e) => toast.error((e as Error).message),
   });
 
+  const [prModalOpen, setPrModalOpen] = useState(false);
+  const openPRsQ = useQuery({
+    queryKey: qk.projectPRs(id, 'open'),
+    queryFn: () => api.projectPRs(id, 'open'),
+  });
+  const openPRCount = openPRsQ.data?.length ?? 0;
+
+  const pullMut = useMutation({
+    mutationFn: () => api.pullProject(id),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: qk.projectPRs(id) });
+      qc.invalidateQueries({ queryKey: qk.issues(id) });
+      qc.invalidateQueries({ queryKey: qk.watches(id) });
+      toast.success(res.message || '已成功拉取远端最新代码并同步到本地！');
+    },
+    onError: (e) => toast.error(`拉取代码失败: ${(e as Error).message}`),
+  });
+
   const batchRunMut = useMutation({
     mutationFn: () => api.batchRunTodo(id, { agent: defaultAgent }),
     onSuccess: (r) => {
@@ -400,6 +419,37 @@ export default function ProjectPage() {
         </button>
         <button onClick={() => sync.mutate()} disabled={sync.isPending}>
           {sync.isPending ? '同步中…' : '⟳ 同步平台 Issue'}
+        </button>
+        <button
+          className="ghost"
+          onClick={() => setPrModalOpen(true)}
+          title="查看并直接处理项目的所有 Pull Requests"
+          style={{ position: 'relative' }}
+        >
+          🔀 PR 管理
+          {openPRCount > 0 && (
+            <span
+              style={{
+                marginLeft: 6,
+                background: '#22c55e',
+                color: '#fff',
+                borderRadius: 10,
+                padding: '1px 6px',
+                fontSize: 11,
+                fontWeight: 700,
+              }}
+            >
+              {openPRCount}
+            </span>
+          )}
+        </button>
+        <button
+          className="ghost"
+          onClick={() => pullMut.mutate()}
+          disabled={pullMut.isPending}
+          title="拉取远端所有仓库最新代码并同步到本地工作区"
+        >
+          {pullMut.isPending ? '拉取中…' : '📥 同步拉取 (Pull)'}
         </button>
         <button
           className="ghost"
@@ -1092,6 +1142,13 @@ export default function ProjectPage() {
             </label>
           </div>
         </Modal>
+      )}
+
+      {prModalOpen && (
+        <PRListModal
+          projectId={id}
+          onClose={() => setPrModalOpen(false)}
+        />
       )}
     </div>
   );

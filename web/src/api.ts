@@ -16,6 +16,7 @@ import type {
   MCPStatus,
   Notification,
   Project,
+  RemotePR,
   Repo,
   RepoChanges,
   RepoInput,
@@ -113,6 +114,22 @@ export const api = {
   deleteRepo: (projectId: number, repoId: number) => del<void>(`/api/projects/${projectId}/repos/${repoId}`),
   syncProject: (id: number) => post<{ imported: number }>(`/api/projects/${id}/sync`),
   refreshRepos: (id: number) => post<Project>(`/api/projects/${id}/repos/refresh`),
+  pullProject: (id: number) =>
+    post<{ ok: boolean; pulledRepos: string[]; message: string }>(`/api/projects/${id}/pull`),
+
+  projectPRs: (id: number, state: 'open' | 'merged' | 'closed' | 'all' = 'open') =>
+    get<RemotePR[]>(`/api/projects/${id}/prs?state=${state}`),
+  mergeProjectPR: (
+    projectId: number,
+    number: number,
+    b: { repoId: number; method?: 'squash' | 'merge' | 'rebase' },
+  ) =>
+    post<{ ok: boolean; merged: boolean; message: string }>(
+      `/api/projects/${projectId}/prs/${number}/merge`,
+      b,
+    ),
+  closeProjectPR: (projectId: number, number: number, b: { repoId: number }) =>
+    post<{ ok: boolean; closed: boolean }>(`/api/projects/${projectId}/prs/${number}/close`, b),
 
   watches: (projectId: number) => get<BranchWatch[]>(`/api/projects/${projectId}/watches`),
   addWatch: (projectId: number, b: { repoId: number; branch: string }) =>
@@ -173,6 +190,7 @@ export const qk = {
   notifications: ['notifications'] as const,
   projects: ['projects'] as const,
   project: (id: number) => ['project', id] as const,
+  projectPRs: (projectId: number, state?: string) => ['projectPRs', projectId, state ?? 'open'] as const,
   watches: (projectId: number) => ['watches', projectId] as const,
   repoBranches: (repoId: number) => ['repoBranches', repoId] as const,
   repoCommits: (repoId: number, branch: string) => ['repoCommits', repoId, branch] as const,

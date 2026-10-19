@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -21,7 +22,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.4"
+const Version = "0.2.5"
 
 type Server struct {
 	cfg    *config.Config
@@ -150,6 +151,10 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/projects/{id}/check-watches", s.handleCheckWatches)
 	m.HandleFunc("POST /api/projects/{id}/batch-run", s.handleBatchRunTodo)
 	m.HandleFunc("POST /api/projects/{id}/cherry-pick", s.handleCherryPick)
+	m.HandleFunc("GET /api/projects/{id}/prs", s.handleListProjectPRs)
+	m.HandleFunc("POST /api/projects/{id}/prs/{number}/merge", s.handleMergeProjectPR)
+	m.HandleFunc("POST /api/projects/{id}/prs/{number}/close", s.handleCloseProjectPR)
+	m.HandleFunc("POST /api/projects/{id}/pull", s.handlePullProjectRepos)
 
 	m.HandleFunc("GET /api/repos/{repoId}/branches", s.handleRepoBranches)
 	m.HandleFunc("GET /api/repos/{repoId}/commits", s.handleRepoCommits)
@@ -1070,3 +1075,86 @@ func writeStoreErr(w http.ResponseWriter, err error) {
 	}
 	writeErr(w, http.StatusInternalServerError, err)
 }
+
+func (s *Server) handleListProjectPRs(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	state := r.URL.Query().Get("state")
+	prs, err := s.runner.ListProjectPRs(r.Context(), id, state)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if prs == nil {
+		prs = []provider.RemotePR{}
+	}
+	writeJSON(w, http.StatusOK, prs)
+}
+
+func (s *Server) handleMergeProjectPR(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	numStr := r.PathValue("number")
+	number, err := strconv.ParseInt(numStr, 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid PR number: %v", numStr))
+		return
+	}
+	var body struct {
+		RepoID int64  `json:"repoId"`
+		Method string `json:"method"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	msg, err := s.runner.MergeProjectPR(r.Context(), projectID, body.RepoID, number, body.Method)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "merged": true, "message": msg})
+}
+
+func (s *Server) handleCloseProjectPR(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	numStr := r.PathValue("number")
+	number, err := strconv.ParseInt(numStr, 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid PR number: %v", numStr))
+		return
+	}
+	var body struct {
+		RepoID int64 `json:"repoId"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.runner.CloseProjectPR(r.Context(), projectID, body.RepoID, number); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "closed": true})
+}
+
+func (s *Server) handlePullProjectRepos(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	updated, err := s.runner.PullProjectRepos(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pulledRepos": updated, "message": "已从远端成功拉取最新代码"})
+}
+

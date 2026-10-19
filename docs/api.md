@@ -106,6 +106,10 @@ interface RunEvent {
 | POST | `/api/projects/{id}/repos` | `{ name, provider, remoteUrl, ownerRepo, defaultBranch, testCommand }` → `Repo` |
 | DELETE | `/api/projects/{id}/repos/{repoId}` | |
 | POST | `/api/projects/{id}/sync` | 从平台导入 open issues → `{ imported: number }` |
+| POST | `/api/projects/{id}/pull` | 拉取远端所有仓库最新代码并同步到本地工作区与镜像 → `{ ok, pulledRepos, message }` |
+| GET | `/api/projects/{id}/prs` | 查询项目 PR 列表（`?state=open\|merged\|closed\|all`）→ `RemotePR[]` |
+| POST | `/api/projects/{id}/prs/{number}/merge` | 在项目中直接合并 PR 并自动 pull 同步本地代码 → `{ ok, merged, message }` |
+| POST | `/api/projects/{id}/prs/{number}/close` | 在项目中直接关闭 PR → `{ ok, closed }` |
 | GET | `/api/projects/{id}/issues` | `Issue[]` |
 | POST | `/api/projects/{id}/issues` | `{ title, body, labels? }` → `Issue`（本地 Issue，status=todo） |
 | GET / PATCH | `/api/issues/{id}` | PATCH `{ title?, body?, status? }` |

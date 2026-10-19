@@ -34,15 +34,58 @@ const (
 )
 
 type Project struct {
-	ID              int64     `json:"id"`
-	Name            string    `json:"name"`
-	Description     string    `json:"description"`
-	DevMode         DevMode   `json:"devMode"`
-	TargetBranch    string    `json:"targetBranch"`
-	AutoPROnConfirm bool      `json:"autoPrOnConfirm"`
-	Repos           []Repo    `json:"repos"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID              int64            `json:"id"`
+	Name            string           `json:"name"`
+	Description     string           `json:"description"`
+	DevMode         DevMode          `json:"devMode"`
+	TargetBranch    string           `json:"targetBranch"`
+	AutoPROnConfirm bool             `json:"autoPrOnConfirm"`
+	AutomationRules []AutomationRule `json:"automationRules"`
+	Repos           []Repo           `json:"repos"`
+	CreatedAt       time.Time        `json:"createdAt"`
+	UpdatedAt       time.Time        `json:"updatedAt"`
+}
+
+type RuleConditions struct {
+	Author      string `json:"author,omitempty"`      // 指定提交人/作者 (如 release-bot, qa-team，留空匹配任意)
+	Pattern     string `json:"pattern,omitempty"`     // 正则表达式匹配内容 (如 (?i)status:\s*passed)
+	ReviewState string `json:"reviewState,omitempty"` // 审核状态 (approved / changes_requested / commented)
+}
+
+type RuleAction struct {
+	Type     string `json:"type"`               // merge_pr | set_issue_status | pull_local | notify
+	Status   string `json:"status,omitempty"`   // for set_issue_status, e.g. "done"
+	Strategy string `json:"strategy,omitempty"` // for merge_pr: "squash" | "merge" | "rebase"
+	Message  string `json:"message,omitempty"`  // for notify
+}
+
+type AutomationRule struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Enabled    bool           `json:"enabled"`
+	Trigger    string         `json:"trigger"` // pr_comment | pr_review
+	Conditions RuleConditions `json:"conditions"`
+	Actions    []RuleAction   `json:"actions"`
+}
+
+type HookStatus struct {
+	Name        string `json:"name"`        // e.g. "on-pr-comment"
+	Event       string `json:"event"`       // e.g. "pr_comment"
+	Path        string `json:"path"`        // 脚本路径
+	Exists      bool   `json:"exists"`      // 是否存在
+	Executable  bool   `json:"executable"`  // 是否具有执行权限
+	Description string `json:"description"` // 说明
+}
+
+type PluginInfo struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Version     string   `json:"version"`
+	Description string   `json:"description"`
+	Author      string   `json:"author"`
+	Events      []string `json:"events"`
+	Path        string   `json:"path"`
+	Enabled     bool     `json:"enabled"`
 }
 
 type IssueStatus string

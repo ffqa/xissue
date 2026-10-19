@@ -22,7 +22,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.8"
+const Version = "0.2.9"
 
 type Server struct {
 	cfg    *config.Config
@@ -155,6 +155,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/projects/{id}/prs/{number}/merge", s.handleMergeProjectPR)
 	m.HandleFunc("POST /api/projects/{id}/prs/{number}/close", s.handleCloseProjectPR)
 	m.HandleFunc("POST /api/projects/{id}/pull", s.handlePullProjectRepos)
+	m.HandleFunc("GET /api/projects/{id}/hooks", s.handleDetectProjectHooks)
+	m.HandleFunc("GET /api/plugins", s.handleListPlugins)
 
 	m.HandleFunc("GET /api/monitor/status", s.handleMonitorStatus)
 	m.HandleFunc("GET /api/monitor/logs", s.handleMonitorLogs)
@@ -1035,6 +1037,23 @@ func (s *Server) handleCherryPick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+func (s *Server) handleDetectProjectHooks(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	hooks := s.runner.DetectProjectHooks(r.Context(), id)
+	writeJSON(w, http.StatusOK, hooks)
+}
+
+func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
+	plugins := s.runner.ListPlugins()
+	if plugins == nil {
+		plugins = []domain.PluginInfo{}
+	}
+	writeJSON(w, http.StatusOK, plugins)
 }
 
 // ---------- helpers ----------

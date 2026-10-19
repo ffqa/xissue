@@ -8,12 +8,16 @@ import { CherryPickModal } from '../components/CherryPickModal';
 import { PRListModal } from '../components/PRListModal';
 import { toast } from '../toast';
 import {
+  type AutomationRule,
   type DevMode,
+  type HookStatus,
   type InspectResult,
   type Issue,
   type IssueStatus,
+  type PluginInfo,
   type Provider,
   type RepoInput,
+  type RuleAction,
 } from '../types';
 
 const PROVIDERS: Provider[] = ['github', 'gitlab', 'gitea', 'plain'];
@@ -132,17 +136,38 @@ export default function ProjectPage() {
   });
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const hooksQ = useQuery({ queryKey: qk.projectHooks(id), queryFn: () => api.detectHooks(id), enabled: settingsOpen });
+  const pluginsQ = useQuery({ queryKey: qk.plugins, queryFn: api.plugins, enabled: settingsOpen });
+
+  const [settingsTab, setSettingsTab] = useState<'mode' | 'automation'>('mode');
   const [cfgDevMode, setCfgDevMode] = useState<DevMode>('single_main');
   const [cfgTargetBranch, setCfgTargetBranch] = useState('main');
   const [cfgAutoPR, setCfgAutoPR] = useState(true);
+  const [cfgAutomationRules, setCfgAutomationRules] = useState<AutomationRule[]>([]);
+
+  // 规则配置表单状态
+  const [newRuleOpen, setNewRuleOpen] = useState(false);
+  const [newRuleName, setNewRuleName] = useState('指定人员 Report 自动合并');
+  const [newRuleTrigger, setNewRuleTrigger] = useState<'pr_comment' | 'pr_review'>('pr_comment');
+  const [newRuleAuthor, setNewRuleAuthor] = useState('');
+  const [newRulePattern, setNewRulePattern] = useState('(?i)status:\\s*passed');
+  const [newRuleMergePR, setNewRuleMergePR] = useState(true);
+  const [newRuleSetDone, setNewRuleSetDone] = useState(true);
+  const [newRulePullLocal, setNewRulePullLocal] = useState(true);
+  const [newRuleNotify, setNewRuleNotify] = useState(true);
+  const [copySuccess, setCopySuccess] = useState(false);
 
   const updateProjectMut = useMutation({
-    mutationFn: (b: { devMode?: DevMode; targetBranch?: string; autoPrOnConfirm?: boolean }) =>
-      api.updateProject(id, b),
+    mutationFn: (b: {
+      devMode?: DevMode;
+      targetBranch?: string;
+      autoPrOnConfirm?: boolean;
+      automationRules?: AutomationRule[];
+    }) => api.updateProject(id, b),
     onSuccess: (updated) => {
       qc.setQueryData(qk.project(id), updated);
       setSettingsOpen(false);
-      toast.success('项目开发模式与工作流设置已保存');
+      toast.success('项目设置与自动化规则已保存');
     },
     onError: (e) => toast.error((e as Error).message),
   });
@@ -458,12 +483,44 @@ export default function ProjectPage() {
             setCfgDevMode(curMode);
             setCfgTargetBranch(p?.targetBranch || (curMode === 'main_dev' ? 'dev' : 'main'));
             setCfgAutoPR(p?.autoPrOnConfirm ?? true);
+            setCfgAutomationRules(p?.automationRules ?? []);
+            setSettingsTab('mode');
             setSettingsOpen(true);
           }}
           title="设置项目的开发模式（单一 main vs main 和 dev）与分支合并/PR策略"
         >
           ⚙️ 模式: <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{p?.devMode === 'main_dev' ? 'main+dev (PR)' : '单一 main'}</span>
           <span className="dim" style={{ marginLeft: 4 }}>({p?.targetBranch || (p?.devMode === 'main_dev' ? 'dev' : 'main')})</span>
+        </button>
+        <button
+          className="ghost"
+          onClick={() => {
+            const curMode = p?.devMode || 'single_main';
+            setCfgDevMode(curMode);
+            setCfgTargetBranch(p?.targetBranch || (curMode === 'main_dev' ? 'dev' : 'main'));
+            setCfgAutoPR(p?.autoPrOnConfirm ?? true);
+            setCfgAutomationRules(p?.automationRules ?? []);
+            setSettingsTab('automation');
+            setSettingsOpen(true);
+          }}
+          title="配置基于 PR 评论/Report 的自动化规则、项目 Hooks 脚本与插件生态"
+        >
+          ⚡ 自动化
+          {(p?.automationRules?.filter((r) => r.enabled)?.length ?? 0) > 0 && (
+            <span
+              style={{
+                marginLeft: 5,
+                background: 'rgba(110, 123, 242, 0.2)',
+                color: 'var(--accent)',
+                padding: '1px 6px',
+                borderRadius: 999,
+                fontSize: 11,
+                fontWeight: 700,
+              }}
+            >
+              {p?.automationRules?.filter((r) => r.enabled)?.length}
+            </span>
+          )}
         </button>
         <button className="primary" onClick={() => setIssueOpen(true)}>
           + 新建 Issue
@@ -994,8 +1051,8 @@ export default function ProjectPage() {
 
       {settingsOpen && (
         <Modal
-          title="⚙️ 项目开发模式与工作流设置"
-          size="md"
+          title="⚙️ 项目设置与自动化系统 (ABC 体系)"
+          size="lg"
           onClose={() => setSettingsOpen(false)}
           footer={
             <>
@@ -1008,6 +1065,7 @@ export default function ProjectPage() {
                     devMode: cfgDevMode,
                     targetBranch: cfgTargetBranch.trim(),
                     autoPrOnConfirm: cfgAutoPR,
+                    automationRules: cfgAutomationRules,
                   })
                 }
               >
@@ -1016,131 +1074,612 @@ export default function ProjectPage() {
             </>
           }
         >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div>
-              <label style={{ fontWeight: 600, marginBottom: 8, display: 'block', fontSize: 13 }}>
-                选择项目开发模式 (Dev Mode)
-              </label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                <div
-                  onClick={() => {
-                    setCfgDevMode('single_main');
-                    if (cfgTargetBranch === 'dev') setCfgTargetBranch('main');
-                  }}
+          {/* 顶部 Tab 切换 */}
+          <div
+            style={{
+              display: 'flex',
+              gap: 8,
+              borderBottom: '1px solid var(--border)',
+              paddingBottom: 10,
+              marginBottom: 14,
+            }}
+          >
+            <button
+              type="button"
+              className={settingsTab === 'mode' ? 'primary sm' : 'ghost sm'}
+              onClick={() => setSettingsTab('mode')}
+              style={{ padding: '6px 14px' }}
+            >
+              🌿 工作流与分支模式
+            </button>
+            <button
+              type="button"
+              className={settingsTab === 'automation' ? 'primary sm' : 'ghost sm'}
+              onClick={() => setSettingsTab('automation')}
+              style={{ padding: '6px 14px' }}
+            >
+              ⚡ 自动化与插件体系 (ABC)
+              {cfgAutomationRules.filter((r) => r.enabled).length > 0 && (
+                <span
                   style={{
-                    padding: '12px 14px',
-                    borderRadius: 8,
-                    border: `2px solid ${cfgDevMode === 'single_main' ? 'var(--accent)' : 'var(--border)'}`,
-                    background: cfgDevMode === 'single_main' ? 'var(--bg-2)' : 'var(--bg-1)',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
+                    marginLeft: 6,
+                    background: settingsTab === 'automation' ? 'rgba(255,255,255,0.2)' : 'var(--accent)',
+                    color: '#fff',
+                    borderRadius: 999,
+                    padding: '1px 6px',
+                    fontSize: 11,
                   }}
                 >
-                  <div className="row" style={{ gap: 6, fontWeight: 600, marginBottom: 4 }}>
-                    <input
-                      type="radio"
-                      name="dev_mode"
-                      checked={cfgDevMode === 'single_main'}
-                      onChange={() => {
-                        setCfgDevMode('single_main');
-                        if (cfgTargetBranch === 'dev') setCfgTargetBranch('main');
-                      }}
-                    />
-                    <span>🌱 单一 main 模式</span>
-                  </div>
-                  <div className="small muted" style={{ lineHeight: 1.4 }}>
-                    改完后<b>默认直接提到本地 main</b>，也可选择提交 PR 到 main。适合单人开发或未配置 CI 打包的项目。
-                  </div>
-                </div>
+                  {cfgAutomationRules.filter((r) => r.enabled).length}
+                </span>
+              )}
+            </button>
+          </div>
 
-                <div
-                  onClick={() => {
-                    setCfgDevMode('main_dev');
-                    if (cfgTargetBranch === 'main') setCfgTargetBranch('dev');
-                  }}
-                  style={{
-                    padding: '12px 14px',
-                    borderRadius: 8,
-                    border: `2px solid ${cfgDevMode === 'main_dev' ? 'var(--accent)' : 'var(--border)'}`,
-                    background: cfgDevMode === 'main_dev' ? 'var(--bg-2)' : 'var(--bg-1)',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  <div className="row" style={{ gap: 6, fontWeight: 600, marginBottom: 4 }}>
-                    <input
-                      type="radio"
-                      name="dev_mode"
-                      checked={cfgDevMode === 'main_dev'}
-                      onChange={() => {
-                        setCfgDevMode('main_dev');
-                        if (cfgTargetBranch === 'main') setCfgTargetBranch('dev');
-                      }}
-                    />
-                    <span>🌿 main 和 dev 模式</span>
+          {settingsTab === 'mode' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div>
+                <label style={{ fontWeight: 600, marginBottom: 8, display: 'block', fontSize: 13 }}>
+                  选择项目开发模式 (Dev Mode)
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div
+                    onClick={() => {
+                      setCfgDevMode('single_main');
+                      if (cfgTargetBranch === 'dev') setCfgTargetBranch('main');
+                    }}
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 8,
+                      border: `2px solid ${cfgDevMode === 'single_main' ? 'var(--accent)' : 'var(--border)'}`,
+                      background: cfgDevMode === 'single_main' ? 'var(--bg-2)' : 'var(--bg-1)',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <div className="row" style={{ gap: 6, fontWeight: 600, marginBottom: 4 }}>
+                      <input
+                        type="radio"
+                        name="dev_mode"
+                        checked={cfgDevMode === 'single_main'}
+                        onChange={() => {
+                          setCfgDevMode('single_main');
+                          if (cfgTargetBranch === 'dev') setCfgTargetBranch('main');
+                        }}
+                      />
+                      <span>🌱 单一 main 模式</span>
+                    </div>
+                    <div className="small muted" style={{ lineHeight: 1.4 }}>
+                      改完后<b>默认直接提到本地 main</b>，也可选择提交 PR 到 main。适合单人开发或未配置 CI 打包的项目。
+                    </div>
                   </div>
-                  <div className="small muted" style={{ lineHeight: 1.4 }}>
-                    <b>必须提 PR</b>！默认提交 PR 到 <code>dev</code> (pr→dev)，避免 main 一提交就自动打包；后续由 dev 合入 main。
+
+                  <div
+                    onClick={() => {
+                      setCfgDevMode('main_dev');
+                      if (cfgTargetBranch === 'main') setCfgTargetBranch('dev');
+                    }}
+                    style={{
+                      padding: '12px 14px',
+                      borderRadius: 8,
+                      border: `2px solid ${cfgDevMode === 'main_dev' ? 'var(--accent)' : 'var(--border)'}`,
+                      background: cfgDevMode === 'main_dev' ? 'var(--bg-2)' : 'var(--bg-1)',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
+                    <div className="row" style={{ gap: 6, fontWeight: 600, marginBottom: 4 }}>
+                      <input
+                        type="radio"
+                        name="dev_mode"
+                        checked={cfgDevMode === 'main_dev'}
+                        onChange={() => {
+                          setCfgDevMode('main_dev');
+                          if (cfgTargetBranch === 'main') setCfgTargetBranch('dev');
+                        }}
+                      />
+                      <span>🌿 main 和 dev 模式</span>
+                    </div>
+                    <div className="small muted" style={{ lineHeight: 1.4 }}>
+                      <b>必须提 PR</b>！默认提交 PR 到 <code>dev</code> (pr→dev)，避免 main 一提交就自动打包；后续由 dev 合入 main。
+                    </div>
                   </div>
                 </div>
               </div>
+
+              <label className="field">
+                默认目标基准分支 (Target Branch)
+                <input
+                  className="mono"
+                  value={cfgTargetBranch}
+                  onChange={(e) => setCfgTargetBranch(e.target.value)}
+                  placeholder={cfgDevMode === 'main_dev' ? 'dev' : 'main'}
+                />
+                <span className="small dim">
+                  {cfgDevMode === 'main_dev'
+                    ? '💡 双分支模式下推荐为 dev。改动将提交 PR 到此分支，不碰 main，防止触发自动构建。'
+                    : '💡 单一 main 模式下默认为 main。改完直接合入此本地分支。'}
+                </span>
+              </label>
+
+              <div className="row" style={{ gap: 8 }}>
+                <span className="small muted">快捷选择常用分支:</span>
+                <button
+                  type="button"
+                  className="sm ghost"
+                  onClick={() => setCfgTargetBranch('dev')}
+                >
+                  dev
+                </button>
+                <button
+                  type="button"
+                  className="sm ghost"
+                  onClick={() => setCfgTargetBranch('main')}
+                >
+                  main
+                </button>
+                {p?.repos?.[0]?.defaultBranch &&
+                  p.repos[0].defaultBranch !== 'dev' &&
+                  p.repos[0].defaultBranch !== 'main' && (
+                    <button
+                      type="button"
+                      className="sm ghost"
+                      onClick={() => setCfgTargetBranch(p.repos[0].defaultBranch)}
+                    >
+                      {p.repos[0].defaultBranch}
+                    </button>
+                  )}
+              </div>
+
+              <label className="row" style={{ gap: 8, cursor: 'pointer', marginTop: 4 }}>
+                <input
+                  type="checkbox"
+                  checked={cfgAutoPR}
+                  onChange={(e) => setCfgAutoPR(e.target.checked)}
+                />
+                <span style={{ fontSize: 13 }}>
+                  <b>改完验收通过后自动提交/提 PR</b>（根据当前开发模式执行合入或发起 PR，并记录变更）
+                </span>
+              </label>
             </div>
-
-            <label className="field">
-              默认目标基准分支 (Target Branch)
-              <input
-                className="mono"
-                value={cfgTargetBranch}
-                onChange={(e) => setCfgTargetBranch(e.target.value)}
-                placeholder={cfgDevMode === 'main_dev' ? 'dev' : 'main'}
-              />
-              <span className="small dim">
-                {cfgDevMode === 'main_dev'
-                  ? '💡 双分支模式下推荐为 dev。改动将提交 PR 到此分支，不碰 main，防止触发自动构建。'
-                  : '💡 单一 main 模式下默认为 main。改完直接合入此本地分支。'}
-              </span>
-            </label>
-
-            <div className="row" style={{ gap: 8 }}>
-              <span className="small muted">快捷选择常用分支:</span>
-              <button
-                type="button"
-                className="sm ghost"
-                onClick={() => setCfgTargetBranch('dev')}
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {/* 简介面板 */}
+              <div
+                style={{
+                  background: 'var(--bg-2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  padding: '10px 14px',
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                  color: 'var(--text-2)',
+                }}
               >
-                dev
-              </button>
-              <button
-                type="button"
-                className="sm ghost"
-                onClick={() => setCfgTargetBranch('main')}
-              >
-                main
-              </button>
-              {p?.repos?.[0]?.defaultBranch &&
-                p.repos[0].defaultBranch !== 'dev' &&
-                p.repos[0].defaultBranch !== 'main' && (
+                <b>💡 ABC 自动化架构联动：</b>
+                <span style={{ marginLeft: 6 }}>
+                  后台每次轮询 PR 时，将按序执行：<b>Layer 1 (A)</b> 声明式无代码规则 → <b>Layer 2 (B)</b> 项目级 Hooks 脚本 → <b>Layer 3 (C)</b> 规范化生态插件。
+                </span>
+              </div>
+
+              {/* Layer 1: A 声明式规则 */}
+              <div>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 8,
+                  }}
+                >
+                  <div>
+                    <b style={{ fontSize: 14 }}>🅰️ 声明式自动化规则 (内置免代码)</b>
+                    <span className="small dim" style={{ marginLeft: 8 }}>
+                      识别指定作者的 Report 或特定评论，自动执行合并 PR、完成 Issue 或拉取代码
+                    </span>
+                  </div>
                   <button
                     type="button"
                     className="sm ghost"
-                    onClick={() => setCfgTargetBranch(p.repos[0].defaultBranch)}
+                    onClick={() => setNewRuleOpen(!newRuleOpen)}
                   >
-                    {p.repos[0].defaultBranch}
+                    {newRuleOpen ? '取消添加' : '+ 添加规则'}
                   </button>
-                )}
-            </div>
+                </div>
 
-            <label className="row" style={{ gap: 8, cursor: 'pointer', marginTop: 4 }}>
-              <input
-                type="checkbox"
-                checked={cfgAutoPR}
-                onChange={(e) => setCfgAutoPR(e.target.checked)}
-              />
-              <span style={{ fontSize: 13 }}>
-                <b>改完验收通过后自动提交/提 PR</b>（根据当前开发模式执行合入或发起 PR，并记录变更）
-              </span>
-            </label>
-          </div>
+                {/* 添加新规则折叠表单 */}
+                {newRuleOpen && (
+                  <div
+                    style={{
+                      background: 'var(--bg-2)',
+                      border: '1px solid var(--accent)',
+                      borderRadius: 8,
+                      padding: 12,
+                      marginBottom: 12,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 10,
+                    }}
+                  >
+                    <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--accent)' }}>
+                      新建自动化规则
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <label className="field" style={{ margin: 0 }}>
+                        <span className="small">规则名称</span>
+                        <input
+                          value={newRuleName}
+                          onChange={(e) => setNewRuleName(e.target.value)}
+                          placeholder="例如: 指定审核人通过后自动合并"
+                        />
+                      </label>
+                      <label className="field" style={{ margin: 0 }}>
+                        <span className="small">触发事件</span>
+                        <select
+                          value={newRuleTrigger}
+                          onChange={(e) => setNewRuleTrigger(e.target.value as 'pr_comment' | 'pr_review')}
+                        >
+                          <option value="pr_comment">PR 评论 / 检查报告 (pr_comment)</option>
+                          <option value="pr_review">PR 审核批准通过 (pr_review)</option>
+                        </select>
+                      </label>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <label className="field" style={{ margin: 0 }}>
+                        <span className="small">指定人员 / 提交人 (Author)</span>
+                        <input
+                          value={newRuleAuthor}
+                          onChange={(e) => setNewRuleAuthor(e.target.value)}
+                          placeholder="例如: qa-team 或 release-bot (留空匹配所有人)"
+                        />
+                      </label>
+                      <label className="field" style={{ margin: 0 }}>
+                        <span className="small">正文匹配正则表达式 (Pattern)</span>
+                        <input
+                          className="mono"
+                          value={newRulePattern}
+                          onChange={(e) => setNewRulePattern(e.target.value)}
+                          placeholder="例如: (?i)status:\s*passed 或 (?i)LGTM"
+                        />
+                      </label>
+                    </div>
+
+                    <div>
+                      <span className="small" style={{ fontWeight: 600, display: 'block', marginBottom: 6 }}>
+                        触发后执行的动作 (Actions):
+                      </span>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
+                        <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={newRuleMergePR}
+                            onChange={(e) => setNewRuleMergePR(e.target.checked)}
+                          />
+                          <span>自动合并 PR (Squash Merge)</span>
+                        </label>
+                        <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={newRuleSetDone}
+                            onChange={(e) => setNewRuleSetDone(e.target.checked)}
+                          />
+                          <span>自动标记 Issue 为已完成 (Done)</span>
+                        </label>
+                        <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={newRulePullLocal}
+                            onChange={(e) => setNewRulePullLocal(e.target.checked)}
+                          />
+                          <span>自动同步拉取本地代码 (Pull)</span>
+                        </label>
+                        <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                          <input
+                            type="checkbox"
+                            checked={newRuleNotify}
+                            onChange={(e) => setNewRuleNotify(e.target.checked)}
+                          />
+                          <span>发送应用内通知</span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                      <button
+                        type="button"
+                        className="sm ghost"
+                        onClick={() => setNewRuleOpen(false)}
+                      >
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        className="sm primary"
+                        disabled={!newRuleName.trim()}
+                        onClick={() => {
+                          const acts: RuleAction[] = [];
+                          if (newRuleMergePR) acts.push({ type: 'merge_pr', strategy: 'squash' });
+                          if (newRuleSetDone) acts.push({ type: 'set_issue_status', status: 'done' });
+                          if (newRulePullLocal) acts.push({ type: 'pull_local' });
+                          if (newRuleNotify) acts.push({ type: 'notify' });
+
+                          const newRule: AutomationRule = {
+                            id: 'rule_' + Date.now(),
+                            name: newRuleName.trim(),
+                            enabled: true,
+                            trigger: newRuleTrigger,
+                            conditions: {
+                              author: newRuleAuthor.trim() || undefined,
+                              pattern: newRulePattern.trim() || undefined,
+                            },
+                            actions: acts,
+                          };
+
+                          setCfgAutomationRules((prev) => [...prev, newRule]);
+                          setNewRuleOpen(false);
+                          toast.success(`已添加规则「${newRule.name}」，记得点击下方保存设置`);
+                        }}
+                      >
+                        加入规则列表
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 已有规则列表 */}
+                {cfgAutomationRules.length === 0 ? (
+                  <div
+                    style={{
+                      padding: '16px 20px',
+                      textAlign: 'center',
+                      background: 'var(--bg-1)',
+                      border: '1px dashed var(--border)',
+                      borderRadius: 8,
+                      color: 'var(--text-3)',
+                      fontSize: 13,
+                    }}
+                  >
+                    暂无配置的自动化规则。点击右上角「+ 添加规则」快速设置指定人员的 Report 自动合并！
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {cfgAutomationRules.map((rule, idx) => (
+                      <div
+                        key={rule.id || idx}
+                        style={{
+                          background: 'var(--bg-2)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 8,
+                          padding: '10px 14px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 0 }}>
+                          <input
+                            type="checkbox"
+                            checked={rule.enabled}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setCfgAutomationRules((prev) =>
+                                prev.map((r, i) => (i === idx ? { ...r, enabled: checked } : r))
+                              );
+                            }}
+                            title={rule.enabled ? '已启用 (点击停用)' : '已停用 (点击启用)'}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <b style={{ fontSize: 13, color: rule.enabled ? 'var(--text)' : 'var(--text-3)' }}>
+                                {rule.name}
+                              </b>
+                              <span
+                                style={{
+                                  fontSize: 11,
+                                  background: 'var(--bg-1)',
+                                  border: '1px solid var(--border)',
+                                  borderRadius: 4,
+                                  padding: '1px 6px',
+                                  color: 'var(--accent-2)',
+                                  fontFamily: 'var(--mono)',
+                                }}
+                              >
+                                {rule.trigger}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4 }}>
+                              条件:
+                              {rule.conditions.author ? (
+                                <span style={{ marginLeft: 6 }}>
+                                  提交人: <code>@{rule.conditions.author}</code>
+                                </span>
+                              ) : (
+                                <span style={{ marginLeft: 6, color: 'var(--text-3)' }}>任意提交人</span>
+                              )}
+                              {rule.conditions.pattern && (
+                                <span style={{ marginLeft: 10 }}>
+                                  正则: <code className="mono">{rule.conditions.pattern}</code>
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                              {rule.actions.map((act, ai) => (
+                                <span
+                                  key={ai}
+                                  style={{
+                                    fontSize: 11,
+                                    background: 'rgba(76, 183, 130, 0.12)',
+                                    color: 'var(--green)',
+                                    borderRadius: 4,
+                                    padding: '1px 6px',
+                                  }}
+                                >
+                                  {act.type === 'merge_pr' && '✓ 自动合并 PR'}
+                                  {act.type === 'set_issue_status' && `✓ 改为 ${act.status || 'done'}`}
+                                  {act.type === 'pull_local' && '✓ 同步本地代码'}
+                                  {act.type === 'notify' && '✓ 应用内提醒'}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          className="sm ghost"
+                          style={{ color: 'var(--red)', padding: '2px 8px' }}
+                          onClick={() => {
+                            setCfgAutomationRules((prev) => prev.filter((_, i) => i !== idx));
+                          }}
+                          title="删除此规则"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Layer 2: B 项目级 Hooks 脚本 */}
+              <div>
+                <div style={{ marginBottom: 8 }}>
+                  <b style={{ fontSize: 14 }}>🅱️ 项目级生命周期 Hooks 脚本</b>
+                  <span className="small dim" style={{ marginLeft: 8 }}>
+                    在代码库根目录放置 <code>.xissue/hooks/</code> 脚本自由编写定制逻辑
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    background: 'var(--bg-2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    padding: 12,
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {(hooksQ.data ?? []).map((h: HookStatus) => (
+                      <div
+                        key={h.name}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '6px 10px',
+                          background: 'var(--bg-1)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 6,
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              width: 8,
+                              height: 8,
+                              borderRadius: '50%',
+                              background: h.executable ? 'var(--green)' : h.exists ? 'var(--yellow)' : 'var(--text-3)',
+                            }}
+                          />
+                          <span style={{ fontFamily: 'var(--mono)', fontSize: 13, fontWeight: 600 }}>
+                            {h.path}
+                          </span>
+                          <span style={{ fontSize: 12, color: 'var(--text-3)' }}>({h.description})</span>
+                        </div>
+                        <span
+                          style={{
+                            fontSize: 11,
+                            padding: '2px 8px',
+                            borderRadius: 4,
+                            background: h.executable
+                              ? 'rgba(76, 183, 130, 0.15)'
+                              : h.exists
+                                ? 'rgba(242, 201, 76, 0.15)'
+                                : 'rgba(255, 255, 255, 0.05)',
+                            color: h.executable ? 'var(--green)' : h.exists ? 'var(--yellow)' : 'var(--text-3)',
+                          }}
+                        >
+                          {h.executable ? '✓ 就绪 (可执行)' : h.exists ? '⚠️ 缺少执行权限' : '○ 未创建'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* 脚本编写指引与示例代码 */}
+                  <div style={{ marginTop: 10, borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span className="small dim">
+                        示例：<code>.xissue/hooks/on-pr-comment.sh</code>（接收 stdin JSON，输出 stdout actions）
+                      </span>
+                      <button
+                        type="button"
+                        className="sm ghost"
+                        onClick={() => {
+                          const script = `#!/usr/bin/env bash\n# xIssue Project Hook: on-pr-comment\npayload=$(cat)\nauthor=$(echo "$payload" | jq -r '.comment.author // empty')\nbody=$(echo "$payload" | jq -r '.comment.body // empty')\n\nif [[ "$author" == "qa-team" ]] && [[ "$body" =~ "PASSED" ]]; then\n  echo '{"actions": [{"type": "merge_pr", "strategy": "squash"}, {"type": "set_issue_status", "status": "done"}, {"type": "pull_local"}]}'\nfi`;
+                          navigator.clipboard.writeText(script);
+                          setCopySuccess(true);
+                          setTimeout(() => setCopySuccess(false), 2000);
+                        }}
+                      >
+                        {copySuccess ? '✓ 已复制模板' : '📋 复制脚本模板'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Layer 3: C 规范化生态插件 */}
+              <div>
+                <div style={{ marginBottom: 8 }}>
+                  <b style={{ fontSize: 14 }}>🅲️ 规范化生态插件 (Plugin System)</b>
+                  <span className="small dim" style={{ marginLeft: 8 }}>
+                    全局插件目录 <code>~/.xissue/plugins/</code>，通过 <code>plugin.yaml</code> 清单声明复用与分发
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    background: 'var(--bg-2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 8,
+                    padding: 12,
+                  }}
+                >
+                  {(pluginsQ.data ?? []).length === 0 ? (
+                    <div style={{ color: 'var(--text-3)', fontSize: 12, lineHeight: 1.6 }}>
+                      暂未检测到外部生态插件。支持在 <code>~/.xissue/plugins/&lt;plugin-id&gt;/plugin.yaml</code> 中声明插件清单与 entrypoint 脚本，系统将在 PR 评论与审核生命周期自动调用！
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      {(pluginsQ.data ?? []).map((p: PluginInfo) => (
+                        <div
+                          key={p.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '6px 10px',
+                            background: 'var(--bg-1)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 6,
+                          }}
+                        >
+                          <div>
+                            <b>{p.name}</b> <span className="dim small">v{p.version}</span>
+                            <span className="dim small" style={{ marginLeft: 6 }}>({p.description || '生态插件'})</span>
+                          </div>
+                          <span style={{ fontSize: 11, color: 'var(--green)' }}>✓ 已加载</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </Modal>
       )}
 

@@ -21,9 +21,52 @@ export interface Project {
   devMode?: DevMode;
   targetBranch: string;
   autoPrOnConfirm: boolean;
+  automationRules?: AutomationRule[];
   repos: Repo[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RuleConditions {
+  author?: string;
+  pattern?: string;
+  reviewState?: string;
+}
+
+export interface RuleAction {
+  type: 'merge_pr' | 'set_issue_status' | 'pull_local' | 'notify';
+  status?: string;
+  strategy?: 'squash' | 'merge' | 'rebase';
+  message?: string;
+}
+
+export interface AutomationRule {
+  id: string;
+  name: string;
+  enabled: boolean;
+  trigger: 'pr_comment' | 'pr_review';
+  conditions: RuleConditions;
+  actions: RuleAction[];
+}
+
+export interface HookStatus {
+  name: string;
+  event: string;
+  path: string;
+  exists: boolean;
+  executable: boolean;
+  description: string;
+}
+
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  author: string;
+  events: string[];
+  path: string;
+  enabled: boolean;
 }
 
 export type IssueStatus = 'backlog' | 'todo' | 'running' | 'review' | 'pr_open' | 'done' | 'failed';

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/xpier/xissue/internal/domain"
 )
@@ -36,6 +37,33 @@ type RemotePR struct {
 	MergedAt   string   `json:"mergedAt,omitempty"`
 	RepoID     int64    `json:"repoId"`
 	RepoName   string   `json:"repoName"`
+}
+
+type PRComment struct {
+	ID        string    `json:"id"`
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type PRReview struct {
+	ID          string    `json:"id"`
+	Author      string    `json:"author"`
+	Body        string    `json:"body"`
+	State       string    `json:"state"` // APPROVED, CHANGES_REQUESTED, COMMENTED, etc.
+	SubmittedAt time.Time `json:"submittedAt"`
+}
+
+type PRDetailInfo struct {
+	Number        int64       `json:"number"`
+	Title         string      `json:"title"`
+	State         string      `json:"state"` // "open", "merged", "closed"
+	URL           string      `json:"url"`
+	HeadRefName   string      `json:"headRefName"`
+	BaseRefName   string      `json:"baseRefName"`
+	Author        string      `json:"author"`
+	Comments      []PRComment `json:"comments"`
+	LatestReviews []PRReview  `json:"latestReviews"`
 }
 
 // Caps describes what a provider can do; missing features fall back to local handling.

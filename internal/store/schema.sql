@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS projects (
     dev_mode           TEXT NOT NULL DEFAULT 'single_main',
     target_branch      TEXT NOT NULL DEFAULT 'main',
     auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1,
+    automation_rules   TEXT NOT NULL DEFAULT '[]',
     local_seq          INTEGER NOT NULL DEFAULT 0,
     created_at         TEXT NOT NULL,
     updated_at         TEXT NOT NULL
@@ -101,4 +102,14 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(id DESC);
+
+CREATE TABLE IF NOT EXISTS pr_handled_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    pr_url     TEXT NOT NULL,
+    event_key  TEXT NOT NULL,
+    action_log TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    UNIQUE(pr_url, event_key)
+);
+CREATE INDEX IF NOT EXISTS idx_pr_handled_events ON pr_handled_events(pr_url, event_key);
 

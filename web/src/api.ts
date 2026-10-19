@@ -2,6 +2,7 @@ import type {
   AgentConfigInput,
   AgentInfo,
   AgentModels,
+  AutomationRule,
   BranchWatch,
   BrowseResult,
   CherryPickRequest,
@@ -10,6 +11,7 @@ import type {
   CommitInfo,
   DevMode,
   Health,
+  HookStatus,
   InspectResult,
   Issue,
   IssueStatus,
@@ -17,6 +19,7 @@ import type {
   MonitorLogEntry,
   MonitorStatus,
   Notification,
+  PluginInfo,
   Project,
   RemotePR,
   Repo,
@@ -109,6 +112,7 @@ export const api = {
       devMode?: DevMode;
       targetBranch?: string;
       autoPrOnConfirm?: boolean;
+      automationRules?: AutomationRule[];
     },
   ) => patch<Project>(`/api/projects/${id}`, b),
   deleteProject: (id: number) => del<void>(`/api/projects/${id}`),
@@ -118,6 +122,9 @@ export const api = {
   refreshRepos: (id: number) => post<Project>(`/api/projects/${id}/repos/refresh`),
   pullProject: (id: number) =>
     post<{ ok: boolean; pulledRepos: string[]; message: string }>(`/api/projects/${id}/pull`),
+
+  detectHooks: (projectId: number) => get<HookStatus[]>(`/api/projects/${projectId}/hooks`),
+  plugins: () => get<PluginInfo[]>('/api/plugins'),
 
   projectPRs: (id: number, state: 'open' | 'merged' | 'closed' | 'all' = 'open') =>
     get<RemotePR[]>(`/api/projects/${id}/prs?state=${state}`),
@@ -199,6 +206,8 @@ export const qk = {
   notifications: ['notifications'] as const,
   projects: ['projects'] as const,
   project: (id: number) => ['project', id] as const,
+  projectHooks: (projectId: number) => ['projectHooks', projectId] as const,
+  plugins: ['plugins'] as const,
   projectPRs: (projectId: number, state?: string) => ['projectPRs', projectId, state ?? 'open'] as const,
   watches: (projectId: number) => ['watches', projectId] as const,
   repoBranches: (repoId: number) => ['repoBranches', repoId] as const,

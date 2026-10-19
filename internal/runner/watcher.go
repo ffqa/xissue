@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/xpier/xissue/internal/automation"
 	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/gitx"
 	"github.com/xpier/xissue/internal/provider"
@@ -278,8 +279,33 @@ func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watch
 			if projectID > 0 && issue.ProjectID != projectID {
 				continue
 			}
-			st, prTitle, perr := provider.CheckPRStatus(ctx, run.PRURL)
-			if perr != nil || st == "" || st == run.PRState {
+
+			// 尝试拉取 PR 详细信息（含 comments 与 reviews）
+			prDetail, perr := provider.GetPRDetails(ctx, run.PRURL)
+			if perr != nil || prDetail == nil {
+				st, prTitle, err2 := provider.CheckPRStatus(ctx, run.PRURL)
+				if err2 != nil || st == "" {
+					continue
+				}
+				prDetail = &provider.PRDetailInfo{
+					State: st,
+					Title: prTitle,
+					URL:   run.PRURL,
+				}
+			}
+
+			// 如果 PR 当前还是 open 状态，触发自动化引擎（Layer 1 规则、Layer 2 项目 Hooks、Layer 3 插件）
+			if prDetail.State == "open" {
+				merged, aerr := r.processPRAutomation(ctx, issue, run, prDetail)
+				if aerr == nil && merged {
+					prDetail.State = "merged"
+					prsUpdated++
+				}
+			}
+
+			st := prDetail.State
+			prTitle := prDetail.Title
+			if st == "" || st == run.PRState {
 				continue
 			}
 			// If it was "" and is still "open", just normalize without noisy notification.
@@ -776,5 +802,209 @@ func (r *Runner) PruneMonitorLogs(maxAge time.Duration) (int, error) {
 	r.LogMonitor("INFO", "prune", fmt.Sprintf("已执行日志裁剪 (保留最近 %v 内日志，已清理 %d 条旧内存日志)", maxAge, prunedCount))
 	return prunedCount, nil
 }
+
+func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, run domain.Run, prDetail *provider.PRDetailInfo) (bool, error) {
+	if r.automation == nil || issue == nil || prDetail == nil || prDetail.State != "open" {
+		return false, nil
+	}
+
+	project, err := r.st.GetProject(ctx, issue.ProjectID)
+	if err != nil {
+		return false, err
+	}
+
+	var repo *domain.Repo
+	if issue.RepoID != nil {
+		repo, _ = r.st.GetRepo(ctx, *issue.RepoID)
+	}
+
+	workdir := run.Workdir
+	if workdir == "" && repo != nil {
+		workdir = r.mirrorPath(repo.ID)
+	}
+
+	merged := false
+
+	// 1. 处理评论事件 (pr_comment)
+	for _, comment := range prDetail.Comments {
+		if strings.TrimSpace(comment.Body) == "" {
+			continue
+		}
+		eventKey := fmt.Sprintf("comment:%s", comment.ID)
+		if comment.ID == "" {
+			eventKey = fmt.Sprintf("comment:%s:%s", comment.Author, comment.CreatedAt.Format(time.RFC3339))
+		}
+
+		handled, err := r.st.IsPREventHandled(ctx, run.PRURL, eventKey)
+		if err == nil && handled {
+			continue
+		}
+
+		payload := automation.PREventContext{
+			Event:   "pr_comment",
+			Project: *project,
+			Repo:    repo,
+			Issue:   issue,
+			PR:      prDetail,
+			Comment: &comment,
+		}
+
+		// Layer 1: Rules
+		actions := r.automation.EvaluateRules(project.AutomationRules, "pr_comment", &comment, nil)
+
+		// Layer 2: Project Hooks
+		if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
+			actions = append(actions, hookActions...)
+		}
+
+		// Layer 3: Plugins
+		if plugActions, perr := r.automation.ExecutePlugins(ctx, payload); perr == nil {
+			actions = append(actions, plugActions...)
+		}
+
+		if len(actions) > 0 {
+			r.LogMonitor("EVENT", "automation", fmt.Sprintf("触发 %d 个自动化动作 (PR #%d, 评论作者: @%s)", len(actions), prDetail.Number, comment.Author))
+			mergedNow, aerr := r.executeActions(ctx, actions, project, repo, issue, run, prDetail, "评论/Report", comment.Author)
+			if aerr == nil && mergedNow {
+				merged = true
+			}
+			_ = r.st.RecordPREventHandled(ctx, run.PRURL, eventKey, fmt.Sprintf("%d actions executed", len(actions)))
+			if merged {
+				return true, nil
+			}
+		} else {
+			_ = r.st.RecordPREventHandled(ctx, run.PRURL, eventKey, "no-op")
+		}
+	}
+
+	// 2. 处理审核事件 (pr_review)
+	for _, review := range prDetail.LatestReviews {
+		eventKey := fmt.Sprintf("review:%s", review.ID)
+		if review.ID == "" {
+			eventKey = fmt.Sprintf("review:%s:%s", review.Author, review.SubmittedAt.Format(time.RFC3339))
+		}
+
+		handled, err := r.st.IsPREventHandled(ctx, run.PRURL, eventKey)
+		if err == nil && handled {
+			continue
+		}
+
+		payload := automation.PREventContext{
+			Event:   "pr_review",
+			Project: *project,
+			Repo:    repo,
+			Issue:   issue,
+			PR:      prDetail,
+			Review:  &review,
+		}
+
+		// Layer 1: Rules
+		actions := r.automation.EvaluateRules(project.AutomationRules, "pr_review", nil, &review)
+
+		// Layer 2: Hooks
+		if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
+			actions = append(actions, hookActions...)
+		}
+
+		// Layer 3: Plugins
+		if plugActions, perr := r.automation.ExecutePlugins(ctx, payload); perr == nil {
+			actions = append(actions, plugActions...)
+		}
+
+		if len(actions) > 0 {
+			r.LogMonitor("EVENT", "automation", fmt.Sprintf("触发 %d 个自动化动作 (PR #%d, 审核人: @%s, 状态: %s)", len(actions), prDetail.Number, review.Author, review.State))
+			mergedNow, aerr := r.executeActions(ctx, actions, project, repo, issue, run, prDetail, "审核/Review", review.Author)
+			if aerr == nil && mergedNow {
+				merged = true
+			}
+			_ = r.st.RecordPREventHandled(ctx, run.PRURL, eventKey, fmt.Sprintf("%d actions executed", len(actions)))
+			if merged {
+				return true, nil
+			}
+		} else {
+			_ = r.st.RecordPREventHandled(ctx, run.PRURL, eventKey, "no-op")
+		}
+	}
+
+	return merged, nil
+}
+
+func (r *Runner) executeActions(ctx context.Context, actions []domain.RuleAction, project *domain.Project, repo *domain.Repo, issue *domain.Issue, run domain.Run, prDetail *provider.PRDetailInfo, triggerType, triggerAuthor string) (bool, error) {
+	merged := false
+	for _, act := range actions {
+		switch act.Type {
+		case "merge_pr":
+			if repo == nil || prDetail.Number <= 0 {
+				continue
+			}
+			strategy := act.Strategy
+			if strategy == "" {
+				strategy = "squash"
+			}
+			r.LogMonitor("INFO", "automation", fmt.Sprintf("正在执行自动合并 PR #%d (策略: %s)...", prDetail.Number, strategy))
+			pvd := provider.For(repo.Provider)
+			out, err := pvd.MergePR(ctx, *repo, prDetail.Number, strategy)
+			if err != nil {
+				r.LogMonitor("ERROR", "automation", fmt.Sprintf("自动合并 PR #%d 失败: %v", prDetail.Number, err))
+				continue
+			}
+			r.LogMonitor("EVENT", "automation", fmt.Sprintf("PR #%d 自动合并成功: %s", prDetail.Number, out))
+			merged = true
+
+			// 添加系统说明评论
+			_, _ = r.st.AddComment(ctx, issue.ID, "system", fmt.Sprintf("🤖 [自动化与Hook] 检测到 @%s 提交的 %s 满足要求，PR #%d 已自动合并！", triggerAuthor, triggerType, prDetail.Number))
+			r.pushNotification("pr_status", fmt.Sprintf("🤖 [%s] PR 已自动合并", issue.Key), fmt.Sprintf("检测到 @%s 的 %s 通过，已自动合并 PR #%d\n%s", triggerAuthor, triggerType, prDetail.Number, prDetail.URL), fmt.Sprintf("/issues/%d", issue.ID), "")
+
+		case "set_issue_status":
+			targetStatus := domain.IssueStatus(act.Status)
+			if targetStatus == "" {
+				targetStatus = domain.IssueDone
+			}
+			if domain.ValidIssueStatus(targetStatus) {
+				if u, err := r.st.UpdateIssue(ctx, issue.ID, store.IssuePatch{Status: &targetStatus}); err == nil {
+					r.notify.BroadcastIssueUpdated(u)
+					r.LogMonitor("INFO", "automation", fmt.Sprintf("已自动更新 Issue %s 状态 -> %s", issue.Key, targetStatus))
+				}
+			}
+
+		case "pull_local":
+			if repo != nil {
+				targetBranch := project.TargetBranch
+				if targetBranch == "" {
+					targetBranch = repo.DefaultBranch
+				}
+				_, _ = r.ensureRepoMirror(ctx, *repo)
+				r.LogMonitor("INFO", "automation", fmt.Sprintf("已自动刷新本地镜像与代码缓存 (%s:%s)", repo.Name, targetBranch))
+			}
+
+		case "notify":
+			msg := act.Message
+			if msg == "" {
+				msg = fmt.Sprintf("自动化规则已针对 PR #%d 触发执行", prDetail.Number)
+			}
+			r.pushNotification("automation", fmt.Sprintf("⚡ [%s] 自动化规则触发", issue.Key), msg, fmt.Sprintf("/issues/%d", issue.ID), "")
+		}
+	}
+	return merged, nil
+}
+
+// DetectProjectHooks lists available lifecycle hooks in a project.
+func (r *Runner) DetectProjectHooks(ctx context.Context, projectID int64) []domain.HookStatus {
+	repos, err := r.st.ListRepos(ctx, projectID)
+	if err != nil || len(repos) == 0 {
+		return automation.DetectHooks("")
+	}
+	mirror := r.mirrorPath(repos[0].ID)
+	return automation.DetectHooks(mirror)
+}
+
+// ListPlugins returns installed ecosystem plugins.
+func (r *Runner) ListPlugins() []domain.PluginInfo {
+	if r.automation == nil {
+		return nil
+	}
+	return r.automation.ListPlugins()
+}
+
 
 

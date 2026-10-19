@@ -132,6 +132,90 @@ func CheckPRStatus(ctx context.Context, prURL string) (state string, title strin
 	}
 }
 
+// GetPRDetails fetches detailed information of a PR including comments and reviews.
+func GetPRDetails(ctx context.Context, prURL string) (*PRDetailInfo, error) {
+	prURL = strings.TrimSpace(prURL)
+	if prURL == "" {
+		return nil, fmt.Errorf("empty pr url")
+	}
+	b, err := gh(ctx, "pr", "view", prURL, "--json", "number,title,state,mergedAt,url,headRefName,baseRefName,author,comments,latestReviews")
+	if err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Number      int64  `json:"number"`
+		Title       string `json:"title"`
+		State       string `json:"state"`
+		MergedAt    string `json:"mergedAt"`
+		URL         string `json:"url"`
+		HeadRefName string `json:"headRefName"`
+		BaseRefName string `json:"baseRefName"`
+		Author      struct {
+			Login string `json:"login"`
+		} `json:"author"`
+		Comments []struct {
+			ID        string `json:"id"`
+			Body      string `json:"body"`
+			CreatedAt string `json:"createdAt"`
+			Author    struct {
+				Login string `json:"login"`
+			} `json:"author"`
+		} `json:"comments"`
+		LatestReviews []struct {
+			ID          string `json:"id"`
+			Body        string `json:"body"`
+			State       string `json:"state"`
+			SubmittedAt string `json:"submittedAt"`
+			Author      struct {
+				Login string `json:"login"`
+			} `json:"author"`
+		} `json:"latestReviews"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return nil, err
+	}
+
+	st := strings.ToUpper(strings.TrimSpace(raw.State))
+	stateStr := "open"
+	switch {
+	case st == "MERGED" || raw.MergedAt != "":
+		stateStr = "merged"
+	case st == "CLOSED":
+		stateStr = "closed"
+	}
+
+	detail := &PRDetailInfo{
+		Number:      raw.Number,
+		Title:       raw.Title,
+		State:       stateStr,
+		URL:         raw.URL,
+		HeadRefName: raw.HeadRefName,
+		BaseRefName: raw.BaseRefName,
+		Author:      raw.Author.Login,
+		Comments:    []PRComment{},
+		LatestReviews: []PRReview{},
+	}
+
+	for _, c := range raw.Comments {
+		detail.Comments = append(detail.Comments, PRComment{
+			ID:     c.ID,
+			Author: c.Author.Login,
+			Body:   c.Body,
+		})
+	}
+
+	for _, r := range raw.LatestReviews {
+		detail.LatestReviews = append(detail.LatestReviews, PRReview{
+			ID:     r.ID,
+			Author: r.Author.Login,
+			Body:   r.Body,
+			State:  strings.ToLower(r.State),
+		})
+	}
+
+	return detail, nil
+}
+
 func (github) ListPRs(ctx context.Context, repo domain.Repo, state string) ([]RemotePR, error) {
 	if err := requireOwnerRepo(repo); err != nil {
 		return nil, err

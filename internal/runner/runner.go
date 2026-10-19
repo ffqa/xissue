@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/xpier/xissue/internal/agent/acp"
+	"github.com/xpier/xissue/internal/automation"
 	"github.com/xpier/xissue/internal/config"
 	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/gitx"
@@ -132,6 +133,7 @@ type Runner struct {
 	lastDurationMs  int64
 	lastTrigWatches int
 	lastUpdatedPRs  int
+	automation      *automation.Engine
 }
 
 func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
@@ -145,6 +147,7 @@ func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 		allowSet:    map[int64]bool{},
 		modelCache:  map[string]cachedAgentModels{},
 		monitorLogs: []MonitorLogEntry{},
+		automation:  automation.NewEngine(""),
 	}
 	// Mark any runs left active by a previous server process as failed and sync their parent issues.
 	if runs, err := st.ListActiveRuns(context.Background()); err == nil {

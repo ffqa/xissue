@@ -44,6 +44,7 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN dev_mode TEXT NOT NULL DEFAULT 'single_main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN target_branch TEXT NOT NULL DEFAULT 'main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN automation_rules TEXT NOT NULL DEFAULT '[]'`)
 	return &Store{db: db}, nil
 }
 
@@ -74,14 +75,15 @@ func nullInt(ns sql.NullInt64) *int64 {
 
 // ---------- Projects ----------
 
-const projectCols = `id, name, description, dev_mode, target_branch, auto_pr_on_confirm, created_at, updated_at`
+const projectCols = `id, name, description, dev_mode, target_branch, auto_pr_on_confirm, automation_rules, created_at, updated_at`
 
 func scanProject(s interface{ Scan(...any) error }) (domain.Project, error) {
 	var p domain.Project
 	var c, u string
 	var autoPR int
 	var devMode string
-	err := s.Scan(&p.ID, &p.Name, &p.Description, &devMode, &p.TargetBranch, &autoPR, &c, &u)
+	var autoRulesRaw string
+	err := s.Scan(&p.ID, &p.Name, &p.Description, &devMode, &p.TargetBranch, &autoPR, &autoRulesRaw, &c, &u)
 	if err != nil {
 		return p, err
 	}
@@ -97,6 +99,12 @@ func scanProject(s interface{ Scan(...any) error }) (domain.Project, error) {
 		} else {
 			p.TargetBranch = "main"
 		}
+	}
+	if autoRulesRaw != "" {
+		_ = json.Unmarshal([]byte(autoRulesRaw), &p.AutomationRules)
+	}
+	if p.AutomationRules == nil {
+		p.AutomationRules = []domain.AutomationRule{}
 	}
 	return p, nil
 }
@@ -160,11 +168,12 @@ func (s *Store) CreateProject(ctx context.Context, name, desc string, devMode ..
 }
 
 type ProjectPatch struct {
-	Name            *string         `json:"name"`
-	Description     *string         `json:"description"`
-	DevMode         *domain.DevMode `json:"devMode"`
-	TargetBranch    *string         `json:"targetBranch"`
-	AutoPROnConfirm *bool           `json:"autoPrOnConfirm"`
+	Name            *string                  `json:"name"`
+	Description     *string                  `json:"description"`
+	DevMode         *domain.DevMode          `json:"devMode"`
+	TargetBranch    *string                  `json:"targetBranch"`
+	AutoPROnConfirm *bool                    `json:"autoPrOnConfirm"`
+	AutomationRules *[]domain.AutomationRule `json:"automationRules"`
 }
 
 func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch) (*domain.Project, error) {
@@ -199,12 +208,16 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 	if patch.AutoPROnConfirm != nil {
 		p.AutoPROnConfirm = *patch.AutoPROnConfirm
 	}
+	if patch.AutomationRules != nil {
+		p.AutomationRules = *patch.AutomationRules
+	}
 	autoInt := 0
 	if p.AutoPROnConfirm {
 		autoInt = 1
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, dev_mode=?, target_branch=?, auto_pr_on_confirm=?, updated_at=? WHERE id=?`,
-		p.Name, p.Description, string(p.DevMode), p.TargetBranch, autoInt, now(), id); err != nil {
+	rulesJSON, _ := json.Marshal(p.AutomationRules)
+	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, dev_mode=?, target_branch=?, auto_pr_on_confirm=?, automation_rules=?, updated_at=? WHERE id=?`,
+		p.Name, p.Description, string(p.DevMode), p.TargetBranch, autoInt, string(rulesJSON), now(), id); err != nil {
 		return nil, err
 	}
 	return s.GetProject(ctx, id)
@@ -811,6 +824,24 @@ func (s *Store) MarkNotificationRead(ctx context.Context, id int64) error {
 
 func (s *Store) MarkAllNotificationsRead(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE notifications SET read=1 WHERE read=0`)
+	return err
+}
+
+// ---------- PR Handled Events ----------
+
+func (s *Store) IsPREventHandled(ctx context.Context, prURL, eventKey string) (bool, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pr_handled_events WHERE pr_url=? AND event_key=?`, prURL, eventKey).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func (s *Store) RecordPREventHandled(ctx context.Context, prURL, eventKey, actionLog string) error {
+	t := now()
+	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO pr_handled_events(pr_url, event_key, action_log, created_at) VALUES(?,?,?,?)`,
+		prURL, eventKey, actionLog, t)
 	return err
 }
 

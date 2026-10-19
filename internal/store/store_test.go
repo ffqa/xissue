@@ -65,3 +65,81 @@ func TestProjectDevMode(t *testing.T) {
 		t.Errorf("re-fetched mismatch: %+v", got1)
 	}
 }
+
+func TestDeleteProjectCascading(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	p, err := st.CreateProject(ctx, "Proj1", "desc")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+
+	repo, err := st.CreateRepo(ctx, domain.Repo{
+		ProjectID:     p.ID,
+		Name:          "repo1",
+		Provider:      "github",
+		RemoteURL:     "https://github.com/test/repo1",
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("CreateRepo: %v", err)
+	}
+
+	iss, err := st.CreateLocalIssue(ctx, p.ID, "Issue 1", "body", nil)
+	if err != nil {
+		t.Fatalf("CreateLocalIssue: %v", err)
+	}
+
+	_, err = st.AddComment(ctx, iss.ID, "user", "comment 1")
+	if err != nil {
+		t.Fatalf("AddComment: %v", err)
+	}
+
+	run, err := st.CreateRun(ctx, iss.ID, "opencode", "default")
+	if err != nil {
+		t.Fatalf("CreateRun: %v", err)
+	}
+
+	_, err = st.AppendEvent(ctx, run.ID, "user", map[string]any{"text": "hi"})
+	if err != nil {
+		t.Fatalf("AppendEvent: %v", err)
+	}
+
+	_, err = st.UpsertBranchWatch(ctx, p.ID, repo.ID, "main", "sha1", "msg", "author")
+	if err != nil {
+		t.Fatalf("UpsertBranchWatch: %v", err)
+	}
+
+	// Now delete project
+	if err := st.DeleteProject(ctx, p.ID); err != nil {
+		t.Fatalf("DeleteProject: %v", err)
+	}
+
+	// Verify all cascades
+	repos, err := st.ListRepos(ctx, p.ID)
+	if err != nil || len(repos) > 0 {
+		t.Errorf("expected 0 repos, got %d, err=%v", len(repos), err)
+	}
+
+	issues, err := st.ListIssues(ctx, p.ID)
+	if err != nil || len(issues) > 0 {
+		t.Errorf("expected 0 issues, got %d, err=%v", len(issues), err)
+	}
+
+	runs, err := st.ListRuns(ctx, iss.ID)
+	if err != nil || len(runs) > 0 {
+		t.Errorf("expected 0 runs, got %d, err=%v", len(runs), err)
+	}
+
+	watches, err := st.ListBranchWatches(ctx, p.ID)
+	if err != nil || len(watches) > 0 {
+		t.Errorf("expected 0 watches, got %d, err=%v", len(watches), err)
+	}
+}
+

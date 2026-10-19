@@ -124,7 +124,7 @@ const get = <T>(p: string) => request<T>('GET', p);
 const post = <T>(p: string, b?: unknown) => request<T>('POST', p, b ?? {});
 const patch = <T>(p: string, b: unknown) => request<T>('PATCH', p, b);
 const put = <T>(p: string, b: unknown) => request<T>('PUT', p, b);
-const del = <T>(p: string) => request<T>('DELETE', p);
+const del = <T>(p: string, b?: unknown) => request<T>('DELETE', p, b);
 
 const q = (params: Record<string, string | number>) =>
   new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
@@ -163,7 +163,8 @@ export const api = {
       automationRules?: AutomationRule[];
     },
   ) => patch<Project>(`/api/projects/${id}`, b),
-  deleteProject: (id: number) => del<void>(`/api/projects/${id}`),
+  deleteProject: (id: number, b?: { name: string }) =>
+    del<{ ok: boolean; deleted: string }>(`/api/projects/${id}`, b),
   addRepo: (projectId: number, b: RepoInput) => post<Repo>(`/api/projects/${projectId}/repos`, b),
   deleteRepo: (projectId: number, repoId: number) => del<void>(`/api/projects/${projectId}/repos/${repoId}`),
   syncProject: (id: number) => post<{ imported: number }>(`/api/projects/${id}/sync`),

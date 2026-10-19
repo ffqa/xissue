@@ -1588,3 +1588,57 @@ func buildInitialPrompt(proj *domain.Project, issue *domain.Issue, extra string)
 	b.WriteString("- Do NOT run `pkill xissue`, `killall xissue`, `make stop`, `make restart`, `make deploy`, or `install-service.sh`, and do NOT bind to port 7789 — xIssue itself is supervising your process on port 7789.\n")
 	return b.String()
 }
+
+// CleanupProject terminates all active and warm processes for the project and removes all
+// associated disk resources (worktrees, git mirrors, issue markdown archives, and run logs).
+func (r *Runner) CleanupProject(ctx context.Context, projectID int64) error {
+	proj, err := r.st.GetProject(ctx, projectID)
+	if err != nil {
+		return nil
+	}
+
+	// 1. Find all issues and runs for this project
+	issues, _ := r.st.ListIssues(ctx, projectID)
+	for _, iss := range issues {
+		runs, _ := r.st.ListRuns(ctx, iss.ID)
+		for _, run := range runs {
+			// Stop active agent processes
+			_ = r.Cancel(run.ID)
+			// Close warm session
+			r.closeWarmClient(run.ID)
+			r.mu.Lock()
+			delete(r.allowSet, run.ID)
+			r.mu.Unlock()
+
+			// Remove worktrees and workdir
+			if run.Workdir != "" {
+				r.cleanupRunWorkdir(ctx, &run, proj)
+			}
+		}
+	}
+
+	// 2. Remove all git mirror directories and prune local repo worktrees
+	for _, repo := range proj.Repos {
+		mirrorPath := filepath.Join(r.cfg.MirrorsDir(), fmt.Sprintf("repo-%d.git", repo.ID))
+		_ = os.RemoveAll(mirrorPath)
+
+		// If it's a local directory repository, prune orphaned worktree references
+		if gitx.IsLocalDir(repo.RemoteURL) {
+			pctx, pcancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, _ = gitx.Run(pctx, repo.RemoteURL, "worktree", "prune")
+			pcancel()
+		}
+	}
+
+	// 3. Remove issues markdown directory: ~/.xissue/issues/project-<id>
+	issuesDir := filepath.Join(r.cfg.IssuesDir(), fmt.Sprintf("project-%d", projectID))
+	_ = os.RemoveAll(issuesDir)
+
+	// 4. Remove archive directory: ~/.xissue/issue/<projectName>
+	if proj.Name != "" {
+		archiveDir := filepath.Join(r.cfg.DataDir, "issue", proj.Name)
+		_ = os.RemoveAll(archiveDir)
+	}
+
+	return nil
+}

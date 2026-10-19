@@ -6,6 +6,7 @@ import { Crumbs, fmtTime, Modal } from '../components/common';
 import { LocalDirPickerModal } from '../components/LocalDirPicker';
 import { CherryPickModal } from '../components/CherryPickModal';
 import { PRListModal } from '../components/PRListModal';
+import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { toast } from '../toast';
 import {
   type AutomationRule,
@@ -114,6 +115,8 @@ export default function ProjectPage() {
   const [doneModalOpen, setDoneModalOpen] = useState(false);
   const [selectedDoneIds, setSelectedDoneIds] = useState<number[]>([]);
   const [doneSearchText, setDoneSearchText] = useState('');
+
+  const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
 
   const deleteIssueMut = useMutation({
     mutationFn: (issueId: number) => api.deleteIssue(issueId),
@@ -524,6 +527,14 @@ export default function ProjectPage() {
         </button>
         <button className="primary" onClick={() => setIssueOpen(true)}>
           + 新建 Issue
+        </button>
+        <button
+          className="ghost"
+          onClick={() => setDeleteProjectOpen(true)}
+          style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.35)' }}
+          title="彻底删除此项目及其所有 Issue、Worktree 与关联数据"
+        >
+          🗑️ 删除项目
         </button>
       </div>
 
@@ -1241,6 +1252,40 @@ export default function ProjectPage() {
                   <b>改完验收通过后自动提交/提 PR</b>（根据当前开发模式执行合入或发起 PR，并记录变更）
                 </span>
               </label>
+
+              <div
+                style={{
+                  marginTop: 14,
+                  padding: '12px 14px',
+                  borderRadius: 8,
+                  border: '1px dashed rgba(239, 68, 68, 0.4)',
+                  background: 'rgba(239, 68, 68, 0.05)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                }}
+              >
+                <div>
+                  <div style={{ color: '#ef4444', fontWeight: 600, fontSize: 13, marginBottom: 2 }}>
+                    危险操作：删除此项目
+                  </div>
+                  <div className="small dim">
+                    永久清空此项目及其所有 Issue、Worktree 与关联数据，不可恢复。
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="ghost"
+                  style={{ color: '#ef4444', borderColor: '#ef4444' }}
+                  onClick={() => {
+                    setSettingsOpen(false);
+                    setDeleteProjectOpen(true);
+                  }}
+                >
+                  彻底删除…
+                </button>
+              </div>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -1687,6 +1732,14 @@ export default function ProjectPage() {
         <PRListModal
           projectId={id}
           onClose={() => setPrModalOpen(false)}
+        />
+      )}
+
+      {deleteProjectOpen && p && (
+        <DeleteProjectModal
+          project={{ id: p.id, name: p.name }}
+          onClose={() => setDeleteProjectOpen(false)}
+          onDeleted={() => nav('/')}
         />
       )}
     </div>

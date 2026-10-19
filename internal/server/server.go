@@ -437,11 +437,37 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	proj, err := s.st.GetProject(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+
+	// Double-check project name if provided in query or JSON body
+	var reqBody struct {
+		Name string `json:"name"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		_ = readJSON(r, &reqBody)
+	}
+	confirmName := strings.TrimSpace(reqBody.Name)
+	if confirmName == "" {
+		confirmName = strings.TrimSpace(r.URL.Query().Get("name"))
+	}
+	if confirmName != "" && confirmName != proj.Name {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("项目名称不匹配：请输入 %q 以确认删除", proj.Name))
+		return
+	}
+
+	// 1. Terminate agent processes, clear warm pool, remove worktrees and git mirrors on disk
+	_ = s.runner.CleanupProject(r.Context(), id)
+
+	// 2. Cascade delete all project entities from SQLite database
 	if err := s.st.DeleteProject(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": proj.Name})
 }
 
 func (s *Server) handleAddRepo(w http.ResponseWriter, r *http.Request) {

@@ -98,3 +98,69 @@ func TestArchiveRun(t *testing.T) {
 		t.Errorf("expected Run History in task README.md, got %s", string(readmeData))
 	}
 }
+
+func TestCleanupProject(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfg := config.Default()
+	cfg.DataDir = tmpDir
+
+	st, err := store.Open(cfg.DBPath())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.Close()
+
+	ctx := context.Background()
+	proj, err := st.CreateProject(ctx, "CleanupProj", "desc")
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	repo, err := st.CreateRepo(ctx, domain.Repo{
+		ProjectID:     proj.ID,
+		Name:          "repo1",
+		Provider:      "github",
+		RemoteURL:     "https://github.com/test/repo1",
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatalf("create repo: %v", err)
+	}
+	iss, err := st.CreateLocalIssue(ctx, proj.ID, "Issue 1", "body", nil)
+	if err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	run, err := st.CreateRun(ctx, iss.ID, "opencode", "default")
+	if err != nil {
+		t.Fatalf("create run: %v", err)
+	}
+
+	// Create dummy disk artifacts
+	workdir := filepath.Join(cfg.RunsDir(), "run-999")
+	_ = os.MkdirAll(workdir, 0o755)
+	run, _ = st.UpdateRun(ctx, run.ID, store.RunUpdate{Workdir: &workdir})
+
+	mirrorDir := filepath.Join(cfg.MirrorsDir(), "repo-"+strings.TrimSpace(string(rune('0'+repo.ID)))+".git")
+	_ = os.MkdirAll(mirrorDir, 0o755)
+
+	issuesDir := filepath.Join(cfg.IssuesDir(), "project-"+strings.TrimSpace(string(rune('0'+proj.ID))))
+	_ = os.MkdirAll(issuesDir, 0o755)
+
+	archiveDir := filepath.Join(cfg.DataDir, "issue", proj.Name)
+	_ = os.MkdirAll(archiveDir, 0o755)
+
+	r := New(cfg, st, &dummyNotifier{})
+	if err := r.CleanupProject(ctx, proj.ID); err != nil {
+		t.Fatalf("CleanupProject failed: %v", err)
+	}
+
+	// Verify all directories removed
+	if _, err := os.Stat(workdir); !os.IsNotExist(err) {
+		t.Errorf("expected workdir to be removed, but stat err=%v", err)
+	}
+	if _, err := os.Stat(issuesDir); !os.IsNotExist(err) {
+		t.Errorf("expected issuesDir to be removed, but stat err=%v", err)
+	}
+	if _, err := os.Stat(archiveDir); !os.IsNotExist(err) {
+		t.Errorf("expected archiveDir to be removed, but stat err=%v", err)
+	}
+}

@@ -224,8 +224,47 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 }
 
 func (s *Store) DeleteProject(ctx context.Context, id int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM projects WHERE id=?`, id)
-	return err
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 1. Delete all run_events belonging to issues of this project
+	_, _ = tx.ExecContext(ctx, `DELETE FROM run_events WHERE run_id IN (
+		SELECT id FROM runs WHERE issue_id IN (SELECT id FROM issues WHERE project_id = ?)
+	)`, id)
+
+	// 2. Delete all comments belonging to issues of this project
+	_, _ = tx.ExecContext(ctx, `DELETE FROM comments WHERE issue_id IN (
+		SELECT id FROM issues WHERE project_id = ?
+	)`, id)
+
+	// 3. Delete all runs belonging to issues of this project
+	_, _ = tx.ExecContext(ctx, `DELETE FROM runs WHERE issue_id IN (
+		SELECT id FROM issues WHERE project_id = ?
+	)`, id)
+
+	// 4. Delete all issues
+	_, _ = tx.ExecContext(ctx, `DELETE FROM issues WHERE project_id = ?`, id)
+
+	// 5. Delete all branch_watches
+	_, _ = tx.ExecContext(ctx, `DELETE FROM branch_watches WHERE project_id = ?`, id)
+
+	// 6. Delete all repos
+	_, _ = tx.ExecContext(ctx, `DELETE FROM repos WHERE project_id = ?`, id)
+
+	// 7. Delete related notifications
+	projIDStr := fmt.Sprintf("%d", id)
+	_, _ = tx.ExecContext(ctx, `DELETE FROM notifications WHERE link LIKE ? OR meta LIKE ?`,
+		"%/projects/"+projIDStr+"%", `%"projectId":`+projIDStr+`%`)
+
+	// 8. Delete project record
+	if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }
 
 // ---------- Repos ----------

@@ -57,12 +57,48 @@ case "${1:-install}" in
     if [[ "$os" == "Darwin" ]]; then
       mkdir -p "$HOME/Library/LaunchAgents"
       target="$HOME/Library/LaunchAgents/$label.plist"
-      svc_path="$HOME/.opencode/bin:/opt/homebrew/bin:$HOME/Library/Application Support/Herd/config/nvm/versions/node/v24.16.0/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-      sed -e "s|__BIN__|$binary|g" \
-          -e "s|__HOME__|$HOME|g" \
-          -e "s|__PATH__|$svc_path|g" \
-          -e "s|__LOG__|$log|g" \
-          "$root/deploy/dev.xissue.plist" > "$target"
+      svc_path="$HOME/.opencode/bin:/opt/homebrew/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+      if [[ -f "$root/deploy/dev.xissue.plist" ]]; then
+        sed -e "s|__BIN__|$binary|g" \
+            -e "s|__HOME__|$HOME|g" \
+            -e "s|__PATH__|$svc_path|g" \
+            -e "s|__LOG__|$log|g" \
+            "$root/deploy/dev.xissue.plist" > "$target"
+      else
+        cat <<EOF > "$target"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>$label</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$binary</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>$HOME</string>
+    <key>PATH</key>
+    <string>$svc_path</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>$HOME</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>$log</string>
+  <key>StandardErrorPath</key>
+  <string>$log</string>
+</dict>
+</plist>
+EOF
+      fi
       pkill -f "$binary" 2>/dev/null || true
       launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
       launchctl bootstrap "gui/$(id -u)" "$target"
@@ -72,7 +108,27 @@ case "${1:-install}" in
     else
       mkdir -p "$HOME/.config/systemd/user"
       target="$HOME/.config/systemd/user/xissue.service"
-      sed "s|/usr/local/bin/xissue|$binary|g" "$root/deploy/xissue.service" > "$target"
+      if [[ -f "$root/deploy/xissue.service" ]]; then
+        sed "s|/usr/local/bin/xissue|$binary|g" "$root/deploy/xissue.service" > "$target"
+      else
+        cat <<EOF > "$target"
+[Unit]
+Description=xIssue — Personal AI Agent Issue & Multi-Repo Orchestrator
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=$binary
+Restart=on-failure
+RestartSec=3
+OOMScoreAdjust=-500
+Environment=HOME=%h
+
+[Install]
+WantedBy=default.target
+EOF
+      fi
       systemctl --user daemon-reload
       systemctl --user enable --now xissue.service
       echo "installed systemd user service -> $target"
@@ -106,10 +162,13 @@ case "${1:-install}" in
   restart)
     if [[ "$os" == "Darwin" ]]; then
       lsof -ti tcp:7789 | xargs kill -9 2>/dev/null || true
-      launchctl kickstart -k "gui/$(id -u)/$label"
-      echo "restarted $label"
+      if ! launchctl kickstart -k "gui/$(id -u)/$label" 2>/dev/null; then
+        "$0" install
+      else
+        echo "restarted $label"
+      fi
     else
-      systemctl --user restart xissue.service
+      systemctl --user restart xissue.service || "$0" install
       echo "restarted xissue.service"
     fi
     ;;

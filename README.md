@@ -13,9 +13,10 @@
 ### macOS / Linux
 
 ```bash
-# 1. 下载最新 Release（以 macOS Apple Silicon 为例，其它架构替换为 darwin-amd64 / linux-amd64 / linux-arm64）
-curl -fL https://github.com/ffqa/xissue/releases/latest/download/xissue-v0.2.0-darwin-arm64.tar.gz | tar -xz
-cd xissue-v0.2.0-darwin-arm64
+# 1. 前往 GitHub Releases 页面下载对应系统的压缩包（或使用 curl 下载最新发布包，以 macOS Apple Silicon 为例）：
+# 架构可选：darwin-arm64 / darwin-amd64 / linux-amd64 / linux-arm64
+curl -fL "$(curl -s https://api.github.com/repos/ffqa/xissue/releases/latest | grep "browser_download_url.*darwin-arm64.tar.gz" | cut -d '"' -f 4)" | tar -xz
+cd xissue-*-darwin-arm64
 
 # 2. 直接启动服务（默认监听 http://127.0.0.1:7789，数据目录 ~/.xissue）
 ./xissue

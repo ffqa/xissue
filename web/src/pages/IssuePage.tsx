@@ -520,6 +520,8 @@ export default function IssuePage() {
                   isRunning={isRunning}
                   issueTitle={issue?.title ?? ''}
                   editorTemplate={healthQ.data?.editorUrlTemplate}
+                  targetBranch={project?.targetBranch}
+                  autoPrOnConfirm={project?.autoPrOnConfirm}
                 />
               )}
             </>
@@ -800,11 +802,15 @@ function ReviewPane({
   isRunning,
   issueTitle,
   editorTemplate,
+  targetBranch = 'dev',
+  autoPrOnConfirm = true,
 }: {
   run: Run;
   isRunning: boolean;
   issueTitle: string;
   editorTemplate?: string;
+  targetBranch?: string;
+  autoPrOnConfirm?: boolean;
 }) {
   const qc = useQueryClient();
   const [theme] = useTheme();
@@ -863,10 +869,18 @@ function ReviewPane({
   const [subMode, setSubMode] = useState<'pr' | 'push' | null>(null);
   const [subTitle, setSubTitle] = useState(issueTitle);
   const [subCommit, setSubCommit] = useState(issueTitle);
-  const [subTargetBranch, setSubTargetBranch] = useState(run.targetBranch || 'main');
+  const [subTargetBranch, setSubTargetBranch] = useState(run.targetBranch || targetBranch || 'dev');
   const [subItemsText, setSubItemsText] = useState('');
   const [subRemark, setSubRemark] = useState('');
   const [results, setResults] = useState<SubmitResult[] | null>(null);
+
+  useEffect(() => {
+    if (run.targetBranch) {
+      setSubTargetBranch(run.targetBranch);
+    } else if (targetBranch) {
+      setSubTargetBranch(targetBranch);
+    }
+  }, [run.targetBranch, targetBranch]);
 
   useEffect(() => {
     setSubTitle(issueTitle);
@@ -943,12 +957,44 @@ function ReviewPane({
         <button className="sm" onClick={() => changesQ.refetch()}>
           ⟳ 刷新
         </button>
+        {totalFiles > 0 && !run.prUrl && !run.changeRecord && (
+          <div
+            className="row"
+            style={{
+              gap: 6,
+              background: 'var(--bg-2)',
+              padding: '2px 8px',
+              borderRadius: 6,
+              border: '1px solid var(--border)',
+            }}
+            title="PR 目标基准分支，避免直接合入 main 触发自动打包"
+          >
+            <span className="small muted">PR 目标基准:</span>
+            <code className="mono small" style={{ color: 'var(--accent)' }}>
+              {subTargetBranch || 'dev'}
+            </code>
+          </div>
+        )}
         <span className="grow" />
-        <button className="sm" disabled={totalFiles === 0 || isRunning} onClick={() => openSubmitModal('push')}>
-          仅提交并推送
+        <button
+          className="primary sm"
+          disabled={totalFiles === 0 || isRunning || submit.isPending}
+          onClick={() => openSubmitModal('pr')}
+          title={`改完确认后自动创建 PR 到 ${subTargetBranch || 'dev'}，避免直接合入 main 触发自动打包`}
+        >
+          {submit.isPending
+            ? '创建中…'
+            : autoPrOnConfirm
+            ? `🚀 确认改动并自动创建 PR (→ ${subTargetBranch || 'dev'})`
+            : `提交并创建 PR (→ ${subTargetBranch || 'dev'})`}
         </button>
-        <button className="primary sm" disabled={totalFiles === 0 || isRunning} onClick={() => openSubmitModal('pr')}>
-          提交并提 PR
+        <button
+          className="sm ghost"
+          disabled={totalFiles === 0 || isRunning}
+          onClick={() => openSubmitModal('push')}
+          title="仅推送当前工作分支，不创建 PR"
+        >
+          仅推送
         </button>
         <button
           className="danger sm"
@@ -1107,14 +1153,32 @@ function ReviewPane({
                   Commit Message
                   <input value={subCommit} onChange={(e) => setSubCommit(e.target.value)} />
                 </label>
-                <label className="field" style={{ width: 150 }}>
+                <label className="field" style={{ width: 170 }}>
                   目标基准分支
                   <input
                     className="mono"
                     value={subTargetBranch}
                     onChange={(e) => setSubTargetBranch(e.target.value)}
-                    placeholder="main"
+                    placeholder="dev"
                   />
+                  <div className="row" style={{ gap: 4, marginTop: 4 }}>
+                    <button
+                      type="button"
+                      className="sm ghost"
+                      style={{ fontSize: 11, padding: '0 4px', height: 20 }}
+                      onClick={() => setSubTargetBranch('dev')}
+                    >
+                      dev
+                    </button>
+                    <button
+                      type="button"
+                      className="sm ghost"
+                      style={{ fontSize: 11, padding: '0 4px', height: 20 }}
+                      onClick={() => setSubTargetBranch('main')}
+                    >
+                      main
+                    </button>
+                  </div>
                 </label>
               </div>
               {subMode === 'pr' && (

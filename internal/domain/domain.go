@@ -27,12 +27,14 @@ type Repo struct {
 }
 
 type Project struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Repos       []Repo    `json:"repos"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	ID              int64     `json:"id"`
+	Name            string    `json:"name"`
+	Description     string    `json:"description"`
+	TargetBranch    string    `json:"targetBranch"`
+	AutoPROnConfirm bool      `json:"autoPrOnConfirm"`
+	Repos           []Repo    `json:"repos"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 type IssueStatus string

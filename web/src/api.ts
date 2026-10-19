@@ -96,7 +96,10 @@ export const api = {
   projects: () => get<Project[]>('/api/projects'),
   createProject: (b: { name: string; description: string }) => post<Project>('/api/projects', b),
   project: (id: number) => get<Project>(`/api/projects/${id}`),
-  updateProject: (id: number, b: { name?: string; description?: string }) => patch<Project>(`/api/projects/${id}`, b),
+  updateProject: (
+    id: number,
+    b: { name?: string; description?: string; targetBranch?: string; autoPrOnConfirm?: boolean },
+  ) => patch<Project>(`/api/projects/${id}`, b),
   deleteProject: (id: number) => del<void>(`/api/projects/${id}`),
   addRepo: (projectId: number, b: RepoInput) => post<Repo>(`/api/projects/${projectId}/repos`, b),
   deleteRepo: (projectId: number, repoId: number) => del<void>(`/api/projects/${projectId}/repos/${repoId}`),
@@ -125,6 +128,8 @@ export const api = {
   issue: (id: number) => get<Issue>(`/api/issues/${id}`),
   updateIssue: (id: number, b: { title?: string; body?: string; status?: IssueStatus }) =>
     patch<Issue>(`/api/issues/${id}`, b),
+  deleteIssue: (id: number) => del<void>(`/api/issues/${id}`),
+  batchDeleteIssues: (ids: number[]) => post<{ deleted: number }>('/api/issues/batch-delete', { ids }),
   publishIssue: (id: number, repoId: number) => post<Issue>(`/api/issues/${id}/publish`, { repoId }),
   comments: (issueId: number) => get<Comment[]>(`/api/issues/${issueId}/comments`),
   addComment: (issueId: number, body: string) => post<Comment>(`/api/issues/${issueId}/comments`, { body }),

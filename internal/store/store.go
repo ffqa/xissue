@@ -41,6 +41,8 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN pr_state TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN change_record TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN target_branch TEXT NOT NULL DEFAULT 'dev'`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1`)
 	return &Store{db: db}, nil
 }
 
@@ -71,20 +73,36 @@ func nullInt(ns sql.NullInt64) *int64 {
 
 // ---------- Projects ----------
 
+const projectCols = `id, name, description, target_branch, auto_pr_on_confirm, created_at, updated_at`
+
+func scanProject(s interface{ Scan(...any) error }) (domain.Project, error) {
+	var p domain.Project
+	var c, u string
+	var autoPR int
+	err := s.Scan(&p.ID, &p.Name, &p.Description, &p.TargetBranch, &autoPR, &c, &u)
+	if err != nil {
+		return p, err
+	}
+	p.CreatedAt, p.UpdatedAt = parseTime(c), parseTime(u)
+	p.AutoPROnConfirm = autoPR != 0
+	if p.TargetBranch == "" {
+		p.TargetBranch = "dev"
+	}
+	return p, nil
+}
+
 func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, name, description, created_at, updated_at FROM projects ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+projectCols+` FROM projects ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []domain.Project
 	for rows.Next() {
-		var p domain.Project
-		var c, u string
-		if err := rows.Scan(&p.ID, &p.Name, &p.Description, &c, &u); err != nil {
+		p, err := scanProject(rows)
+		if err != nil {
 			return nil, err
 		}
-		p.CreatedAt, p.UpdatedAt = parseTime(c), parseTime(u)
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
@@ -101,24 +119,21 @@ func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
 }
 
 func (s *Store) GetProject(ctx context.Context, id int64) (*domain.Project, error) {
-	var p domain.Project
-	var c, u string
-	err := s.db.QueryRowContext(ctx, `SELECT id, name, description, created_at, updated_at FROM projects WHERE id=?`, id).
-		Scan(&p.ID, &p.Name, &p.Description, &c, &u)
+	p, err := scanProject(s.db.QueryRowContext(ctx, `SELECT `+projectCols+` FROM projects WHERE id=?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
-	p.CreatedAt, p.UpdatedAt = parseTime(c), parseTime(u)
 	p.Repos, err = s.ListRepos(ctx, id)
 	return &p, err
 }
 
 func (s *Store) CreateProject(ctx context.Context, name, desc string) (*domain.Project, error) {
 	t := now()
-	res, err := s.db.ExecContext(ctx, `INSERT INTO projects(name, description, created_at, updated_at) VALUES(?,?,?,?)`, name, desc, t, t)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO projects(name, description, target_branch, auto_pr_on_confirm, created_at, updated_at) VALUES(?,?,?,?,?,?)`,
+		name, desc, "dev", 1, t, t)
 	if err != nil {
 		return nil, err
 	}
@@ -126,18 +141,39 @@ func (s *Store) CreateProject(ctx context.Context, name, desc string) (*domain.P
 	return s.GetProject(ctx, id)
 }
 
-func (s *Store) UpdateProject(ctx context.Context, id int64, name, desc *string) (*domain.Project, error) {
+type ProjectPatch struct {
+	Name            *string `json:"name"`
+	Description     *string `json:"description"`
+	TargetBranch    *string `json:"targetBranch"`
+	AutoPROnConfirm *bool   `json:"autoPrOnConfirm"`
+}
+
+func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch) (*domain.Project, error) {
 	p, err := s.GetProject(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if name != nil {
-		p.Name = *name
+	if patch.Name != nil {
+		p.Name = *patch.Name
 	}
-	if desc != nil {
-		p.Description = *desc
+	if patch.Description != nil {
+		p.Description = *patch.Description
 	}
-	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, updated_at=? WHERE id=?`, p.Name, p.Description, now(), id); err != nil {
+	if patch.TargetBranch != nil {
+		p.TargetBranch = strings.TrimSpace(*patch.TargetBranch)
+		if p.TargetBranch == "" {
+			p.TargetBranch = "dev"
+		}
+	}
+	if patch.AutoPROnConfirm != nil {
+		p.AutoPROnConfirm = *patch.AutoPROnConfirm
+	}
+	autoInt := 0
+	if p.AutoPROnConfirm {
+		autoInt = 1
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, target_branch=?, auto_pr_on_confirm=?, updated_at=? WHERE id=?`,
+		p.Name, p.Description, p.TargetBranch, autoInt, now(), id); err != nil {
 		return nil, err
 	}
 	return s.GetProject(ctx, id)
@@ -356,6 +392,29 @@ func (s *Store) MarkIssuePublished(ctx context.Context, id, repoID, number int64
 		return nil, err
 	}
 	return s.GetIssue(ctx, id)
+}
+
+func (s *Store) DeleteIssue(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM issues WHERE id=?`, id)
+	return err
+}
+
+func (s *Store) BatchDeleteIssues(ctx context.Context, ids []int64) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM issues WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 // ---------- Comments ----------

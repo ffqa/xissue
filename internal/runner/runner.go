@@ -1168,10 +1168,13 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 		}
 		targetBranch := strings.TrimSpace(req.TargetBranch)
 		if targetBranch == "" {
+			targetBranch = proj.TargetBranch
+		}
+		if targetBranch == "" {
 			targetBranch = repo.DefaultBranch
 		}
 		if targetBranch == "" {
-			targetBranch = "main"
+			targetBranch = "dev"
 		}
 		res := SubmitResult{
 			RepoID:       repo.ID,

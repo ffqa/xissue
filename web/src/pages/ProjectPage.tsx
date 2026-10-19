@@ -105,6 +105,45 @@ export default function ProjectPage() {
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [dragOverCol, setDragOverCol] = useState<StageColumn['id'] | null>(null);
 
+  const [doneModalOpen, setDoneModalOpen] = useState(false);
+  const [selectedDoneIds, setSelectedDoneIds] = useState<number[]>([]);
+  const [doneSearchText, setDoneSearchText] = useState('');
+
+  const deleteIssueMut = useMutation({
+    mutationFn: (issueId: number) => api.deleteIssue(issueId),
+    onSuccess: (_, issueId) => {
+      qc.invalidateQueries({ queryKey: qk.issues(id) });
+      setSelectedDoneIds((prev) => prev.filter((x) => x !== issueId));
+      toast.success('已删除任务');
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const batchDeleteMut = useMutation({
+    mutationFn: (ids: number[]) => api.batchDeleteIssues(ids),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: qk.issues(id) });
+      setSelectedDoneIds([]);
+      toast.success(`已成功批量删除 ${r.deleted} 个已完成任务`);
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [cfgTargetBranch, setCfgTargetBranch] = useState('dev');
+  const [cfgAutoPR, setCfgAutoPR] = useState(true);
+
+  const updateProjectMut = useMutation({
+    mutationFn: (b: { targetBranch?: string; autoPrOnConfirm?: boolean }) =>
+      api.updateProject(id, b),
+    onSuccess: (updated) => {
+      qc.setQueryData(qk.project(id), updated);
+      setSettingsOpen(false);
+      toast.success('项目工作流设置已保存');
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
   const defaultAgent =
     (agentsQ.data ?? []).find((a) => a.available && a.name === 'opencode')?.name ||
     (agentsQ.data ?? []).find((a) => a.available)?.name ||
@@ -276,6 +315,39 @@ export default function ProjectPage() {
   const allIssues = issues.data ?? [];
   const watches = watchesQ.data ?? [];
 
+  const doneIssues = allIssues.filter((it) => it.status === 'done');
+  const filteredDoneIssues = doneIssues.filter((it) => {
+    if (!doneSearchText.trim()) return true;
+    const q = doneSearchText.toLowerCase();
+    const repoName = (p?.repos ?? []).find((r) => r.id === it.repoId)?.name || '';
+    return (
+      it.title.toLowerCase().includes(q) ||
+      it.key.toLowerCase().includes(q) ||
+      repoName.toLowerCase().includes(q)
+    );
+  });
+
+  const allFilteredSelected =
+    filteredDoneIssues.length > 0 &&
+    filteredDoneIssues.every((it) => selectedDoneIds.includes(it.id));
+
+  const toggleSelectAll = () => {
+    if (allFilteredSelected) {
+      setSelectedDoneIds((prev) =>
+        prev.filter((id) => !filteredDoneIssues.some((it) => it.id === id)),
+      );
+    } else {
+      const toAdd = filteredDoneIssues.map((it) => it.id);
+      setSelectedDoneIds((prev) => Array.from(new Set([...prev, ...toAdd])));
+    }
+  };
+
+  const toggleSelectOne = (issueId: number) => {
+    setSelectedDoneIds((prev) =>
+      prev.includes(issueId) ? prev.filter((x) => x !== issueId) : [...prev, issueId],
+    );
+  };
+
   const setR = <K extends keyof RepoInput>(k: K, v: RepoInput[K]) => setRepo((r) => ({ ...r, [k]: v }));
 
   const handleDropToColumn = (col: StageColumn, issueId: number) => {
@@ -293,12 +365,13 @@ export default function ProjectPage() {
   };
 
   return (
-    <div className="page" style={{ maxWidth: 'none' }}>
-      <Crumbs>
-        <Link to="/">项目</Link>
-        <span>/</span>
-        <span className="ellipsis">{p?.name ?? '…'}</span>
-      </Crumbs>
+    <div className="page project-page">
+      <div className="project-header-section">
+        <Crumbs>
+          <Link to="/">项目</Link>
+          <span>/</span>
+          <span className="ellipsis">{p?.name ?? '…'}</span>
+        </Crumbs>
 
       <div className="row mb" style={{ flexWrap: 'wrap', gap: 8 }}>
         <div className="grow">
@@ -325,6 +398,17 @@ export default function ProjectPage() {
         </button>
         <button onClick={() => sync.mutate()} disabled={sync.isPending}>
           {sync.isPending ? '同步中…' : '⟳ 同步平台 Issue'}
+        </button>
+        <button
+          className="ghost"
+          onClick={() => {
+            setCfgTargetBranch(p?.targetBranch || 'dev');
+            setCfgAutoPR(p?.autoPrOnConfirm ?? true);
+            setSettingsOpen(true);
+          }}
+          title="设置 PR 默认目标基准分支（如 dev）及验收自动提 PR 策略，避免直接合入 main 触发自动打包"
+        >
+          ⚙️ PR目标: <code className="mono" style={{ color: 'var(--accent)' }}>{p?.targetBranch || 'dev'}</code>
         </button>
         <button className="primary" onClick={() => setIssueOpen(true)}>
           + 新建 Issue
@@ -471,11 +555,14 @@ export default function ProjectPage() {
           </div>
         </div>
       </div>
+      </div>
 
-      {/* 4 列全宽工作流看板：小卡片仅展示标题 + 摘要，支持拖拽流转与拖入执行 */}
+      {/* 4 列全宽工作流看板：撑满全屏、外框固定、内部纵向滚动 */}
       <div className="board">
         {WORKFLOW_COLUMNS.map((col) => {
           const list = allIssues.filter((it) => col.statuses.includes(it.status));
+          const isDoneCol = col.id === 'done';
+          const displayList = isDoneCol ? list.slice(0, 10) : list;
           const isOver = dragOverCol === col.id;
           return (
             <div
@@ -514,7 +601,17 @@ export default function ProjectPage() {
                       {batchRunMut.isPending ? '启动中…' : '⚡ 自动执行待办'}
                     </button>
                   )}
-                  <span className="badge">{list.length}</span>
+                  {isDoneCol ? (
+                    <span
+                      className="badge badge-clickable"
+                      onClick={() => setDoneModalOpen(true)}
+                      title="点击查看全部历史已完成任务，支持搜索与多选批量管理/删除"
+                    >
+                      {list.length}
+                    </span>
+                  ) : (
+                    <span className="badge">{list.length}</span>
+                  )}
                 </div>
                 <div className="small dim" style={{ fontWeight: 400, textTransform: 'none' }}>
                   {col.subtitle}
@@ -527,7 +624,7 @@ export default function ProjectPage() {
                     {col.id === 'running' ? '将待办卡片拖入此处即可自动启动执行' : '暂无任务'}
                   </div>
                 )}
-                {list.map((it) => (
+                {displayList.map((it) => (
                   <Link
                     key={it.id}
                     to={`/issues/${it.id}`}
@@ -556,6 +653,15 @@ export default function ProjectPage() {
                     <div className="issue-card-summary">{summarizeIssue(it)}</div>
                   </Link>
                 ))}
+                {isDoneCol && list.length > 10 && (
+                  <div
+                    className="board-col-more"
+                    onClick={() => setDoneModalOpen(true)}
+                    title="点击查看全部历史已完成任务"
+                  >
+                    仅展示最近 10 条 · 点击查看全部历史 ({list.length}) ➔
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -667,6 +773,248 @@ export default function ProjectPage() {
             正文（Markdown）
             <textarea rows={10} className="mono" value={body} onChange={(e) => setBody(e.target.value)} />
           </label>
+        </Modal>
+      )}
+
+      {doneModalOpen && (
+        <Modal
+          title={`✅ 已完成任务历史与批量管理 (${doneIssues.length})`}
+          size="xl"
+          onClose={() => {
+            setDoneModalOpen(false);
+            setSelectedDoneIds([]);
+            setDoneSearchText('');
+          }}
+          footer={
+            <div className="row" style={{ width: '100%', justifyContent: 'space-between' }}>
+              <div className="small muted">
+                已勾选 <b>{selectedDoneIds.length}</b> / {filteredDoneIssues.length} 项（总计 {doneIssues.length} 条已完成）
+              </div>
+              <div className="row" style={{ gap: 8 }}>
+                {selectedDoneIds.length > 0 && (
+                  <button
+                    className="danger"
+                    disabled={batchDeleteMut.isPending}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `确定要永久删除选中的 ${selectedDoneIds.length} 个已完成任务吗？此操作不可撤销。`,
+                        )
+                      ) {
+                        batchDeleteMut.mutate(selectedDoneIds);
+                      }
+                    }}
+                  >
+                    {batchDeleteMut.isPending
+                      ? '正在删除…'
+                      : `🗑️ 批量删除选中项 (${selectedDoneIds.length})`}
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    setDoneModalOpen(false);
+                    setSelectedDoneIds([]);
+                    setDoneSearchText('');
+                  }}
+                >
+                  关闭
+                </button>
+              </div>
+            </div>
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+              <input
+                style={{ flex: 1, minWidth: 240 }}
+                placeholder="按标题、Key、仓库名搜索已完成任务…"
+                value={doneSearchText}
+                onChange={(e) => setDoneSearchText(e.target.value)}
+                autoFocus
+              />
+              <label
+                className="row"
+                style={{
+                  cursor: 'pointer',
+                  userSelect: 'none',
+                  fontSize: 13,
+                  gap: 6,
+                  padding: '4px 8px',
+                  borderRadius: 6,
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-2)',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={allFilteredSelected}
+                  onChange={toggleSelectAll}
+                  disabled={filteredDoneIssues.length === 0}
+                />
+                <span>全选当前筛选列表 ({filteredDoneIssues.length})</span>
+              </label>
+            </div>
+
+            <div style={{ maxHeight: '60vh', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+              {filteredDoneIssues.length === 0 ? (
+                <div className="empty small" style={{ padding: 36 }}>
+                  {doneSearchText ? '未找到符合条件的已完成任务' : '暂无已完成任务'}
+                </div>
+              ) : (
+                <table className="history-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 42, textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={allFilteredSelected}
+                          onChange={toggleSelectAll}
+                        />
+                      </th>
+                      <th style={{ width: 110 }}>标识 Key</th>
+                      <th>任务标题</th>
+                      <th style={{ width: 140 }}>关联仓库</th>
+                      <th style={{ width: 150 }}>完成时间</th>
+                      <th style={{ width: 80, textAlign: 'right' }}>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredDoneIssues.map((it) => {
+                      const isSelected = selectedDoneIds.includes(it.id);
+                      const repoName = (p?.repos ?? []).find((r) => r.id === it.repoId)?.name || '未关联';
+                      return (
+                        <tr key={it.id} className={isSelected ? 'selected' : ''}>
+                          <td style={{ textAlign: 'center' }}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => toggleSelectOne(it.id)}
+                            />
+                          </td>
+                          <td>
+                            <code className="mono small" style={{ color: 'var(--accent)' }}>
+                              {it.key}
+                            </code>
+                          </td>
+                          <td>
+                            <Link
+                              to={`/issues/${it.id}`}
+                              target="_blank"
+                              style={{ fontWeight: 500, color: 'var(--text)' }}
+                              title="在新标签页查看详情"
+                            >
+                              {it.title}
+                            </Link>
+                          </td>
+                          <td>
+                            <span className="small muted">📦 {repoName}</span>
+                          </td>
+                          <td>
+                            <span className="small dim">{fmtTime(it.updatedAt)}</span>
+                          </td>
+                          <td style={{ textAlign: 'right' }}>
+                            <button
+                              className="sm danger ghost"
+                              title="永久删除此任务"
+                              disabled={deleteIssueMut.isPending}
+                              onClick={() => {
+                                if (window.confirm(`确定要永久删除任务「${it.title}」吗？`)) {
+                                  deleteIssueMut.mutate(it.id);
+                                }
+                              }}
+                            >
+                              🗑️ 删除
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {settingsOpen && (
+        <Modal
+          title="⚙️ 项目工作流与分支合并策略设置"
+          size="md"
+          onClose={() => setSettingsOpen(false)}
+          footer={
+            <>
+              <button onClick={() => setSettingsOpen(false)}>取消</button>
+              <button
+                className="primary"
+                disabled={!cfgTargetBranch.trim() || updateProjectMut.isPending}
+                onClick={() =>
+                  updateProjectMut.mutate({
+                    targetBranch: cfgTargetBranch.trim(),
+                    autoPrOnConfirm: cfgAutoPR,
+                  })
+                }
+              >
+                {updateProjectMut.isPending ? '保存中…' : '保存设置'}
+              </button>
+            </>
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <label className="field">
+              PR 默认目标基准分支 (Target Branch)
+              <input
+                className="mono"
+                value={cfgTargetBranch}
+                onChange={(e) => setCfgTargetBranch(e.target.value)}
+                placeholder="dev"
+                autoFocus
+              />
+              <span className="small dim">
+                💡 推荐设为 <code>dev</code>。Issue 改完后 PR 将默认提到此分支，待集成验证后再由 dev 合入 main，避免 main 一提交就自动打包触发构建/发布。
+              </span>
+            </label>
+
+            <div className="row" style={{ gap: 8 }}>
+              <span className="small muted">快捷选择常用分支:</span>
+              <button
+                type="button"
+                className="sm ghost"
+                onClick={() => setCfgTargetBranch('dev')}
+              >
+                dev (推荐)
+              </button>
+              <button
+                type="button"
+                className="sm ghost"
+                onClick={() => setCfgTargetBranch('main')}
+              >
+                main
+              </button>
+              {p?.repos?.[0]?.defaultBranch &&
+                p.repos[0].defaultBranch !== 'dev' &&
+                p.repos[0].defaultBranch !== 'main' && (
+                  <button
+                    type="button"
+                    className="sm ghost"
+                    onClick={() => setCfgTargetBranch(p.repos[0].defaultBranch)}
+                  >
+                    {p.repos[0].defaultBranch}
+                  </button>
+                )}
+            </div>
+
+            <label className="row" style={{ gap: 8, cursor: 'pointer', marginTop: 4 }}>
+              <input
+                type="checkbox"
+                checked={cfgAutoPR}
+                onChange={(e) => setCfgAutoPR(e.target.checked)}
+              />
+              <span style={{ fontSize: 13 }}>
+                <b>改完验收通过后自动创建 PR</b>（向上述目标基准分支发起 PR，生成标准改动记录）
+              </span>
+            </label>
+          </div>
         </Modal>
       )}
     </div>

@@ -21,7 +21,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.2"
+const Version = "0.2.3"
 
 type Server struct {
 	cfg    *config.Config
@@ -114,6 +114,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/projects/{id}/issues", s.handleCreateIssue)
 	m.HandleFunc("GET /api/issues/{id}", s.handleGetIssue)
 	m.HandleFunc("PATCH /api/issues/{id}", s.handleUpdateIssue)
+	m.HandleFunc("DELETE /api/issues/{id}", s.handleDeleteIssue)
+	m.HandleFunc("POST /api/issues/batch-delete", s.handleBatchDeleteIssues)
 	m.HandleFunc("POST /api/issues/{id}/publish", s.handlePublishIssue)
 
 	m.HandleFunc("GET /api/issues/{id}/comments", s.handleListComments)
@@ -331,15 +333,12 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body struct {
-		Name        *string `json:"name"`
-		Description *string `json:"description"`
-	}
-	if err := readJSON(r, &body); err != nil {
+	var patch store.ProjectPatch
+	if err := readJSON(r, &patch); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	p, err := s.st.UpdateProject(r.Context(), id, body.Name, body.Description)
+	p, err := s.st.UpdateProject(r.Context(), id, patch)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -520,6 +519,34 @@ func (s *Server) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 	s.runner.ExportIssueMarkdown(r.Context(), issue.ID)
 	s.hub.BroadcastIssueUpdated(issue)
 	writeJSON(w, http.StatusOK, issue)
+}
+
+func (s *Server) handleDeleteIssue(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	if err := s.st.DeleteIssue(r.Context(), id); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) handleBatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []int64 `json:"ids"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	n, err := s.st.BatchDeleteIssues(r.Context(), body.IDs)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": n})
 }
 
 func (s *Server) handlePublishIssue(w http.ResponseWriter, r *http.Request) {

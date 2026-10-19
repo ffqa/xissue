@@ -16,6 +16,8 @@ export interface Project {
   id: number;
   name: string;
   description: string;
+  targetBranch: string;
+  autoPrOnConfirm: boolean;
   repos: Repo[];
   createdAt: string;
   updatedAt: string;

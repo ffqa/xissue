@@ -26,7 +26,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.10"
+const Version = "0.2.11"
 
 type Server struct {
 	cfg    *config.Config

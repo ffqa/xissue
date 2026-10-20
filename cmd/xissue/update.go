@@ -510,6 +510,11 @@ func extractAndInstallBinary(archivePath, targetBin string) error {
 }
 
 func restartServiceIfRunning() {
+	// 如果旧配置中写死了特定版本 Cellar 物理路径，自动迁移并重启
+	if checkAndMigrateCellarService() {
+		return
+	}
+
 	home, _ := os.UserHomeDir()
 	logDir := filepath.Join(home, ".xissue")
 	scriptPath := filepath.Join(logDir, "scripts", "install-service.sh")

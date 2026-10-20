@@ -393,6 +393,10 @@ func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watch
 			})
 			title := fmt.Sprintf("分支推送：%s:%s (%d 个新提交)", w.RepoName, w.Branch, len(commits))
 			r.pushNotification("branch_push", title, strings.Join(lines, "\n"), fmt.Sprintf("/projects/%d?watch=%d", w.ProjectID, w.ID), string(metaBytes))
+
+			// 触发自动化引擎 (Layer 1 规则、Layer 2 on-branch-push Hook、Layer 3 插件)
+			repo, _ := r.st.GetRepo(ctx, w.RepoID)
+			_ = r.processBranchPushAutomation(ctx, w, repo, commits, tip)
 		}
 	}
 
@@ -1196,6 +1200,126 @@ func (r *Runner) ListPlugins() []domain.PluginInfo {
 	}
 	return r.automation.ListPlugins()
 }
+
+func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.BranchWatch, repo *domain.Repo, commits []gitx.CommitInfo, tip gitx.CommitInfo) error {
+	if r.automation == nil {
+		return nil
+	}
+
+	project, err := r.st.GetProject(ctx, w.ProjectID)
+	if err != nil || project == nil {
+		return err
+	}
+
+	workdir := ""
+	if repo != nil && gitx.IsLocalDir(repo.RemoteURL) {
+		workdir = repo.RemoteURL
+	}
+	if workdir == "" && len(project.Repos) > 0 {
+		for _, rp := range project.Repos {
+			if gitx.IsLocalDir(rp.RemoteURL) {
+				workdir = rp.RemoteURL
+				break
+			}
+		}
+	}
+
+	payload := automation.PREventContext{
+		Event:   "branch_push",
+		Project: *project,
+		Repo:    repo,
+		Branch:  w.Branch,
+		TipSHA:  tip.SHA,
+		Commits: commits,
+	}
+
+	// Layer 1: Rules
+	actions := r.automation.EvaluateBranchPushRules(project.AutomationRules, w.Branch, tip.Author, tip.Subject)
+
+	// Layer 2: Project Hooks (on-branch-push)
+	if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
+		actions = append(actions, hookActions...)
+	}
+
+	// Layer 3: Plugins
+	if plugActions, perr := r.automation.ExecutePlugins(ctx, payload); perr == nil {
+		actions = append(actions, plugActions...)
+	}
+
+	if len(actions) == 0 {
+		return nil
+	}
+
+	r.LogMonitor("EVENT", "automation", fmt.Sprintf("分支 %s:%s 推送触发了 %d 个自动化动作", w.RepoName, w.Branch, len(actions)))
+
+	for _, act := range actions {
+		switch act.Type {
+		case "create_issue", "trigger_run":
+			title := act.Prompt
+			if title == "" {
+				title = fmt.Sprintf("跟踪分支推送: %s:%s (%d 个新提交)", w.RepoName, w.Branch, len(commits))
+			}
+			var lines []string
+			lines = append(lines, fmt.Sprintf("## 分支监控通知: `%s:%s`\n", w.RepoName, w.Branch))
+			lines = append(lines, fmt.Sprintf("最新提交: `%s` by **%s**", tip.ShortSHA, tip.Author))
+			lines = append(lines, fmt.Sprintf("提交说明: %s\n", tip.Subject))
+			lines = append(lines, "### 包含的新提交列表:")
+			for _, c := range commits {
+				lines = append(lines, fmt.Sprintf("- `%s` %s (%s)", c.ShortSHA, c.Subject, c.Author))
+			}
+			body := strings.Join(lines, "\n")
+
+			newIssue, err := r.st.CreateLocalIssue(ctx, project.ID, title, body, []string{"branch-monitor", "auto"})
+			if err != nil {
+				r.LogMonitor("ERROR", "automation", fmt.Sprintf("自动化创建 Issue 失败: %v", err))
+				continue
+			}
+			if repo != nil {
+				_ = r.st.BindIssueRepo(ctx, newIssue.ID, repo.ID)
+			}
+			r.notify.BroadcastIssueUpdated(newIssue)
+			r.LogMonitor("INFO", "automation", fmt.Sprintf("已自动创建 Issue %s 跟踪分支推送", newIssue.Key))
+
+			if act.Type == "trigger_run" {
+				agentName := act.Agent
+				if agentName == "" {
+					for name := range r.cfg.Agents {
+						agentName = name
+						break
+					}
+				}
+				if agentName != "" {
+					prompt := act.Prompt
+					if prompt == "" {
+						prompt = fmt.Sprintf("请审查分支 %s 上最新的代码提交并进行分析与测试。", w.Branch)
+					}
+					r.LogMonitor("INFO", "automation", fmt.Sprintf("正在为 Issue %s 自动调度 Agent [%s]...", newIssue.Key, agentName))
+					if _, rerr := r.StartRun(ctx, newIssue.ID, agentName, "", prompt); rerr != nil {
+						r.LogMonitor("ERROR", "automation", fmt.Sprintf("自动化调度 Agent 失败: %v", rerr))
+					} else {
+						r.LogMonitor("EVENT", "automation", fmt.Sprintf("已成功启动 Agent [%s] 针对 Issue %s 开始执行任务", agentName, newIssue.Key))
+					}
+				}
+			}
+
+		case "pull_local":
+			if repo != nil {
+				_, _ = r.ensureRepoMirror(ctx, *repo)
+				r.LogMonitor("INFO", "automation", fmt.Sprintf("已自动刷新本地镜像与代码缓存 (%s:%s)", repo.Name, w.Branch))
+			}
+
+		case "notify":
+			msg := act.Message
+			if msg == "" {
+				msg = fmt.Sprintf("分支 %s:%s 收到 %d 个新提交", w.RepoName, w.Branch, len(commits))
+			}
+			r.pushNotification("automation", fmt.Sprintf("⚡ [%s] 分支推送自动化", w.RepoName), msg, fmt.Sprintf("/projects/%d?watch=%d", w.ProjectID, w.ID), "")
+		}
+	}
+
+	return nil
+}
+
 
 
 

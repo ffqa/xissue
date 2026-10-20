@@ -48,22 +48,25 @@ type Project struct {
 
 type RuleConditions struct {
 	Author      string `json:"author,omitempty"`      // 指定提交人/作者 (如 release-bot, qa-team，留空匹配任意)
-	Pattern     string `json:"pattern,omitempty"`     // 正则表达式匹配内容 (如 (?i)status:\s*passed)
+	Pattern     string `json:"pattern,omitempty"`     // 正则表达式匹配内容 (如 (?i)status:\s*passed 或 (?i)feat:)
 	ReviewState string `json:"reviewState,omitempty"` // 审核状态 (approved / changes_requested / commented)
+	Branch      string `json:"branch,omitempty"`      // 监控分支匹配 (如 main, dev，留空匹配任意分支)
 }
 
 type RuleAction struct {
-	Type     string `json:"type"`               // merge_pr | set_issue_status | pull_local | notify
+	Type     string `json:"type"`               // merge_pr | set_issue_status | pull_local | notify | create_issue | trigger_run
 	Status   string `json:"status,omitempty"`   // for set_issue_status, e.g. "done"
 	Strategy string `json:"strategy,omitempty"` // for merge_pr: "squash" | "merge" | "rebase"
 	Message  string `json:"message,omitempty"`  // for notify
+	Agent    string `json:"agent,omitempty"`    // for trigger_run: 指定运行的 agent 名称 (如 codex, opencode, omp)
+	Prompt   string `json:"prompt,omitempty"`   // for trigger_run / create_issue
 }
 
 type AutomationRule struct {
 	ID         string         `json:"id"`
 	Name       string         `json:"name"`
 	Enabled    bool           `json:"enabled"`
-	Trigger    string         `json:"trigger"` // pr_comment | pr_review
+	Trigger    string         `json:"trigger"` // pr_comment | pr_review | branch_push
 	Conditions RuleConditions `json:"conditions"`
 	Actions    []RuleAction   `json:"actions"`
 }

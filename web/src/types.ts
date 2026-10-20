@@ -31,20 +31,23 @@ export interface RuleConditions {
   author?: string;
   pattern?: string;
   reviewState?: string;
+  branch?: string;
 }
 
 export interface RuleAction {
-  type: 'merge_pr' | 'set_issue_status' | 'pull_local' | 'notify';
+  type: 'merge_pr' | 'set_issue_status' | 'pull_local' | 'notify' | 'create_issue' | 'trigger_run';
   status?: string;
   strategy?: 'squash' | 'merge' | 'rebase';
   message?: string;
+  agent?: string;
+  prompt?: string;
 }
 
 export interface AutomationRule {
   id: string;
   name: string;
   enabled: boolean;
-  trigger: 'pr_comment' | 'pr_review';
+  trigger: 'pr_comment' | 'pr_review' | 'branch_push';
   conditions: RuleConditions;
   actions: RuleAction[];
 }

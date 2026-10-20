@@ -477,6 +477,12 @@ func (s *Store) MarkIssuePublished(ctx context.Context, id, repoID, number int64
 	return s.GetIssue(ctx, id)
 }
 
+// BindIssueRepo associates an issue with a repository.
+func (s *Store) BindIssueRepo(ctx context.Context, issueID, repoID int64) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE issues SET repo_id=?, updated_at=? WHERE id=?`, repoID, now(), issueID)
+	return err
+}
+
 func (s *Store) DeleteIssue(ctx context.Context, id int64) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM issues WHERE id=?`, id)
 	return err

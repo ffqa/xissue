@@ -8,9 +8,11 @@ import { CherryPickModal } from '../components/CherryPickModal';
 import { PRListModal } from '../components/PRListModal';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
+import { WatchCommitDetailModal, getCommitWebUrl, getBranchWebUrl } from '../components/WatchCommitDetailModal';
 import { toast } from '../toast';
 import {
   type AutomationRule,
+  type BranchWatch,
   type DevMode,
   type HookStatus,
   type InspectResult,
@@ -105,6 +107,7 @@ export default function ProjectPage() {
 
   const [watchRepoId, setWatchRepoId] = useState<number>(0);
   const [watchBranch, setWatchBranch] = useState('');
+  const [viewWatch, setViewWatch] = useState<BranchWatch | null>(null);
 
   const [cpOpen, setCpOpen] = useState(false);
   const [cpInitRepoId, setCpInitRepoId] = useState<number | undefined>();
@@ -154,14 +157,19 @@ export default function ProjectPage() {
 
   // 规则配置表单状态
   const [newRuleOpen, setNewRuleOpen] = useState(false);
-  const [newRuleName, setNewRuleName] = useState('指定人员 Report 自动合并');
-  const [newRuleTrigger, setNewRuleTrigger] = useState<'pr_comment' | 'pr_review'>('pr_comment');
+  const [newRuleName, setNewRuleName] = useState('监控分支新推送自动建 Issue');
+  const [newRuleTrigger, setNewRuleTrigger] = useState<'pr_comment' | 'pr_review' | 'branch_push'>('branch_push');
+  const [newRuleBranch, setNewRuleBranch] = useState('');
   const [newRuleAuthor, setNewRuleAuthor] = useState('');
-  const [newRulePattern, setNewRulePattern] = useState('(?i)status:\\s*passed');
-  const [newRuleMergePR, setNewRuleMergePR] = useState(true);
-  const [newRuleSetDone, setNewRuleSetDone] = useState(true);
+  const [newRulePattern, setNewRulePattern] = useState('');
+  const [newRuleMergePR, setNewRuleMergePR] = useState(false);
+  const [newRuleSetDone, setNewRuleSetDone] = useState(false);
   const [newRulePullLocal, setNewRulePullLocal] = useState(true);
   const [newRuleNotify, setNewRuleNotify] = useState(true);
+  const [newRuleCreateIssue, setNewRuleCreateIssue] = useState(true);
+  const [newRuleTriggerRun, setNewRuleTriggerRun] = useState(false);
+  const [newRuleAgent, setNewRuleAgent] = useState('');
+  const [newRulePrompt, setNewRulePrompt] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
 
   const updateProjectMut = useMutation({
@@ -702,53 +710,118 @@ export default function ProjectPage() {
           <div className="panel-b" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {watches.length === 0 ? (
               <span className="dim small">
-                添加要监控的分支（例如同事分支或上游 dev 分支），有人推送新提交时顶部 🔔 铃铛会自动提醒，并支持一键 Cherry-Pick 提 PR。
+                添加要监控的分支（例如同事分支或上游 dev 分支），有新代码推送时自动记录、推送通知，并可触发自动化规则，支持点击查看提交详情与平台直达。
               </span>
             ) : (
-              watches.map((w) => (
-                <div
-                  key={w.id}
-                  className="row"
-                  style={{
-                    padding: '4px 8px',
-                    borderRadius: 6,
-                    border: '1px solid var(--border)',
-                    background: 'var(--bg-2)',
-                    gap: 8,
-                    flexWrap: 'wrap',
-                  }}
-                >
-                  <span className="mono small">
-                    <b>{w.repoName}</b>:{w.branch}
-                  </span>
-                  <code className="mono small" style={{ color: 'var(--accent)' }}>
-                    {w.lastSha ? w.lastSha.slice(0, 7) : '—'}
-                  </code>
-                  <span className="small muted ellipsis grow" title={w.lastMessage}>
-                    {w.lastMessage || '无提交信息'}{' '}
-                    {w.lastAuthor && <span className="dim">({w.lastAuthor})</span>}
-                  </span>
-                  <span className="small dim">{fmtTime(w.updatedAt)}</span>
-                  <button
-                    className="sm ghost"
-                    title="从该分支选择提交 Cherry-Pick 到目标分支并提 PR"
-                    onClick={() => {
-                      setCpInitRepoId(w.repoId);
-                      setCpInitBranch(w.branch);
-                      setCpOpen(true);
+              watches.map((w) => {
+                const repoObj = p?.repos?.find((r) => r.id === w.repoId);
+                const branchUrl = getBranchWebUrl(repoObj, w.branch);
+                const commitUrl = getCommitWebUrl(repoObj, w.lastSha);
+
+                return (
+                  <div
+                    key={w.id}
+                    className="row"
+                    style={{
+                      padding: '5px 10px',
+                      borderRadius: 6,
+                      border: '1px solid var(--border)',
+                      background: 'var(--bg-2)',
+                      gap: 8,
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
                     }}
                   >
-                    🍒 Cherry-Pick
-                  </button>
-                  <button
-                    className="sm ghost"
-                    title="取消监控"
-                    onClick={() => delWatchMut.mutate(w.id)}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))
+                    <span className="mono small" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <b>{w.repoName}</b>:
+                      {branchUrl ? (
+                        <a
+                          href={branchUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}
+                          title="在代码平台网页端打开此分支"
+                        >
+                          {w.branch} ↗
+                        </a>
+                      ) : (
+                        <span>{w.branch}</span>
+                      )}
+                    </span>
+
+                    {w.lastSha ? (
+                      commitUrl ? (
+                        <a
+                          href={commitUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mono small"
+                          style={{
+                            color: 'var(--accent)',
+                            textDecoration: 'none',
+                            background: 'var(--bg-1)',
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            border: '1px solid var(--border)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 2,
+                          }}
+                          title={`在平台打开此 Commit (${w.lastSha})`}
+                        >
+                          {w.lastSha.slice(0, 7)} ↗
+                        </a>
+                      ) : (
+                        <code
+                          className="mono small"
+                          style={{
+                            color: 'var(--accent)',
+                            background: 'var(--bg-1)',
+                            padding: '1px 6px',
+                            borderRadius: 4,
+                            border: '1px solid var(--border)',
+                            cursor: 'pointer',
+                          }}
+                          title={w.lastSha}
+                          onClick={() => setViewWatch(w)}
+                        >
+                          {w.lastSha.slice(0, 7)}
+                        </code>
+                      )
+                    ) : (
+                      <span className="mono small dim">—</span>
+                    )}
+
+                    <span
+                      className="small muted ellipsis grow"
+                      style={{ cursor: 'pointer' }}
+                      title={`点击查看详情: ${w.lastMessage || '无提交信息'}`}
+                      onClick={() => setViewWatch(w)}
+                    >
+                      {w.lastMessage || '无提交信息'}{' '}
+                      {w.lastAuthor && <span className="dim">({w.lastAuthor})</span>}
+                    </span>
+
+                    <span className="small dim">{fmtTime(w.updatedAt)}</span>
+
+                    <button
+                      className="sm ghost"
+                      title="查看该分支的历史提交记录与详细信息"
+                      onClick={() => setViewWatch(w)}
+                    >
+                      📜 提交记录
+                    </button>
+
+                    <button
+                      className="sm ghost"
+                      title="取消监控"
+                      onClick={() => delWatchMut.mutate(w.id)}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
@@ -935,6 +1008,19 @@ export default function ProjectPage() {
           initialRepoId={cpInitRepoId}
           initialSourceBranch={cpInitBranch}
           onClose={() => setCpOpen(false)}
+        />
+      )}
+
+      {viewWatch && (
+        <WatchCommitDetailModal
+          watch={viewWatch}
+          repo={p?.repos?.find((r) => r.id === viewWatch.repoId)}
+          onClose={() => setViewWatch(null)}
+          onCreateIssue={(newTitle, newBody) => {
+            setTitle(newTitle);
+            setBody(newBody);
+            setIssueOpen(true);
+          }}
         />
       )}
 
@@ -1430,22 +1516,46 @@ export default function ProjectPage() {
                         <input
                           value={newRuleName}
                           onChange={(e) => setNewRuleName(e.target.value)}
-                          placeholder="例如: 指定审核人通过后自动合并"
+                          placeholder="例如: 监控分支新推送自动建 Issue"
                         />
                       </label>
                       <label className="field" style={{ margin: 0 }}>
                         <span className="small">触发事件</span>
                         <select
                           value={newRuleTrigger}
-                          onChange={(e) => setNewRuleTrigger(e.target.value as 'pr_comment' | 'pr_review')}
+                          onChange={(e) => {
+                            const val = e.target.value as 'pr_comment' | 'pr_review' | 'branch_push';
+                            setNewRuleTrigger(val);
+                            if (val === 'branch_push') {
+                              setNewRuleCreateIssue(true);
+                              setNewRuleMergePR(false);
+                              setNewRuleSetDone(false);
+                            } else {
+                              setNewRuleMergePR(true);
+                              setNewRuleSetDone(true);
+                              setNewRuleCreateIssue(false);
+                            }
+                          }}
                         >
+                          <option value="branch_push">🌟 监控分支新推送 (branch_push)</option>
                           <option value="pr_comment">PR 评论 / 检查报告 (pr_comment)</option>
                           <option value="pr_review">PR 审核批准通过 (pr_review)</option>
                         </select>
                       </label>
                     </div>
 
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: newRuleTrigger === 'branch_push' ? '1fr 1fr 1fr' : '1fr 1fr', gap: 10 }}>
+                      {newRuleTrigger === 'branch_push' && (
+                        <label className="field" style={{ margin: 0 }}>
+                          <span className="small">监控分支 (Branch)</span>
+                          <input
+                            className="mono"
+                            value={newRuleBranch}
+                            onChange={(e) => setNewRuleBranch(e.target.value)}
+                            placeholder="如 main, dev 或正则 (留空匹配所有分支)"
+                          />
+                        </label>
+                      )}
                       <label className="field" style={{ margin: 0 }}>
                         <span className="small">指定人员 / 提交人 (Author)</span>
                         <input
@@ -1455,12 +1565,12 @@ export default function ProjectPage() {
                         />
                       </label>
                       <label className="field" style={{ margin: 0 }}>
-                        <span className="small">正文匹配正则表达式 (Pattern)</span>
+                        <span className="small">正文 / 提交说明正则 (Pattern)</span>
                         <input
                           className="mono"
                           value={newRulePattern}
                           onChange={(e) => setNewRulePattern(e.target.value)}
-                          placeholder="例如: (?i)status:\s*passed 或 (?i)LGTM"
+                          placeholder={newRuleTrigger === 'branch_push' ? '例如: (?i)^feat: 或 (?i)^fix:' : '例如: (?i)status:\\s*passed 或 (?i)LGTM'}
                         />
                       </label>
                     </div>
@@ -1470,39 +1580,104 @@ export default function ProjectPage() {
                         触发后执行的动作 (Actions):
                       </span>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14 }}>
-                        <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
-                          <input
-                            type="checkbox"
-                            checked={newRuleMergePR}
-                            onChange={(e) => setNewRuleMergePR(e.target.checked)}
-                          />
-                          <span>自动合并 PR (Squash Merge)</span>
-                        </label>
-                        <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
-                          <input
-                            type="checkbox"
-                            checked={newRuleSetDone}
-                            onChange={(e) => setNewRuleSetDone(e.target.checked)}
-                          />
-                          <span>自动标记 Issue 为已完成 (Done)</span>
-                        </label>
-                        <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
-                          <input
-                            type="checkbox"
-                            checked={newRulePullLocal}
-                            onChange={(e) => setNewRulePullLocal(e.target.checked)}
-                          />
-                          <span>自动同步拉取本地代码 (Pull)</span>
-                        </label>
-                        <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
-                          <input
-                            type="checkbox"
-                            checked={newRuleNotify}
-                            onChange={(e) => setNewRuleNotify(e.target.checked)}
-                          />
-                          <span>发送应用内通知</span>
-                        </label>
+                        {newRuleTrigger === 'branch_push' ? (
+                          <>
+                            <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={newRuleCreateIssue}
+                                onChange={(e) => setNewRuleCreateIssue(e.target.checked)}
+                              />
+                              <span>自动创建 Issue 跟踪分支推送</span>
+                            </label>
+                            <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={newRuleTriggerRun}
+                                onChange={(e) => setNewRuleTriggerRun(e.target.checked)}
+                              />
+                              <span>自动调度 Agent 执行代码分析/审查 (Trigger Run)</span>
+                            </label>
+                            <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={newRulePullLocal}
+                                onChange={(e) => setNewRulePullLocal(e.target.checked)}
+                              />
+                              <span>自动刷新拉取本地仓库镜像 (Pull)</span>
+                            </label>
+                            <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={newRuleNotify}
+                                onChange={(e) => setNewRuleNotify(e.target.checked)}
+                              />
+                              <span>发送应用内通知</span>
+                            </label>
+                          </>
+                        ) : (
+                          <>
+                            <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={newRuleMergePR}
+                                onChange={(e) => setNewRuleMergePR(e.target.checked)}
+                              />
+                              <span>自动合并 PR (Squash Merge)</span>
+                            </label>
+                            <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={newRuleSetDone}
+                                onChange={(e) => setNewRuleSetDone(e.target.checked)}
+                              />
+                              <span>自动标记 Issue 为已完成 (Done)</span>
+                            </label>
+                            <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={newRulePullLocal}
+                                onChange={(e) => setNewRulePullLocal(e.target.checked)}
+                              />
+                              <span>自动同步拉取本地代码 (Pull)</span>
+                            </label>
+                            <label className="row" style={{ gap: 6, cursor: 'pointer', fontSize: 12 }}>
+                              <input
+                                type="checkbox"
+                                checked={newRuleNotify}
+                                onChange={(e) => setNewRuleNotify(e.target.checked)}
+                              />
+                              <span>发送应用内通知</span>
+                            </label>
+                          </>
+                        )}
                       </div>
+
+                      {newRuleTrigger === 'branch_push' && newRuleTriggerRun && (
+                        <div style={{ marginTop: 10, display: 'grid', gridTemplateColumns: '180px 1fr', gap: 10 }}>
+                          <label className="field" style={{ margin: 0 }}>
+                            <span className="small">选择执行 Agent</span>
+                            <select
+                              value={newRuleAgent || defaultAgent}
+                              onChange={(e) => setNewRuleAgent(e.target.value)}
+                            >
+                              {(agentsQ.data ?? []).map((ag) => (
+                                <option key={ag.name} value={ag.name} disabled={!ag.available}>
+                                  {ag.name} {!ag.available ? '(未就绪)' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className="field" style={{ margin: 0 }}>
+                            <span className="small">附加指令 / Prompt (可选)</span>
+                            <input
+                              value={newRulePrompt}
+                              onChange={(e) => setNewRulePrompt(e.target.value)}
+                              placeholder="例如: 审查最新提交的代码变更，检查是否有破坏性改动或测试遗漏"
+                            />
+                          </label>
+                        </div>
+                      )}
                     </div>
 
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
@@ -1519,10 +1694,17 @@ export default function ProjectPage() {
                         disabled={!newRuleName.trim()}
                         onClick={() => {
                           const acts: RuleAction[] = [];
-                          if (newRuleMergePR) acts.push({ type: 'merge_pr', strategy: 'squash' });
-                          if (newRuleSetDone) acts.push({ type: 'set_issue_status', status: 'done' });
-                          if (newRulePullLocal) acts.push({ type: 'pull_local' });
-                          if (newRuleNotify) acts.push({ type: 'notify' });
+                          if (newRuleTrigger === 'branch_push') {
+                            if (newRuleCreateIssue) acts.push({ type: 'create_issue' });
+                            if (newRuleTriggerRun) acts.push({ type: 'trigger_run', agent: newRuleAgent || defaultAgent, prompt: newRulePrompt.trim() || undefined });
+                            if (newRulePullLocal) acts.push({ type: 'pull_local' });
+                            if (newRuleNotify) acts.push({ type: 'notify' });
+                          } else {
+                            if (newRuleMergePR) acts.push({ type: 'merge_pr', strategy: 'squash' });
+                            if (newRuleSetDone) acts.push({ type: 'set_issue_status', status: 'done' });
+                            if (newRulePullLocal) acts.push({ type: 'pull_local' });
+                            if (newRuleNotify) acts.push({ type: 'notify' });
+                          }
 
                           const newRule: AutomationRule = {
                             id: 'rule_' + Date.now(),
@@ -1530,6 +1712,7 @@ export default function ProjectPage() {
                             enabled: true,
                             trigger: newRuleTrigger,
                             conditions: {
+                              branch: newRuleTrigger === 'branch_push' ? (newRuleBranch.trim() || undefined) : undefined,
                               author: newRuleAuthor.trim() || undefined,
                               pattern: newRulePattern.trim() || undefined,
                             },
@@ -1606,17 +1789,22 @@ export default function ProjectPage() {
                                   fontFamily: 'var(--mono)',
                                 }}
                               >
-                                {rule.trigger}
+                                {rule.trigger === 'branch_push' ? '🌟 分支推送 (branch_push)' : rule.trigger}
                               </span>
                             </div>
                             <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 4 }}>
                               条件:
+                              {rule.conditions.branch && (
+                                <span style={{ marginLeft: 6 }}>
+                                  分支: <code className="mono">{rule.conditions.branch}</code>
+                                </span>
+                              )}
                               {rule.conditions.author ? (
                                 <span style={{ marginLeft: 6 }}>
                                   提交人: <code>@{rule.conditions.author}</code>
                                 </span>
                               ) : (
-                                <span style={{ marginLeft: 6, color: 'var(--text-3)' }}>任意提交人</span>
+                                !rule.conditions.branch && <span style={{ marginLeft: 6, color: 'var(--text-3)' }}>任意提交人</span>
                               )}
                               {rule.conditions.pattern && (
                                 <span style={{ marginLeft: 10 }}>
@@ -1636,10 +1824,12 @@ export default function ProjectPage() {
                                     padding: '1px 6px',
                                   }}
                                 >
+                                  {act.type === 'create_issue' && '✓ 自动建 Issue'}
+                                  {act.type === 'trigger_run' && `✓ 调度 ${act.agent || 'Agent'}`}
                                   {act.type === 'merge_pr' && '✓ 自动合并 PR'}
                                   {act.type === 'set_issue_status' && `✓ 改为 ${act.status || 'done'}`}
                                   {act.type === 'pull_local' && '✓ 同步本地代码'}
-                                  {act.type === 'notify' && '✓ 应用内提醒'}
+                                  {act.type === 'notify' && '✓ 提醒通知'}
                                 </span>
                               ))}
                             </div>

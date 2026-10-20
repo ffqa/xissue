@@ -14,15 +14,19 @@ import (
 	"time"
 
 	"github.com/xpier/xissue/internal/domain"
+	"github.com/xpier/xissue/internal/gitx"
 	"github.com/xpier/xissue/internal/provider"
 	"gopkg.in/yaml.v3"
 )
 
 // PREventContext is passed to Hook scripts and Plugins via stdin.
 type PREventContext struct {
-	Event   string                 `json:"event"` // pr_comment | pr_review
+	Event   string                 `json:"event"` // pr_comment | pr_review | branch_push
 	Project domain.Project         `json:"project"`
 	Repo    *domain.Repo           `json:"repo,omitempty"`
+	Branch  string                 `json:"branch,omitempty"`
+	TipSHA  string                 `json:"tipSha,omitempty"`
+	Commits []gitx.CommitInfo      `json:"commits,omitempty"`
 	Issue   *domain.Issue          `json:"issue,omitempty"`
 	PR      *provider.PRDetailInfo `json:"pr,omitempty"`
 	Comment *provider.PRComment    `json:"comment,omitempty"`
@@ -95,6 +99,59 @@ func MatchRule(rule domain.AutomationRule, comment *provider.PRComment, review *
 	}
 
 	return true
+}
+
+// MatchBranchPushRule checks if a branch push matches rule conditions.
+func MatchBranchPushRule(rule domain.AutomationRule, branch string, author string, commitMsg string) bool {
+	if !rule.Enabled || rule.Trigger != "branch_push" {
+		return false
+	}
+	cond := rule.Conditions
+
+	// 1. Branch match (支持精确匹配或正则表达式)
+	if cond.Branch != "" {
+		expectedBranch := strings.TrimSpace(cond.Branch)
+		if !strings.EqualFold(expectedBranch, strings.TrimSpace(branch)) {
+			re, err := regexp.Compile(expectedBranch)
+			if err != nil || !re.MatchString(branch) {
+				return false
+			}
+		}
+	}
+
+	// 2. Author check
+	if cond.Author != "" {
+		expectedAuthor := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(cond.Author)), "@")
+		actualAuthor := strings.ToLower(strings.TrimSpace(author))
+		if actualAuthor != expectedAuthor && !strings.Contains(actualAuthor, expectedAuthor) {
+			return false
+		}
+	}
+
+	// 3. Pattern regex check on commit message
+	if cond.Pattern != "" {
+		re, err := regexp.Compile(cond.Pattern)
+		if err != nil {
+			if !strings.Contains(strings.ToLower(commitMsg), strings.ToLower(cond.Pattern)) {
+				return false
+			}
+		} else if !re.MatchString(commitMsg) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// EvaluateBranchPushRules (Layer 1) evaluates built-in rules for branch_push events.
+func (e *Engine) EvaluateBranchPushRules(rules []domain.AutomationRule, branch string, author string, commitMsg string) []domain.RuleAction {
+	var actions []domain.RuleAction
+	for _, rule := range rules {
+		if MatchBranchPushRule(rule, branch, author, commitMsg) {
+			actions = append(actions, rule.Actions...)
+		}
+	}
+	return actions
 }
 
 // EvaluateRules (Layer 1) evaluates built-in project declarative rules.
@@ -238,6 +295,7 @@ func DetectHooks(workdir string) []domain.HookStatus {
 		event string
 		desc  string
 	}{
+		{"on-branch-push", "branch_push", "监控分支检测到新代码推送 (Push) 时触发"},
 		{"on-pr-comment", "pr_comment", "PR 收到新评论或报告时触发"},
 		{"on-pr-review", "pr_review", "PR 收到审核批准 (Review) 时触发"},
 		{"on-pr-created", "pr_created", "新 PR 提交创建成功时触发"},

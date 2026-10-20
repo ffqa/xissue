@@ -18,11 +18,13 @@ import (
 	"time"
 
 	"github.com/xpier/xissue/internal/config"
+	"github.com/xpier/xissue/internal/runner"
 	"github.com/xpier/xissue/internal/server"
 	"github.com/xpier/xissue/internal/store"
 )
 
 func main() {
+	runner.EnsureEnhancedPath()
 	var (
 		cfgPath = flag.String("config", "", "path to config.yaml (default ~/.xissue/config.yaml)")
 		listen  = flag.String("listen", "", "override listen address (e.g. 127.0.0.1:7789)")

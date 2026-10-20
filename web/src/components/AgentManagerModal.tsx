@@ -375,6 +375,8 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
                     qc.setQueryData(qk.agentModels(selectedName), fresh);
                     if (fresh.models.length > 0) {
                       toast.success(`已探测到 ${fresh.models.length} 个模型（${fresh.providers.length} 个 Provider）`);
+                    } else if (fresh.probeError) {
+                      toast.info(fresh.probeError);
                     } else {
                       toast.info(`未探测到模型。该 Agent 可能尚未登录或未通过 ACP 暴露模型列表，您可在下方手动绑定。`);
                     }
@@ -387,6 +389,23 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
               </button>
             )}
           </div>
+
+          {modelsQ.data?.probeError && (
+            <div
+              style={{
+                padding: '8px 12px',
+                background: 'rgba(234, 179, 8, 0.1)',
+                border: '1px solid rgba(234, 179, 8, 0.3)',
+                borderRadius: 6,
+                fontSize: 12,
+                color: 'var(--yellow)',
+                lineHeight: 1.5,
+                marginBottom: 12,
+              }}
+            >
+              ⚠️ <b>探测诊断提示</b>：{modelsQ.data.probeError}
+            </div>
+          )}
 
           <div className="row" style={{ gap: 10, alignItems: 'flex-end', marginBottom: 12 }}>
             <label className="field" style={{ flex: 1 }}>

@@ -83,6 +83,17 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
     },
   });
 
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKey, true);
+    return () => window.removeEventListener('keydown', handleKey, true);
+  }, [onClose]);
+
   const status = statusQ.data;
   const rawLogs = logsQ.data ?? [];
 

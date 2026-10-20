@@ -54,6 +54,8 @@ type AgentModels struct {
 	CustomModels []string          `json:"customModels"`
 	Providers    []string          `json:"providers"`
 	Models       []acp.ModelOption `json:"models"`
+	Warning      string            `json:"warning,omitempty"`
+	ProbeError   string            `json:"probeError,omitempty"`
 }
 
 // RepoChanges groups file diffs per repository for the review screen.
@@ -181,7 +183,7 @@ func (r *Runner) ListAgents() []AgentStatus {
 	defer r.mu.Unlock()
 	out := make([]AgentStatus, 0, len(r.cfg.Agents))
 	for name, ac := range r.cfg.Agents {
-		_, err := exec.LookPath(ac.Command)
+		_, err := LookupAgentBinary(ac.Command)
 		args := ac.Args
 		if args == nil {
 			args = []string{}
@@ -271,7 +273,7 @@ func (r *Runner) UpsertAgent(name string, ac config.AgentConfig) (*AgentStatus, 
 	delete(r.modelCache, name)
 	r.modelMu.Unlock()
 
-	_, lookErr := exec.LookPath(ac.Command)
+	_, lookErr := LookupAgentBinary(ac.Command)
 	return &AgentStatus{
 		Name:         name,
 		Command:      ac.Command,
@@ -331,10 +333,11 @@ func (r *Runner) ListAgentModels(ctx context.Context, agentName string, refresh 
 		}
 	}
 
-	pctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+	pctx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
 
 	var currentModel string
+	var probeErr string
 	byVal := map[string]acp.ModelOption{}
 
 	// 0. Merge user-bound custom models from xIssue AgentConfig
@@ -372,72 +375,93 @@ func (r *Runner) ListAgentModels(ctx context.Context, agentName string, refresh 
 		}
 	}
 
-	// 1. If opencode, also merge any custom providers/models declared in ~/.config/opencode/opencode.json
+	// 1. If opencode, also merge any custom providers/models declared in opencode config
 	if agentName == "opencode" || filepath.Base(ac.Command) == "opencode" {
-		if home, err := os.UserHomeDir(); err == nil {
-			for _, cfgName := range []string{"opencode.json", "config.json"} {
-				p := filepath.Join(home, ".config", "opencode", cfgName)
-				if b, err := os.ReadFile(p); err == nil {
-					var oc struct {
-						Model     any `json:"model"`
-						Providers map[string]struct {
-							Models map[string]struct {
-								Name string `json:"name"`
-							} `json:"models"`
-						} `json:"providers"`
-						Provider map[string]struct {
-							Models map[string]struct {
-								Name string `json:"name"`
-							} `json:"models"`
-						} `json:"provider"`
+		home, _ := os.UserHomeDir()
+		var candidateConfigs []string
+		if home != "" {
+			candidateConfigs = append(candidateConfigs,
+				filepath.Join(home, ".config", "opencode", "opencode.json"),
+				filepath.Join(home, ".config", "opencode", "config.json"),
+			)
+		}
+		if runtime.GOOS == "windows" {
+			if appData := os.Getenv("APPDATA"); appData != "" {
+				candidateConfigs = append(candidateConfigs,
+					filepath.Join(appData, "opencode", "opencode.json"),
+					filepath.Join(appData, "opencode", "config.json"),
+				)
+			}
+		}
+
+		for _, p := range candidateConfigs {
+			if b, err := os.ReadFile(p); err == nil {
+				var oc struct {
+					Model     any `json:"model"`
+					Providers map[string]struct {
+						Models map[string]struct {
+							Name string `json:"name"`
+						} `json:"models"`
+					} `json:"providers"`
+					Provider map[string]struct {
+						Models map[string]struct {
+							Name string `json:"name"`
+						} `json:"models"`
+					} `json:"provider"`
+				}
+				if json.Unmarshal(b, &oc) == nil {
+					if s, ok := oc.Model.(string); ok && s != "" && currentModel == "" {
+						currentModel = s
 					}
-					if json.Unmarshal(b, &oc) == nil {
-						if s, ok := oc.Model.(string); ok && s != "" && currentModel == "" {
-							currentModel = s
-						}
-						mergeProvs := func(pm map[string]struct {
-							Models map[string]struct {
-								Name string `json:"name"`
-							} `json:"models"`
-						}) {
-							for prov, pdef := range pm {
-								for mid, mdef := range pdef.Models {
-									val := prov + "/" + mid
-									name := mdef.Name
-									if name == "" {
-										name = mid
-									}
-									byVal[val] = acp.ModelOption{
-										Value:    val,
-										Name:     prov + "/" + name,
-										Provider: prov,
-									}
+					mergeProvs := func(pm map[string]struct {
+						Models map[string]struct {
+							Name string `json:"name"`
+						} `json:"models"`
+					}) {
+						for prov, pdef := range pm {
+							for mid, mdef := range pdef.Models {
+								val := prov + "/" + mid
+								name := mdef.Name
+								if name == "" {
+									name = mid
+								}
+								byVal[val] = acp.ModelOption{
+									Value:    val,
+									Name:     prov + "/" + name,
+									Provider: prov,
 								}
 							}
 						}
-						mergeProvs(oc.Providers)
-						mergeProvs(oc.Provider)
 					}
+					mergeProvs(oc.Providers)
+					mergeProvs(oc.Provider)
 				}
 			}
 		}
 	}
 
 	// 2. Probe via ACP initialize + session/new if binary is installed
-	if _, err := exec.LookPath(ac.Command); err == nil {
+	binPath, lookErr := LookupAgentBinary(ac.Command)
+	if lookErr != nil {
+		probeErr = fmt.Sprintf("未在系统 PATH 或常用目录中找到命令 %q，请确认已安装并在终端中可用", ac.Command)
+	} else {
 		probeDir := r.cfg.DataDir
 		if err := os.MkdirAll(probeDir, 0o755); err != nil {
 			probeDir = os.TempDir()
 		}
 		client, err := acp.Start(pctx, acp.Options{
-			Command: ac.Command,
+			Command: binPath,
 			Args:    ac.Args,
 			Env:     ac.Env,
 			Dir:     probeDir,
 		}, acp.Handlers{})
-		if err == nil {
+		if err != nil {
+			probeErr = fmt.Sprintf("启动 Agent 失败: %v", err)
+		} else {
 			defer client.Close()
-			if err := client.NewSession(pctx, probeDir); err == nil {
+			if err := client.NewSession(pctx, probeDir); err != nil {
+				probeErr = fmt.Sprintf("ACP 会话握手失败: %v", err)
+			} else {
 				// For opencode, if background service just booted and returned few models, retry once after a short pause
 				if (agentName == "opencode" || filepath.Base(ac.Command) == "opencode") && len(client.ModelOptions) <= 40 {
 					time.Sleep(800 * time.Millisecond)
@@ -477,6 +501,10 @@ func (r *Runner) ListAgentModels(ctx context.Context, agentName string, refresh 
 	}
 	sort.Strings(providers)
 
+	if probeErr == "" && len(models) == 0 {
+		probeErr = fmt.Sprintf("Agent %q 握手成功，但未返回可用模型。请确认已在 Agent 中登录或配置至少一个 Provider / API Key", agentName)
+	}
+
 	res := &AgentModels{
 		Agent:        agentName,
 		CurrentModel: currentModel,
@@ -484,6 +512,7 @@ func (r *Runner) ListAgentModels(ctx context.Context, agentName string, refresh 
 		CustomModels: customModels,
 		Providers:    providers,
 		Models:       models,
+		ProbeError:   probeErr,
 	}
 	if len(models) > 0 {
 		r.modelMu.Lock()
@@ -507,9 +536,11 @@ func (r *Runner) StartRun(ctx context.Context, issueID int64, agentName, modelNa
 	if !ok {
 		return nil, fmt.Errorf("unknown agent %q", agentName)
 	}
-	if _, err := exec.LookPath(ac.Command); err != nil {
-		return nil, fmt.Errorf("agent binary %q not found in PATH", ac.Command)
+	binPath, err := LookupAgentBinary(ac.Command)
+	if err != nil {
+		return nil, fmt.Errorf("agent binary %q not found in PATH or standard user directories", ac.Command)
 	}
+	ac.Command = binPath
 	modelName = strings.TrimSpace(modelName)
 	if modelName == "" && ac.DefaultModel != "" {
 		modelName = strings.TrimSpace(ac.DefaultModel)

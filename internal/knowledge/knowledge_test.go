@@ -30,9 +30,11 @@ func TestKnowledgeScanAndSearch(t *testing.T) {
 
 	// Create a fake wiki
 	wikiDir := WikiDir(dataDir, 100)
-	_ = os.MkdirAll(wikiDir, 0o755)
+	_ = os.MkdirAll(filepath.Join(wikiDir, "guides", "advanced"), 0o755)
 	wikiContent := "# Home Page\n\nWelcome to GitHub Wiki documentation.\n"
 	_ = os.WriteFile(filepath.Join(wikiDir, "Home.md"), []byte(wikiContent), 0o644)
+	subWikiContent := "# Advanced Guide\n\nDeep nested wiki document.\n"
+	_ = os.WriteFile(filepath.Join(wikiDir, "guides", "advanced", "setup.md"), []byte(subWikiContent), 0o644)
 
 	proj := &domain.Project{
 		ID:   1,
@@ -55,8 +57,30 @@ func TestKnowledgeScanAndSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanProjectDocs failed: %v", err)
 	}
-	if len(docs) < 3 {
-		t.Fatalf("expected at least 3 docs, got %d", len(docs))
+	if len(docs) < 4 {
+		t.Fatalf("expected at least 4 docs (including nested wiki), got %d", len(docs))
+	}
+
+	// Verify nested wiki doc exists
+	foundNested := false
+	var nestedDocID string
+	for _, d := range docs {
+		if d.Path == "guides/advanced/setup.md" {
+			foundNested = true
+			nestedDocID = d.ID
+			break
+		}
+	}
+	if !foundNested {
+		t.Fatalf("expected nested wiki doc 'guides/advanced/setup.md' to be scanned")
+	}
+
+	nestedDetail, err := GetDocDetail(ctx, dataDir, proj, nestedDocID)
+	if err != nil {
+		t.Fatalf("GetDocDetail for nested wiki failed: %v", err)
+	}
+	if nestedDetail.Title != "Advanced Guide" {
+		t.Errorf("expected nested wiki title 'Advanced Guide', got %s", nestedDetail.Title)
 	}
 
 	// 2. Search docs

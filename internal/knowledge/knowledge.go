@@ -141,23 +141,35 @@ func docPriority(d domain.DocItem) int {
 
 func scanDirForMarkdown(dir string, repoID int64, repoName string, projectID int64, source domain.DocSource) []domain.DocItem {
 	var list []domain.DocItem
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return list
-	}
 
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
-			continue
-		}
-		fullPath := filepath.Join(dir, e.Name())
-		info, err := e.Info()
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			continue
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if ignoredDirs[name] || strings.HasPrefix(name, ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Name()), ".md") {
+			return nil
 		}
 
-		title, excerpt := extractTitleAndExcerpt(fullPath)
-		docID := fmt.Sprintf("wiki:%d:%s", repoID, e.Name())
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+
+		title, excerpt := extractTitleAndExcerpt(path)
+		docID := fmt.Sprintf("wiki:%d:%s", repoID, rel)
 
 		list = append(list, domain.DocItem{
 			ID:        docID,
@@ -166,12 +178,14 @@ func scanDirForMarkdown(dir string, repoID int64, repoName string, projectID int
 			RepoName:  repoName,
 			Source:    source,
 			Title:     title,
-			Path:      e.Name(),
+			Path:      rel,
 			Size:      info.Size(),
 			Excerpt:   excerpt,
 			UpdatedAt: info.ModTime(),
 		})
-	}
+		return nil
+	})
+
 	return list
 }
 

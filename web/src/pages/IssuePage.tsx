@@ -628,12 +628,33 @@ export default function IssuePage() {
               onClick={async () => {
                 const fresh = await api.agentModels(agent, true);
                 qc.setQueryData(qk.agentModels(agent), fresh);
-                toast.info(`已刷新 ${agent} 模型列表（共 ${fresh.models.length} 个）`);
+                if (fresh.probeError && fresh.models.length === 0) {
+                  toast.info(fresh.probeError);
+                } else {
+                  toast.info(`已刷新 ${agent} 模型列表（共 ${fresh.models.length} 个）`);
+                }
               }}
             >
               {modelsQ.isFetching ? '加载中…' : '↻ 刷新模型'}
             </button>
           </div>
+
+          {modelsQ.data?.probeError && modelsQ.data?.models.length === 0 && (
+            <div
+              style={{
+                padding: '8px 12px',
+                background: 'rgba(234, 179, 8, 0.1)',
+                border: '1px solid rgba(234, 179, 8, 0.3)',
+                borderRadius: 6,
+                fontSize: 12,
+                color: 'var(--yellow)',
+                lineHeight: 1.5,
+                marginTop: -4,
+              }}
+            >
+              ⚠️ <b>探测提示</b>：{modelsQ.data.probeError}
+            </div>
+          )}
 
           {selectedProvider === '__custom__' && (
             <label className="field">

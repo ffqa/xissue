@@ -213,6 +213,8 @@ export interface AgentModels {
   customModels: string[];
   providers: string[];
   models: ModelOption[];
+  probeError?: string;
+  warning?: string;
 }
 
 export type FileStatus = 'M' | 'A' | 'D' | 'R' | '?';

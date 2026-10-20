@@ -29,28 +29,37 @@ export function Modal({
   children,
   footer,
   size = 'md',
+  bodyStyle,
+  style,
 }: {
   title: ReactNode;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
   size?: 'md' | 'lg' | 'xl';
+  bodyStyle?: React.CSSProperties;
+  style?: React.CSSProperties;
 }) {
   useEffect(() => {
-    const h = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', h);
-    return () => window.removeEventListener('keydown', h);
+    const h = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', h, true);
+    return () => window.removeEventListener('keydown', h, true);
   }, [onClose]);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal modal-${size}`} role="dialog">
+      <div className={`modal modal-${size}`} role="dialog" style={style}>
         <div className="modal-h">
           <h2 className="grow">{title}</h2>
-          <button className="ghost sm" onClick={onClose}>
+          <button className="ghost sm" onClick={onClose} title="关闭 (Esc)">
             ✕
           </button>
         </div>
-        <div className="modal-b">{children}</div>
+        <div className="modal-b" style={bodyStyle}>{children}</div>
         {footer && <div className="modal-f">{footer}</div>}
       </div>
     </div>

@@ -83,7 +83,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
     onError: (err: Error) => toast.error(`保存失败: ${err.message}`),
   });
 
-  // 快捷键 Ctrl+S / Cmd+S 保存
+  // 快捷键 Ctrl+S / Cmd+S 保存，以及 Esc 键优先退出编辑或关闭
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -91,11 +91,20 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
         if (isEditing && !saveDocMut.isPending) {
           saveDocMut.mutate();
         }
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        if (isEditing) {
+          setIsEditing(false);
+        } else {
+          onClose();
+        }
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isEditing, saveDocMut]);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, [isEditing, saveDocMut, onClose]);
 
   const wikiDocs = docs.filter((d) => d.source === 'github_wiki');
   const localDocs = docs.filter((d) => d.source === 'local_doc');
@@ -110,15 +119,22 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
       }
       size="xl"
       onClose={onClose}
+      bodyStyle={{
+        padding: 0,
+        overflow: 'hidden',
+        height: '78vh',
+        minHeight: 520,
+        display: 'flex',
+        flexDirection: 'column',
+      }}
     >
       <div
         style={{
           display: 'grid',
           gridTemplateColumns: '320px 1fr',
-          height: '74vh',
-          minHeight: 520,
-          border: '1px solid var(--border)',
-          borderRadius: 8,
+          height: '100%',
+          minHeight: 0,
+          flex: 1,
           overflow: 'hidden',
           background: 'var(--bg-1)',
         }}
@@ -129,11 +145,14 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
             borderRight: '1px solid var(--border)',
             display: 'flex',
             flexDirection: 'column',
+            height: '100%',
+            minHeight: 0,
+            overflow: 'hidden',
             background: 'var(--bg-0)',
           }}
         >
           {/* 搜索框与同步按钮 */}
-          <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8 }}>
+          <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, flexShrink: 0 }}>
             <div style={{ position: 'relative', flex: 1 }}>
               <input
                 type="text"
@@ -164,8 +183,8 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
             </button>
           </div>
 
-          {/* 列表区 */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '6px 0' }}>
+          {/* 列表区：设置 minHeight: 0 与独立滚动 */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '6px 0', WebkitOverflowScrolling: 'touch' }}>
             {searchQuery.trim().length > 0 ? (
               <div>
                 <div className="dim small" style={{ padding: '4px 12px 6px' }}>
@@ -176,36 +195,48 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                     未找到包含 &ldquo;{searchQuery}&rdquo; 的文档
                   </div>
                 ) : (
-                  searchHits.map((hit) => (
-                    <div
-                      key={hit.id}
-                      onClick={() => setSelectedDocId(hit.id)}
-                      style={{
-                        padding: '8px 12px',
-                        cursor: 'pointer',
-                        borderLeft: selectedDocId === hit.id ? '3px solid var(--accent)' : '3px solid transparent',
-                        background: selectedDocId === hit.id ? 'var(--bg-2)' : 'transparent',
-                        transition: 'background 0.15s ease',
-                      }}
-                    >
-                      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                        <b className="small ellipsis" style={{ maxWidth: 200 }}>
-                          {hit.title}
-                        </b>
-                        <span className="badge sm" style={{ fontSize: 10 }}>
-                          {hit.source === 'github_wiki' ? 'Wiki' : 'Docs'}
-                        </span>
-                      </div>
-                      <div className="muted mono" style={{ fontSize: 11, marginTop: 2 }}>
-                        {hit.path}
-                      </div>
-                      {hit.snippet && (
-                        <div className="dim small" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.4 }}>
-                          {hit.snippet}
+                  searchHits.map((hit) => {
+                    const normPath = hit.path.replace(/\\/g, '/');
+                    const lastSlash = normPath.lastIndexOf('/');
+                    const dirPath = lastSlash !== -1 ? normPath.substring(0, lastSlash) : '';
+                    return (
+                      <div
+                        key={hit.id}
+                        onClick={() => setSelectedDocId(hit.id)}
+                        style={{
+                          padding: '8px 12px',
+                          cursor: 'pointer',
+                          borderLeft: selectedDocId === hit.id ? '3px solid var(--accent)' : '3px solid transparent',
+                          background: selectedDocId === hit.id ? 'var(--bg-2)' : 'transparent',
+                          transition: 'background 0.15s ease',
+                        }}
+                      >
+                        {dirPath && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+                            <span style={{ fontSize: 10, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 5px', borderRadius: 3 }}>
+                              📁 {dirPath}
+                            </span>
+                          </div>
+                        )}
+                        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                          <b className="small ellipsis" style={{ maxWidth: 200 }} title={hit.title}>
+                            {hit.title}
+                          </b>
+                          <span className="badge sm" style={{ fontSize: 10 }}>
+                            {hit.source === 'github_wiki' ? 'Wiki' : 'Docs'}
+                          </span>
                         </div>
-                      )}
-                    </div>
-                  ))
+                        <div className="muted mono" style={{ fontSize: 11, marginTop: 2, wordBreak: 'break-all' }}>
+                          {hit.path}
+                        </div>
+                        {hit.snippet && (
+                          <div className="dim small" style={{ fontSize: 11, marginTop: 4, lineHeight: 1.4 }}>
+                            {hit.snippet}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
                 )}
               </div>
             ) : docs.length === 0 ? (
@@ -259,7 +290,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
         </div>
 
         {/* 右侧：文档预览与编辑 */}
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, overflow: 'hidden' }}>
           {docDetailQ.isLoading ? (
             <div className="dim" style={{ padding: 40, textAlign: 'center' }}>
               正在加载文档内容…
@@ -279,10 +310,11 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   background: 'var(--bg-0)',
+                  flexShrink: 0,
                 }}
               >
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+                  <div className="row" style={{ alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                     <h3 style={{ margin: 0, fontSize: 16 }} className="ellipsis">
                       {curDoc.title}
                     </h3>
@@ -300,7 +332,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                     </span>
                   </div>
                   <div className="muted mono small" style={{ marginTop: 3 }}>
-                    {curDoc.repoName} &middot; {curDoc.path} &middot; 更新于 {fmtTime(curDoc.updatedAt)}
+                    {curDoc.repoName} &middot; <span style={{ color: 'var(--text-1)' }}>{curDoc.path}</span> &middot; 更新于 {fmtTime(curDoc.updatedAt)}
                   </div>
                 </div>
 
@@ -326,8 +358,8 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                 </div>
               </div>
 
-              {/* 内容区域 */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: isEditing ? 0 : '20px 24px' }}>
+              {/* 内容区域：确保 minHeight: 0 与独立滚动条 */}
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', WebkitOverflowScrolling: 'touch', padding: isEditing ? 0 : '20px 24px' }}>
                 {isEditing ? (
                   <textarea
                     value={editContent}
@@ -345,10 +377,11 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                       fontFamily: 'monospace',
                       fontSize: 13,
                       lineHeight: 1.6,
+                      boxSizing: 'border-box',
                     }}
                   />
                 ) : (
-                  <div style={{ maxWidth: 860, margin: '0 auto' }}>
+                  <div style={{ maxWidth: 860, margin: '0 auto', wordBreak: 'break-word' }}>
                     <Markdown>{curDoc.content || '*(此文档为空)*'}</Markdown>
                   </div>
                 )}
@@ -362,6 +395,10 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
 
   function renderDocItem(item: DocItem) {
     const isSelected = selectedDocId === item.id;
+    const normPath = item.path.replace(/\\/g, '/');
+    const lastSlash = normPath.lastIndexOf('/');
+    const dirPath = lastSlash !== -1 ? normPath.substring(0, lastSlash) : '';
+
     return (
       <div
         key={item.id}
@@ -374,12 +411,19 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
           transition: 'background 0.12s ease',
         }}
       >
+        {dirPath && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+            <span style={{ fontSize: 10, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 5px', borderRadius: 3 }}>
+              📁 {dirPath}
+            </span>
+          </div>
+        )}
         <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <b className="small ellipsis" style={{ maxWidth: 210 }}>
+          <b className="small ellipsis" style={{ maxWidth: 240 }} title={item.title}>
             {item.title}
           </b>
         </div>
-        <div className="muted mono" style={{ fontSize: 11, marginTop: 2 }}>
+        <div className="muted mono" style={{ fontSize: 11, marginTop: 2, wordBreak: 'break-all' }}>
           {item.path}
         </div>
       </div>

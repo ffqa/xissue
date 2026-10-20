@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import type { BranchWatch, Repo, CommitInfo } from '../types';
@@ -77,6 +77,17 @@ export const WatchCommitDetailModal: React.FC<WatchCommitDetailModalProps> = ({
 
   const commits = commitsQ.data ?? [];
   const activeCommit = commits.find((c) => c.sha === selectedSha) || commits[0];
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKey, true);
+    return () => window.removeEventListener('keydown', handleKey, true);
+  }, [onClose]);
 
   const branchUrl = getBranchWebUrl(repo, watch.branch);
   const commitUrl = getCommitWebUrl(repo, activeCommit?.sha || watch.lastSha);

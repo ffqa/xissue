@@ -19,18 +19,28 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// NotificationEventContext provides notification dispatch details to hooks and plugins.
+type NotificationEventContext struct {
+	Kind      string `json:"kind"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	Link      string `json:"link"`
+	Timestamp string `json:"timestamp"`
+}
+
 // PREventContext is passed to Hook scripts and Plugins via stdin.
 type PREventContext struct {
-	Event   string                 `json:"event"` // pr_comment | pr_review | branch_push
-	Project domain.Project         `json:"project"`
-	Repo    *domain.Repo           `json:"repo,omitempty"`
-	Branch  string                 `json:"branch,omitempty"`
-	TipSHA  string                 `json:"tipSha,omitempty"`
-	Commits []gitx.CommitInfo      `json:"commits,omitempty"`
-	Issue   *domain.Issue          `json:"issue,omitempty"`
-	PR      *provider.PRDetailInfo `json:"pr,omitempty"`
-	Comment *provider.PRComment    `json:"comment,omitempty"`
-	Review  *provider.PRReview     `json:"review,omitempty"`
+	Event        string                    `json:"event"` // pr_comment | pr_review | branch_push | pr_merged | pr_created | notification_dispatch
+	Project      domain.Project            `json:"project"`
+	Repo         *domain.Repo              `json:"repo,omitempty"`
+	Branch       string                    `json:"branch,omitempty"`
+	TipSHA       string                    `json:"tipSha,omitempty"`
+	Commits      []gitx.CommitInfo         `json:"commits,omitempty"`
+	Issue        *domain.Issue             `json:"issue,omitempty"`
+	PR           *provider.PRDetailInfo    `json:"pr,omitempty"`
+	Comment      *provider.PRComment       `json:"comment,omitempty"`
+	Review       *provider.PRReview        `json:"review,omitempty"`
+	Notification *NotificationEventContext `json:"notification,omitempty"`
 }
 
 // HookResult is parsed from Hook script or Plugin stdout.
@@ -296,6 +306,8 @@ func DetectHooks(workdir string) []domain.HookStatus {
 		desc  string
 	}{
 		{"on-branch-push", "branch_push", "监控分支检测到新代码推送 (Push) 时触发"},
+		{"on-pr-merged", "pr_merged", "PR 成功合并到目标分支时触发"},
+		{"on-notify", "notification_dispatch", "系统发出通知时触发，用于扩展自定义通知渠道 (飞书/企微/钉钉/桌面)"},
 		{"on-pr-comment", "pr_comment", "PR 收到新评论或报告时触发"},
 		{"on-pr-review", "pr_review", "PR 收到审核批准 (Review) 时触发"},
 		{"on-pr-created", "pr_created", "新 PR 提交创建成功时触发"},

@@ -124,10 +124,6 @@ func (r *Runner) sendExternalNotification(kind, title, body, link string) {
 	tgChatID := strings.TrimSpace(r.cfg.Monitor.TelegramChatID)
 	webhookURL := strings.TrimSpace(r.cfg.Monitor.WebhookURL)
 
-	if tgToken == "" && webhookURL == "" {
-		return
-	}
-
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -177,6 +173,22 @@ func (r *Runner) sendExternalNotification(kind, title, body, link string) {
 					r.LogMonitor("WARN", "notify", fmt.Sprintf("Webhook 推送失败: %v", rerr))
 				}
 			}
+		}
+
+		// 3. 自定义通知扩展钩子与插件 (on-notify / notification_dispatch)
+		if r.automation != nil {
+			notifyCtx := &automation.NotificationEventContext{
+				Kind:      kind,
+				Title:     title,
+				Body:      body,
+				Link:      link,
+				Timestamp: time.Now().Format(time.RFC3339),
+			}
+			payload := automation.PREventContext{
+				Event:        "notification_dispatch",
+				Notification: notifyCtx,
+			}
+			_, _ = r.automation.ExecutePlugins(ctx, payload)
 		}
 	}()
 }
@@ -457,6 +469,7 @@ func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watch
 				_, _ = r.st.AddComment(ctx, issue.ID, "system", fmt.Sprintf("🎉 PR 已合并 (Merged): %s", run.PRURL))
 				r.ExportIssueMarkdown(ctx, issue.ID)
 				r.pushNotification("pr_status", fmt.Sprintf("🎉 [%s] PR 已合并 (Merged)", issue.Key), fmt.Sprintf("%s\n%s", prTitle, run.PRURL), fmt.Sprintf("/issues/%d", issue.ID), "")
+				_ = r.processPRMergedAutomation(ctx, issue, run, prDetail)
 			} else if st == "closed" {
 				if u, uerr := r.st.GetIssue(ctx, issue.ID); uerr == nil {
 					r.notify.BroadcastIssueUpdated(u)
@@ -1317,6 +1330,52 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 		}
 	}
 
+	return nil
+}
+
+func (r *Runner) processPRMergedAutomation(ctx context.Context, issue *domain.Issue, run domain.Run, prDetail *provider.PRDetailInfo) error {
+	if r.automation == nil || issue == nil || prDetail == nil {
+		return nil
+	}
+	project, err := r.st.GetProject(ctx, issue.ProjectID)
+	if err != nil || project == nil {
+		return err
+	}
+	var repo *domain.Repo
+	if issue.RepoID != nil {
+		repo, _ = r.st.GetRepo(ctx, *issue.RepoID)
+	}
+	workdir := ""
+	if repo != nil && gitx.IsLocalDir(repo.RemoteURL) {
+		workdir = repo.RemoteURL
+	}
+	if workdir == "" && len(project.Repos) > 0 {
+		for _, rp := range project.Repos {
+			if gitx.IsLocalDir(rp.RemoteURL) {
+				workdir = rp.RemoteURL
+				break
+			}
+		}
+	}
+	if workdir == "" {
+		workdir = run.Workdir
+	}
+
+	payload := automation.PREventContext{
+		Event:   "pr_merged",
+		Project: *project,
+		Repo:    repo,
+		Issue:   issue,
+		PR:      prDetail,
+	}
+
+	// Layer 2: Hooks (on-pr-merged)
+	_, _ = r.automation.ExecuteProjectHooks(ctx, workdir, payload)
+
+	// Layer 3: Plugins
+	_, _ = r.automation.ExecutePlugins(ctx, payload)
+
+	r.LogMonitor("EVENT", "automation", fmt.Sprintf("PR #%d 合并事件已成功派发至生命周期 Hooks 与插件 (pr_merged)", prDetail.Number))
 	return nil
 }
 

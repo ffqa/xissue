@@ -58,6 +58,7 @@ type RuleAction struct {
 	Status   string `json:"status,omitempty"`   // for set_issue_status, e.g. "done"
 	Strategy string `json:"strategy,omitempty"` // for merge_pr: "squash" | "merge" | "rebase"
 	Message  string `json:"message,omitempty"`  // for notify
+	Channel  string `json:"channel,omitempty"`  // for notify: "telegram" | "webhook" | "desktop" | "all"
 	Agent    string `json:"agent,omitempty"`    // for trigger_run: 指定运行的 agent 名称 (如 codex, opencode, omp)
 	Prompt   string `json:"prompt,omitempty"`   // for trigger_run / create_issue
 }

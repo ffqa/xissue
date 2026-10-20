@@ -9,7 +9,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -491,7 +490,7 @@ func killPort(port int) {
 
 	// 优先发送 SIGTERM 优雅退出
 	for _, pid := range pids {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
+		_ = terminateProcess(pid)
 	}
 
 	// 等待 1.5 秒确认端口是否释放
@@ -504,7 +503,7 @@ func killPort(port int) {
 
 	// 超时后若依然占用，强制发送 SIGKILL
 	for _, pid := range pids {
-		_ = syscall.Kill(pid, syscall.SIGKILL)
+		_ = killProcess(pid)
 	}
 	time.Sleep(200 * time.Millisecond)
 }

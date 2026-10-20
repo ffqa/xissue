@@ -400,4 +400,28 @@ export interface MonitorStatus {
   lastUpdatedPRs: number;
 }
 
+export type DocSource = 'github_wiki' | 'local_doc';
+
+export interface DocItem {
+  id: string;
+  projectId: number;
+  repoId: number;
+  repoName: string;
+  source: DocSource;
+  title: string;
+  path: string;
+  size: number;
+  excerpt: string;
+  updatedAt: string;
+}
+
+export interface DocDetail extends DocItem {
+  content: string;
+}
+
+export interface DocSearchResult extends DocItem {
+  snippet: string;
+  score: number;
+}
+
 

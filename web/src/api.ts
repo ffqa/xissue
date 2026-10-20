@@ -29,6 +29,9 @@ import type {
   RunEvent,
   SubmitRequest,
   SubmitResult,
+  DocItem,
+  DocDetail,
+  DocSearchResult,
 } from './types';
 
 export class ApiError extends Error {
@@ -242,6 +245,17 @@ export const api = {
   monitorLogs: (hours = 8) => get<MonitorLogEntry[]>(`/api/monitor/logs?hours=${hours}`),
   triggerMonitor: () => post<{ ok: boolean; watchesTriggered: number; prsUpdated: number; message: string }>('/api/monitor/trigger'),
   pruneMonitorLogs: (hours = 8) => post<{ ok: boolean; prunedCount: number; message: string }>(`/api/monitor/prune?hours=${hours}`),
+
+  // 知识库 (Wiki & Docs)
+  projectDocs: (projectId: number) => get<DocItem[]>(`/api/projects/${projectId}/docs`),
+  docDetail: (projectId: number, docId: string) =>
+    get<DocDetail>(`/api/projects/${projectId}/docs/detail?${q({ docId })}`),
+  syncWiki: (projectId: number, repoId?: number) =>
+    post<{ ok: boolean; syncedCount: number; message: string }>(`/api/projects/${projectId}/docs/sync-wiki`, { repoId }),
+  searchDocs: (projectId: number, query: string, limit = 20) =>
+    post<DocSearchResult[]>(`/api/projects/${projectId}/docs/search`, { query, limit }),
+  saveDoc: (projectId: number, docId: string, content: string) =>
+    put<{ ok: boolean; message: string }>(`/api/projects/${projectId}/docs/save`, { docId, content }),
 };
 
 /** react-query keys */
@@ -258,6 +272,8 @@ export const qk = {
   projectHooks: (projectId: number) => ['projectHooks', projectId] as const,
   plugins: ['plugins'] as const,
   projectPRs: (projectId: number, state?: string) => ['projectPRs', projectId, state ?? 'open'] as const,
+  projectDocs: (projectId: number) => ['projectDocs', projectId] as const,
+  docDetail: (projectId: number, docId: string) => ['docDetail', projectId, docId] as const,
   watches: (projectId: number) => ['watches', projectId] as const,
   repoBranches: (repoId: number) => ['repoBranches', repoId] as const,
   repoCommits: (repoId: number, branch: string) => ['repoCommits', repoId, branch] as const,

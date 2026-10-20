@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 )
 
 const serviceLabel = "dev.xissue"
@@ -303,13 +305,22 @@ func restartService() {
 
 	if runtime.GOOS == "darwin" {
 		uid := os.Getuid()
-		killPort(7789)
-		if err := exec.Command("launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/%s", uid, serviceLabel)).Run(); err != nil {
-			fmt.Println("服务未就绪，正在重新安装并启动服务...")
-			installService()
-			return
+		// 优先委托 launchd 进行平滑重载 (-k: kill old process & restart immediately)
+		if err := exec.Command("launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/%s", uid, serviceLabel)).Run(); err == nil {
+			// 等待服务端口就绪（最多 3 秒）
+			for i := 0; i < 15; i++ {
+				time.Sleep(200 * time.Millisecond)
+				if isPortListening(7789) {
+					fmt.Printf("✓ 已重启服务: %s\n", serviceLabel)
+					return
+				}
+			}
 		}
-		fmt.Printf("✓ 已重启服务: %s\n", serviceLabel)
+
+		// 若 kickstart 失败或超时，说明服务未加载或端口异常，进行安全清理后重新注册
+		fmt.Println("服务未响应，正在进行平滑清理并重新启动...")
+		killPort(7789)
+		installService()
 		return
 	}
 
@@ -326,6 +337,11 @@ func restartService() {
 	fmt.Println("请手动重启 xissue 进程。")
 }
 
+func isPortListening(port int) bool {
+	out, err := exec.Command("lsof", "-ti", fmt.Sprintf("tcp:%d", port), "-sTCP:LISTEN").CombinedOutput()
+	return err == nil && len(strings.TrimSpace(string(out))) > 0
+}
+
 func checkPort(port int) {
 	out, err := exec.Command("lsof", "-i", fmt.Sprintf(":%d", port)).CombinedOutput()
 	if err == nil && len(strings.TrimSpace(string(out))) > 0 {
@@ -336,15 +352,35 @@ func checkPort(port int) {
 }
 
 func killPort(port int) {
-	out, err := exec.Command("lsof", "-ti", fmt.Sprintf("tcp:%d", port)).CombinedOutput()
-	if err == nil {
-		for _, pidStr := range strings.Fields(string(out)) {
-			if pid, err := strconv.Atoi(pidStr); err == nil && pid > 0 {
-				p, _ := os.FindProcess(pid)
-				if p != nil {
-					_ = p.Kill()
-				}
-			}
+	// 仅查找真正处于 LISTEN 状态的监听进程，避免误杀连接中的客户端 socket
+	out, err := exec.Command("lsof", "-ti", fmt.Sprintf("tcp:%d", port), "-sTCP:LISTEN").CombinedOutput()
+	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+		return
+	}
+
+	pids := []int{}
+	for _, pidStr := range strings.Fields(string(out)) {
+		if pid, err := strconv.Atoi(pidStr); err == nil && pid > 0 {
+			pids = append(pids, pid)
 		}
 	}
+
+	// 优先发送 SIGTERM 优雅退出
+	for _, pid := range pids {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
+	}
+
+	// 等待 1.5 秒确认端口是否释放
+	for i := 0; i < 15; i++ {
+		time.Sleep(100 * time.Millisecond)
+		if !isPortListening(port) {
+			return
+		}
+	}
+
+	// 超时后若依然占用，强制发送 SIGKILL
+	for _, pid := range pids {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+	time.Sleep(200 * time.Millisecond)
 }

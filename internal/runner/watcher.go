@@ -179,17 +179,24 @@ func (r *Runner) startWatcherLoop() {
 
 	// 启动时立即执行一次检查与裁剪
 	go func() {
-		time.Sleep(2 * time.Second)
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+		ctx, cancel := context.WithTimeout(r.ctx, 60*time.Second)
+		defer cancel()
 		_, _, _ = r.CheckWatchesAndPRs(ctx, 0)
-		cancel()
 		_, _ = r.PruneMonitorLogs(8 * time.Hour)
 	}()
 
 	for {
 		select {
+		case <-r.ctx.Done():
+			r.LogMonitor("INFO", "watcher", "监控服务收到停止信号，已正常退出")
+			return
 		case <-ticker.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			ctx, cancel := context.WithTimeout(r.ctx, 60*time.Second)
 			_, _, _ = r.CheckWatchesAndPRs(ctx, 0)
 			cancel()
 		case <-pruneTicker.C:

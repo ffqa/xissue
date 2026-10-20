@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/xpier/xissue/internal/knowledge"
 )
 
 type mcpRequest struct {
@@ -156,6 +158,41 @@ func mcpToolDefinitions() []map[string]any {
 				},
 			},
 		},
+		{
+			"name":        "xissue_list_docs",
+			"description": "List all documentation in the project knowledge base, including GitHub Wiki pages and local markdown docs (README, architecture, specs, docs/).",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"projectId": map[string]any{"type": "number", "description": "Project ID (optional, defaults to first project)"},
+				},
+			},
+		},
+		{
+			"name":        "xissue_get_doc",
+			"description": "Get full markdown content of a document from the project knowledge base by its docId.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"docId"},
+				"properties": map[string]any{
+					"docId":     map[string]any{"type": "string", "description": "Document ID from xissue_list_docs or xissue_search_docs (e.g. 'wiki:1:Home.md' or 'local:1:docs/design.md')"},
+					"projectId": map[string]any{"type": "number", "description": "Project ID (optional, defaults to first project)"},
+				},
+			},
+		},
+		{
+			"name":        "xissue_search_docs",
+			"description": "Full-text search in the project knowledge base (GitHub Wiki + local docs) to find architecture, API design, workflows, and specifications.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"query"},
+				"properties": map[string]any{
+					"query":     map[string]any{"type": "string", "description": "Keywords or question terms to search for"},
+					"projectId": map[string]any{"type": "number", "description": "Project ID (optional, defaults to first project)"},
+					"limit":     map[string]any{"type": "number", "description": "Max number of results to return (default: 10)"},
+				},
+			},
+		},
 	}
 }
 
@@ -283,6 +320,72 @@ func (s *Server) callMCPTool(ctx context.Context, name string, args map[string]a
 			"issue": issue,
 			"runs":  runs,
 		}, "", "  ")
+		return string(b), false
+
+	case "xissue_list_docs":
+		pid := numArg("projectId")
+		if pid <= 0 {
+			if projs, _ := s.st.ListProjects(ctx); len(projs) > 0 {
+				pid = projs[0].ID
+			}
+		}
+		p, err := s.st.GetProject(ctx, pid)
+		if err != nil {
+			return "error: project not found: " + err.Error(), true
+		}
+		docs, err := knowledge.ScanProjectDocs(ctx, s.cfg.DataDir, p)
+		if err != nil {
+			return "error: " + err.Error(), true
+		}
+		b, _ := json.MarshalIndent(docs, "", "  ")
+		return string(b), false
+
+	case "xissue_get_doc":
+		docID := strArg("docId")
+		if docID == "" {
+			return "error: docId is required", true
+		}
+		pid := numArg("projectId")
+		if pid <= 0 {
+			if projs, _ := s.st.ListProjects(ctx); len(projs) > 0 {
+				pid = projs[0].ID
+			}
+		}
+		p, err := s.st.GetProject(ctx, pid)
+		if err != nil {
+			return "error: project not found: " + err.Error(), true
+		}
+		detail, err := knowledge.GetDocDetail(ctx, s.cfg.DataDir, p, docID)
+		if err != nil {
+			return "error: " + err.Error(), true
+		}
+		b, _ := json.MarshalIndent(detail, "", "  ")
+		return string(b), false
+
+	case "xissue_search_docs":
+		query := strArg("query")
+		if query == "" {
+			return "error: query is required", true
+		}
+		pid := numArg("projectId")
+		if pid <= 0 {
+			if projs, _ := s.st.ListProjects(ctx); len(projs) > 0 {
+				pid = projs[0].ID
+			}
+		}
+		p, err := s.st.GetProject(ctx, pid)
+		if err != nil {
+			return "error: project not found: " + err.Error(), true
+		}
+		limit := int(numArg("limit"))
+		if limit <= 0 {
+			limit = 10
+		}
+		results, err := knowledge.SearchDocs(ctx, s.cfg.DataDir, p, query, limit)
+		if err != nil {
+			return "error: " + err.Error(), true
+		}
+		b, _ := json.MarshalIndent(results, "", "  ")
 		return string(b), false
 
 	default:

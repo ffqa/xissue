@@ -7,6 +7,7 @@ import { LocalDirPickerModal } from '../components/LocalDirPicker';
 import { CherryPickModal } from '../components/CherryPickModal';
 import { PRListModal } from '../components/PRListModal';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
+import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
 import { toast } from '../toast';
 import {
   type AutomationRule,
@@ -119,6 +120,7 @@ export default function ProjectPage() {
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
 
   const deleteIssueMut = useMutation({
     mutationFn: (issueId: number) => api.deleteIssue(issueId),
@@ -492,6 +494,21 @@ export default function ProjectPage() {
                 >
                   🍒 Cherry-Pick
                 </button>
+                <button
+                  className="dropdown-item"
+                  onClick={() => {
+                    setSyncMenuOpen(false);
+                    api.syncWiki(id)
+                      .then((r) => {
+                        qc.invalidateQueries({ queryKey: qk.projectDocs(id) });
+                        toast.success(r.message || 'Wiki 同步完成');
+                      })
+                      .catch((e) => toast.error(e.message));
+                  }}
+                  title="拉取并同步 GitHub Wiki 仓库"
+                >
+                  🌐 同步 Wiki
+                </button>
               </div>
             </>
           )}
@@ -519,6 +536,14 @@ export default function ProjectPage() {
               {openPRCount}
             </span>
           )}
+        </button>
+
+        <button
+          className="ghost"
+          onClick={() => setKnowledgeOpen(true)}
+          title="查看与搜索项目知识库、本地文档与 GitHub Wiki"
+        >
+          📚 知识库
         </button>
 
         <button
@@ -1790,6 +1815,14 @@ export default function ProjectPage() {
           project={{ id: p.id, name: p.name }}
           onClose={() => setDeleteProjectOpen(false)}
           onDeleted={() => nav('/')}
+        />
+      )}
+
+      {knowledgeOpen && (
+        <KnowledgeBaseModal
+          projectId={id}
+          projectName={p?.name}
+          onClose={() => setKnowledgeOpen(false)}
         />
       )}
     </div>

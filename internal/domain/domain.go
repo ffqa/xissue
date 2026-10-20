@@ -207,3 +207,38 @@ type Notification struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
+// DocSource defines the source kind of a knowledge base document.
+type DocSource string
+
+const (
+	DocSourceGitHubWiki DocSource = "github_wiki" // GitHub Wiki (repo.wiki.git)
+	DocSourceLocalDoc   DocSource = "local_doc"   // 本地仓库 docs/README
+)
+
+// DocItem represents a summarized entry in the project knowledge base.
+type DocItem struct {
+	ID        string    `json:"id"`        // Unique doc identifier (e.g. "wiki:1:Home.md" or "local:1:docs/design.md")
+	ProjectID int64     `json:"projectId"` // Project ID
+	RepoID    int64     `json:"repoId"`    // Associated repository ID
+	RepoName  string    `json:"repoName"`  // Associated repository name
+	Source    DocSource `json:"source"`    // "github_wiki" | "local_doc"
+	Title     string    `json:"title"`     // Extracted title from first markdown header or filename
+	Path      string    `json:"path"`      // Relative file path (e.g. "docs/design.md" or "Home.md")
+	Size      int64     `json:"size"`      // File size in bytes
+	Excerpt   string    `json:"excerpt"`   // Short excerpt for search/list preview
+	UpdatedAt time.Time `json:"updatedAt"` // Last modified time
+}
+
+// DocDetail represents the full content of a knowledge base document.
+type DocDetail struct {
+	DocItem
+	Content string `json:"content"` // Full Markdown content
+}
+
+// DocSearchResult represents a hit in knowledge base search.
+type DocSearchResult struct {
+	DocItem
+	Snippet string `json:"snippet"` // Matched highlighted snippet with context
+	Score   int    `json:"score"`   // Relevance score
+}
+

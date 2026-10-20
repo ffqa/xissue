@@ -124,6 +124,9 @@ type Runner struct {
 	active          map[int64]*activeRun              // runID -> activeRun
 	warm            map[int64]*warmSession            // runID -> idle warm ACP process
 	allowSet        map[int64]map[string]bool         // runID -> allowed ACP tool kinds
+	ctx             context.Context
+	cancel          context.CancelFunc
+	stopOnce        sync.Once
 	watchMu         sync.Mutex
 	modelMu         sync.Mutex
 	modelCache      map[string]cachedAgentModels
@@ -138,10 +141,13 @@ type Runner struct {
 }
 
 func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
+	ctx, cancel := context.WithCancel(context.Background())
 	r := &Runner{
 		cfg:         cfg,
 		st:          st,
 		notify:      notify,
+		ctx:         ctx,
+		cancel:      cancel,
 		budget:      newBudget(cfg.Runner.MaxConcurrent, cfg.Runner.MemoryBudgetMB),
 		active:      map[int64]*activeRun{},
 		warm:        map[int64]*warmSession{},
@@ -659,6 +665,12 @@ func (r *Runner) closeWarmClient(runID int64) {
 
 // Shutdown terminates all active and warm agent processes gracefully before server exit/restart.
 func (r *Runner) Shutdown() {
+	r.stopOnce.Do(func() {
+		if r.cancel != nil {
+			r.cancel()
+		}
+	})
+
 	r.mu.Lock()
 	activeIDs := make([]int64, 0, len(r.active))
 	for id := range r.active {

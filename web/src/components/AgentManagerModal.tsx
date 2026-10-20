@@ -370,9 +370,17 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
                 className="sm"
                 disabled={modelsQ.isFetching}
                 onClick={async () => {
-                  const fresh = await api.agentModels(selectedName, true);
-                  qc.setQueryData(qk.agentModels(selectedName), fresh);
-                  toast.success(`已探测到 ${fresh.models.length} 个模型（${fresh.providers.length} 个 Provider）`);
+                  try {
+                    const fresh = await api.agentModels(selectedName, true);
+                    qc.setQueryData(qk.agentModels(selectedName), fresh);
+                    if (fresh.models.length > 0) {
+                      toast.success(`已探测到 ${fresh.models.length} 个模型（${fresh.providers.length} 个 Provider）`);
+                    } else {
+                      toast.info(`未探测到模型。该 Agent 可能尚未登录或未通过 ACP 暴露模型列表，您可在下方手动绑定。`);
+                    }
+                  } catch (e) {
+                    toast.error(`探测失败: ${(e as Error).message}`);
+                  }
                 }}
               >
                 {modelsQ.isFetching ? '探测中…' : '↻ 重新探测 Agent 模型'}

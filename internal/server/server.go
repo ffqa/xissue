@@ -235,6 +235,9 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/projects/{id}/docs/save", s.handleSaveProjectDoc)
 
 	m.HandleFunc("GET /api/monitor/status", s.handleMonitorStatus)
+	m.HandleFunc("GET /api/monitor/config", s.handleGetMonitorConfig)
+	m.HandleFunc("PUT /api/monitor/config", s.handleUpdateMonitorConfig)
+	m.HandleFunc("POST /api/monitor/test-notify", s.handleTestNotify)
 	m.HandleFunc("GET /api/monitor/logs", s.handleMonitorLogs)
 	m.HandleFunc("POST /api/monitor/trigger", s.handleMonitorTrigger)
 	m.HandleFunc("POST /api/monitor/prune", s.handleMonitorPrune)
@@ -1308,6 +1311,37 @@ func (s *Server) handleMonitorStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) handleGetMonitorConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.cfg.Monitor)
+}
+
+func (s *Server) handleUpdateMonitorConfig(w http.ResponseWriter, r *http.Request) {
+	var body config.MonitorConfig
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.cfg.UpdateMonitor(body); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	status := "运行中"
+	if !body.Enabled {
+		status = "已暂停"
+	}
+	s.runner.LogMonitor("EVENT", "watcher", fmt.Sprintf("监控配置已更新: 状态=%s, 活跃时段=%s", status, body.ActiveHours))
+	writeJSON(w, http.StatusOK, s.cfg.Monitor)
+}
+
+func (s *Server) handleTestNotify(w http.ResponseWriter, r *http.Request) {
+	res, err := s.runner.SendTestNotification(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (s *Server) handleMonitorLogs(w http.ResponseWriter, r *http.Request) {

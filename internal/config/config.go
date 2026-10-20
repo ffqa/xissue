@@ -36,6 +36,15 @@ type RunnerConfig struct {
 	IdleTimeoutSec int  `yaml:"idleTimeoutSec"` // stop idle agent process while waiting for review
 }
 
+// MonitorConfig controls branch and PR background monitoring and external notifications.
+type MonitorConfig struct {
+	Enabled          bool   `yaml:"enabled" json:"enabled"`                         // 监控总开关 (true=运行, false=暂停)
+	ActiveHours      string `yaml:"activeHours" json:"activeHours"`                 // 活跃时间段，如 "08:00-20:00" 或 "8-20"，留空全天
+	TelegramBotToken string `yaml:"telegramBotToken,omitempty" json:"telegramBotToken,omitempty"` // Telegram Bot Token
+	TelegramChatID   string `yaml:"telegramChatId,omitempty" json:"telegramChatId,omitempty"`     // Telegram Chat ID
+	WebhookURL       string `yaml:"webhookUrl,omitempty" json:"webhookUrl,omitempty"`             // 通用 Webhook (飞书/企微/钉钉/Slack)
+}
+
 // Config is the root configuration.
 type Config struct {
 	Path              string                 `yaml:"-" json:"-"`
@@ -47,6 +56,7 @@ type Config struct {
 	Agents            map[string]AgentConfig `yaml:"agents"`
 	Permissions       PermissionPolicy       `yaml:"permissions"`
 	Runner            RunnerConfig           `yaml:"runner"`
+	Monitor           MonitorConfig          `yaml:"monitor"`
 }
 
 // DefaultDataDir returns ~/.xissue.
@@ -79,6 +89,10 @@ func Default() *Config {
 			MemoryBudgetMB: 0,
 			UseSystemdRun:  false,
 			IdleTimeoutSec: 600,
+		},
+		Monitor: MonitorConfig{
+			Enabled:     true,
+			ActiveHours: "08:00-20:00",
 		},
 	}
 }
@@ -145,9 +159,16 @@ func (c *Config) Reload() error {
 	c.Agents = fresh.Agents
 	c.Permissions = fresh.Permissions
 	c.Runner = fresh.Runner
+	c.Monitor = fresh.Monitor
 	c.EditorURLTemplate = fresh.EditorURLTemplate
 	c.ExportMarkdown = fresh.ExportMarkdown
 	return nil
+}
+
+// UpdateMonitor updates the monitor configuration and writes config.yaml back to disk.
+func (c *Config) UpdateMonitor(m MonitorConfig) error {
+	c.Monitor = m
+	return c.Save()
 }
 
 // Path helpers.

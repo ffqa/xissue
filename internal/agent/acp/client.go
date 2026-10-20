@@ -179,8 +179,12 @@ type rawConfigOption struct {
 
 func (c *Client) parseConfigOptions(opts []rawConfigOption) {
 	for _, o := range opts {
-		if o.ID == "model" || o.Category == "model" {
-			c.CurrentModel = o.CurrentValue
+		lowID := strings.ToLower(o.ID)
+		lowCat := strings.ToLower(o.Category)
+		if lowID == "model" || strings.Contains(lowID, "model") || lowCat == "model" || strings.Contains(lowCat, "model") {
+			if o.CurrentValue != "" {
+				c.CurrentModel = o.CurrentValue
+			}
 			models := make([]ModelOption, 0, len(o.Options))
 			for _, item := range o.Options {
 				val := strings.TrimSpace(item.Value)
@@ -201,8 +205,10 @@ func (c *Client) parseConfigOptions(opts []rawConfigOption) {
 					Provider: prov,
 				})
 			}
-			c.ModelOptions = models
-			return
+			if len(models) > 0 {
+				c.ModelOptions = models
+				return
+			}
 		}
 	}
 }

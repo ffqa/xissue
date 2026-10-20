@@ -437,6 +437,34 @@ func (s *Server) handleMCPInstall(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func detectQoderConfig(home string) (configPath string, name string, detected bool) {
+	// 1. 优先检查国际版 ~/.qoder 目录或 qoder/qodercli 命令
+	intlDir := filepath.Join(home, ".qoder")
+	intlConfig := filepath.Join(intlDir, "mcp.json")
+	if st, err := os.Stat(intlDir); err == nil && st.IsDir() {
+		return intlConfig, "Qoder (~/.qoder/mcp.json)", true
+	}
+	if _, err := exec.LookPath("qoder"); err == nil {
+		return intlConfig, "Qoder (~/.qoder/mcp.json)", true
+	}
+	if _, err := exec.LookPath("qodercli"); err == nil {
+		return intlConfig, "Qoder (~/.qoder/mcp.json)", true
+	}
+
+	// 2. 检查国内版 ~/.qoder-cn 目录或 qoderclicn 命令
+	cnDir := filepath.Join(home, ".qoder-cn")
+	cnConfig := filepath.Join(cnDir, "mcp.json")
+	if st, err := os.Stat(cnDir); err == nil && st.IsDir() {
+		return cnConfig, "Qoder-CN (~/.qoder-cn/mcp.json)", true
+	}
+	if _, err := exec.LookPath("qoderclicn"); err == nil {
+		return cnConfig, "Qoder-CN (~/.qoder-cn/mcp.json)", true
+	}
+
+	// 3. 机器未安装时，默认标为国际版标准路径 ~/.qoder/mcp.json，detected = false
+	return intlConfig, "Qoder (~/.qoder/mcp.json)", false
+}
+
 func inspectMCPTargets(bin string) []MCPTargetStatus {
 	home, _ := os.UserHomeDir()
 	targets := []struct {
@@ -447,7 +475,6 @@ func inspectMCPTargets(bin string) []MCPTargetStatus {
 	}{
 		{"opencode", "OpenCode (~/.config/opencode/opencode.json)", ".config/opencode/opencode.json", "opencode"},
 		{"claude", "Claude Code (~/.claude.json)", ".claude.json", "claude"},
-		{"qoder", "Qoder CLI (~/.qoder-cn/mcp.json)", ".qoder-cn/mcp.json", "qoderclicn"},
 		{"cursor", "Cursor IDE (~/.cursor/mcp.json)", ".cursor/mcp.json", "cursor"},
 		{"windsurf", "Windsurf IDE (~/.codeium/windsurf/mcp_config.json)", ".codeium/windsurf/mcp_config.json", "windsurf"},
 	}
@@ -471,6 +498,21 @@ func inspectMCPTargets(bin string) []MCPTargetStatus {
 			Installed:  installed,
 		})
 	}
+
+	// Qoder 动态探测（国际版 ~/.qoder vs 国内版 ~/.qoder-cn）
+	qoderPath, qoderName, qoderDetected := detectQoderConfig(home)
+	qoderInstalled := false
+	if b, err := os.ReadFile(qoderPath); err == nil {
+		qoderInstalled = strings.Contains(string(b), `"xissue"`)
+	}
+	out = append(out, MCPTargetStatus{
+		ID:         "qoder",
+		Name:       qoderName,
+		ConfigPath: qoderPath,
+		Detected:   qoderDetected,
+		Installed:  qoderInstalled,
+	})
+
 	return out
 }
 
@@ -514,14 +556,16 @@ func InstallMCPTargets(bin string, targetIDs []string) ([]string, error) {
 		}
 	}
 
-	// 3. Qoder CLI: ~/.qoder-cn/mcp.json uses "mcpServers": { "xissue": { "command": bin, "args": ["mcp"] } }
+	// 3. Qoder CLI: 动态优先注入已探测到的版本（国际版 ~/.qoder/mcp.json 或国内版 ~/.qoder-cn/mcp.json）
 	if should("qoder") {
-		p := filepath.Join(home, ".qoder-cn/mcp.json")
-		if err := injectJSONMap(p, "mcpServers", "xissue", map[string]any{
-			"command": bin,
-			"args":    []string{"mcp"},
-		}); err == nil {
-			installed = append(installed, "qoder")
+		qoderPath, _, detected := detectQoderConfig(home)
+		if detected || len(want) > 0 {
+			if err := injectJSONMap(qoderPath, "mcpServers", "xissue", map[string]any{
+				"command": bin,
+				"args":    []string{"mcp"},
+			}); err == nil {
+				installed = append(installed, "qoder")
+			}
 		}
 	}
 

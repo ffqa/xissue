@@ -18,6 +18,7 @@ import type {
   MCPStatus,
   MonitorLogEntry,
   MonitorStatus,
+  MonitorConfig,
   Notification,
   PluginInfo,
   Project,
@@ -242,6 +243,9 @@ export const api = {
     get<{ dir: string; analysis: string; events: string }>(`/api/runs/${runId}/archive`),
 
   monitorStatus: () => get<MonitorStatus>('/api/monitor/status'),
+  monitorConfig: () => get<MonitorConfig>('/api/monitor/config'),
+  updateMonitorConfig: (b: MonitorConfig) => put<MonitorConfig>('/api/monitor/config', b),
+  testNotify: () => post<{ ok: boolean; message: string }>('/api/monitor/test-notify'),
   monitorLogs: (hours = 8) => get<MonitorLogEntry[]>(`/api/monitor/logs?hours=${hours}`),
   triggerMonitor: () => post<{ ok: boolean; watchesTriggered: number; prsUpdated: number; message: string }>('/api/monitor/trigger'),
   pruneMonitorLogs: (hours = 8) => post<{ ok: boolean; prunedCount: number; message: string }>(`/api/monitor/prune?hours=${hours}`),
@@ -262,6 +266,7 @@ export const api = {
 export const qk = {
   health: ['health'] as const,
   monitorStatus: ['monitorStatus'] as const,
+  monitorConfig: ['monitorConfig'] as const,
   monitorLogs: (hours?: number) => ['monitorLogs', hours ?? 8] as const,
   agents: ['agents'] as const,
   agentModels: (name: string) => ['agentModels', name] as const,

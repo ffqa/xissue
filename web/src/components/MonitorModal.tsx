@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import type { BranchWatch } from '../types';
+import type { BranchWatch, MonitorConfig } from '../types';
+import { toast } from '../toast';
 
 interface MonitorModalProps {
   onClose: () => void;
@@ -13,7 +14,9 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
   const [levelFilter, setLevelFilter] = useState<string>('all');
   const [copied, setCopied] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
 
+  // 监控运行时状态与日志
   const statusQ = useQuery({
     queryKey: qk.monitorStatus,
     queryFn: () => api.monitorStatus(),
@@ -26,11 +29,50 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
     refetchInterval: 5000,
   });
 
+  // 监控与通知策略配置
+  const configQ = useQuery({
+    queryKey: qk.monitorConfig,
+    queryFn: () => api.monitorConfig(),
+  });
+
+  const [cfgEnabled, setCfgEnabled] = useState(true);
+  const [cfgActiveHours, setCfgActiveHours] = useState('08:00-20:00');
+  const [cfgTgToken, setCfgTgToken] = useState('');
+  const [cfgTgChatId, setCfgTgChatId] = useState('');
+  const [cfgWebhookUrl, setCfgWebhookUrl] = useState('');
+
+  useEffect(() => {
+    if (configQ.data) {
+      setCfgEnabled(configQ.data.enabled ?? true);
+      setCfgActiveHours(configQ.data.activeHours || '08:00-20:00');
+      setCfgTgToken(configQ.data.telegramBotToken || '');
+      setCfgTgChatId(configQ.data.telegramChatId || '');
+      setCfgWebhookUrl(configQ.data.webhookUrl || '');
+    }
+  }, [configQ.data]);
+
+  const updateConfigMut = useMutation({
+    mutationFn: (newCfg: MonitorConfig) => api.updateMonitorConfig(newCfg),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.monitorConfig });
+      qc.invalidateQueries({ queryKey: qk.monitorStatus });
+      toast.success('监控策略与通知设置已保存');
+    },
+    onError: (err: Error) => toast.error(`保存失败: ${err.message}`),
+  });
+
+  const testNotifyMut = useMutation({
+    mutationFn: () => api.testNotify(),
+    onSuccess: (res) => toast.success(res.message || '测试通知已派发'),
+    onError: (err: Error) => toast.error(`测试通知发送失败: ${err.message}`),
+  });
+
   const triggerMut = useMutation({
     mutationFn: () => api.triggerMonitor(),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.monitorStatus });
       qc.invalidateQueries({ queryKey: qk.monitorLogs(hours) });
+      toast.success('已触发即时检查');
     },
   });
 
@@ -58,6 +100,28 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleTogglePause = () => {
+    const nextEnabled = !cfgEnabled;
+    setCfgEnabled(nextEnabled);
+    updateConfigMut.mutate({
+      enabled: nextEnabled,
+      activeHours: cfgActiveHours,
+      telegramBotToken: cfgTgToken,
+      telegramChatId: cfgTgChatId,
+      webhookUrl: cfgWebhookUrl,
+    });
+  };
+
+  const handleSaveConfig = () => {
+    updateConfigMut.mutate({
+      enabled: cfgEnabled,
+      activeHours: cfgActiveHours,
+      telegramBotToken: cfgTgToken,
+      telegramChatId: cfgTgChatId,
+      webhookUrl: cfgWebhookUrl,
+    });
+  };
+
   return (
     <div
       className="modal-backdrop"
@@ -72,8 +136,8 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
         className="modal"
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: isMaximized ? '100vw' : 'min(940px, 95vw)',
-          height: isMaximized ? '100vh' : 'min(860px, 90vh)',
+          width: isMaximized ? '100vw' : 'min(980px, 95vw)',
+          height: isMaximized ? '100vh' : 'min(880px, 90vh)',
           maxWidth: isMaximized ? '100vw' : '95vw',
           maxHeight: isMaximized ? '100vh' : '90vh',
           borderRadius: isMaximized ? 0 : 12,
@@ -81,7 +145,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
           display: 'flex',
           flexDirection: 'column',
           boxSizing: 'border-box',
-          gap: 14,
+          gap: 12,
           background: 'var(--bg-1)',
           border: isMaximized ? 'none' : '1px solid var(--border-strong)',
         }}
@@ -93,33 +157,63 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
             alignItems: 'center',
             justifyContent: 'space-between',
             borderBottom: '1px solid var(--border)',
-            paddingBottom: 14,
+            paddingBottom: 12,
             flex: 'none',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span style={{ fontSize: 20 }}>📡</span>
-            <b style={{ fontSize: 17, color: 'var(--text)' }}>服务监控与运行日志</b>
+            <b style={{ fontSize: 17, color: 'var(--text)' }}>服务监控与通知系统</b>
             <span
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: 6,
-                background: 'rgba(76, 183, 130, 0.15)',
-                color: 'var(--green)',
-                border: '1px solid rgba(76, 183, 130, 0.3)',
+                background: !status?.enabled
+                  ? 'rgba(234, 179, 8, 0.15)'
+                  : 'rgba(76, 183, 130, 0.15)',
+                color: !status?.enabled ? 'var(--yellow, #eab308)' : 'var(--green)',
+                border: !status?.enabled
+                  ? '1px solid rgba(234, 179, 8, 0.3)'
+                  : '1px solid rgba(76, 183, 130, 0.3)',
                 borderRadius: 999,
                 padding: '2px 10px',
                 fontSize: 12,
                 fontWeight: 600,
               }}
             >
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--green)' }} />
-              后台轮询正常 (90s)
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: !status?.enabled ? '#eab308' : 'var(--green)',
+                }}
+              />
+              {!status?.enabled
+                ? '已暂停'
+                : `运行中 (${status?.activeHours || '08:00-20:00'})`}
             </span>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <button
+              className="sm"
+              onClick={handleTogglePause}
+              style={{
+                borderColor: cfgEnabled ? 'rgba(234, 179, 8, 0.4)' : 'rgba(76, 183, 130, 0.4)',
+                color: cfgEnabled ? '#eab308' : 'var(--green)',
+              }}
+            >
+              {cfgEnabled ? '⏸️ 暂停监控' : '▶️ 恢复监控'}
+            </button>
+            <button
+              className={`sm ${showConfig ? 'primary' : 'ghost'}`}
+              onClick={() => setShowConfig(!showConfig)}
+              title="配置监控活跃时间段与 Telegram/Webhook 通知"
+            >
+              ⚙️ 策略与通知
+            </button>
             <button
               className="ghost sm"
               onClick={() => setIsMaximized(!isMaximized)}
@@ -139,6 +233,101 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
           </div>
         </div>
 
+        {/* 策略与通知设置折叠面板 */}
+        {showConfig && (
+          <div
+            style={{
+              padding: '14px 16px',
+              borderRadius: 8,
+              background: 'var(--bg-2)',
+              border: '1px solid var(--accent)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              flex: 'none',
+            }}
+          >
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+              <b style={{ fontSize: 14, color: 'var(--accent)' }}>⚙️ 监控活跃时段与外部通知平台设置</b>
+              <div className="row" style={{ gap: 8 }}>
+                <button
+                  className="ghost sm"
+                  disabled={testNotifyMut.isPending}
+                  onClick={() => testNotifyMut.mutate()}
+                  title="向已配置的 Telegram 或 Webhook 发送一条测试消息"
+                >
+                  {testNotifyMut.isPending ? '发送中…' : '🧪 测试通知'}
+                </button>
+                <button
+                  className="primary sm"
+                  disabled={updateConfigMut.isPending}
+                  onClick={handleSaveConfig}
+                >
+                  {updateConfigMut.isPending ? '保存中…' : '💾 保存设置'}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 12 }}>
+              <label className="field" style={{ margin: 0 }}>
+                监控活跃时段 (Active Hours)
+                <input
+                  type="text"
+                  className="sm mono"
+                  placeholder="如 08:00-20:00 (留空为全天)"
+                  value={cfgActiveHours}
+                  onChange={(e) => setCfgActiveHours(e.target.value)}
+                />
+                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
+                  非工作时间段自动休眠，停止后台轮询以节省资源与电量。
+                </span>
+              </label>
+
+              <label className="field" style={{ margin: 0 }}>
+                Telegram Bot Token
+                <input
+                  type="password"
+                  className="sm mono"
+                  placeholder="如 123456789:ABCdefGhI..."
+                  value={cfgTgToken}
+                  onChange={(e) => setCfgTgToken(e.target.value)}
+                />
+                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
+                  创建 Bot 获得的 Token，用于推送分支推送与 PR 变动。
+                </span>
+              </label>
+
+              <label className="field" style={{ margin: 0 }}>
+                Telegram Chat ID
+                <input
+                  type="text"
+                  className="sm mono"
+                  placeholder="如 -1001234567 或个人 ChatID"
+                  value={cfgTgChatId}
+                  onChange={(e) => setCfgTgChatId(e.target.value)}
+                />
+                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
+                  接收通知的目标群组或个人 Chat ID。
+                </span>
+              </label>
+
+              <label className="field" style={{ margin: 0 }}>
+                通用 Webhook URL (飞书 / 企微 / 钉钉 / Slack)
+                <input
+                  type="text"
+                  className="sm mono"
+                  placeholder="https://open.feishu.cn/... 或 https://qyapi.weixin.qq.com/..."
+                  value={cfgWebhookUrl}
+                  onChange={(e) => setCfgWebhookUrl(e.target.value)}
+                />
+                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
+                  POST JSON 格式载荷，支持各类企业 IM 机器人。
+                </span>
+              </label>
+            </div>
+          </div>
+        )}
+
         {/* 顶部指标统计卡片组 */}
         <div
           style={{
@@ -150,7 +339,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
         >
           <div
             style={{
-              padding: '12px 16px',
+              padding: '10px 14px',
               borderRadius: 8,
               background: 'var(--bg-2)',
               border: '1px solid var(--border)',
@@ -158,13 +347,13 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
             }}
           >
             <div style={{ fontSize: 12, color: 'var(--text-3)' }}>监控分支数</div>
-            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4, color: 'var(--text)' }}>
+            <div style={{ fontSize: 20, fontWeight: 700, marginTop: 2, color: 'var(--text)' }}>
               {status?.watchesCount ?? 0}
             </div>
           </div>
           <div
             style={{
-              padding: '12px 16px',
+              padding: '10px 14px',
               borderRadius: 8,
               background: 'var(--bg-2)',
               border: '1px solid var(--border)',
@@ -172,13 +361,13 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
             }}
           >
             <div style={{ fontSize: 12, color: 'var(--text-3)' }}>跟踪开放 PR</div>
-            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4, color: 'var(--text)' }}>
+            <div style={{ fontSize: 20, fontWeight: 700, marginTop: 2, color: 'var(--text)' }}>
               {status?.openPRsCount ?? 0}
             </div>
           </div>
           <div
             style={{
-              padding: '12px 16px',
+              padding: '10px 14px',
               borderRadius: 8,
               background: 'var(--bg-2)',
               border: '1px solid var(--border)',
@@ -186,22 +375,29 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
             }}
           >
             <div style={{ fontSize: 12, color: 'var(--text-3)' }}>上次检查耗时</div>
-            <div style={{ fontSize: 22, fontWeight: 700, marginTop: 4, color: 'var(--accent)' }}>
+            <div style={{ fontSize: 20, fontWeight: 700, marginTop: 2, color: 'var(--accent)' }}>
               {status?.lastDurationMs ? `${status.lastDurationMs}ms` : '--'}
             </div>
           </div>
           <div
             style={{
-              padding: '12px 16px',
+              padding: '10px 14px',
               borderRadius: 8,
               background: 'var(--bg-2)',
               border: '1px solid var(--border)',
               textAlign: 'center',
             }}
           >
-            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>上次轮询时间</div>
-            <div style={{ fontSize: 14, fontWeight: 600, marginTop: 7, color: 'var(--text)' }}>
-              {status?.lastCheckTime ? new Date(status.lastCheckTime).toLocaleTimeString() : '刚刚'}
+            <div style={{ fontSize: 12, color: 'var(--text-3)' }}>外部通知渠道</div>
+            <div style={{ fontSize: 13, fontWeight: 600, marginTop: 5, color: 'var(--text)' }}>
+              {status?.telegramConfigured || status?.webhookConfigured ? (
+                <span style={{ color: 'var(--green)' }}>
+                  ✓ {status.telegramConfigured ? 'TG ' : ''}
+                  {status.webhookConfigured ? 'Webhook' : ''}
+                </span>
+              ) : (
+                <span className="dim">未配置</span>
+              )}
             </div>
           </div>
         </div>
@@ -210,17 +406,17 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
         {status?.watchedBranches && status.watchedBranches.length > 0 && (
           <div
             style={{
-              padding: '10px 14px',
+              padding: '8px 12px',
               borderRadius: 8,
               background: 'var(--bg-2)',
               border: '1px solid var(--border)',
               flex: 'none',
             }}
           >
-            <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 6 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 4 }}>
               当前监控分支：
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {status.watchedBranches.map((w: BranchWatch) => (
                 <span
                   key={w.id}
@@ -228,7 +424,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
                     background: 'var(--bg-1)',
                     border: '1px solid var(--border-strong)',
                     borderRadius: 6,
-                    padding: '3px 8px',
+                    padding: '2px 8px',
                     fontSize: 12,
                     fontFamily: 'var(--mono)',
                   }}
@@ -261,90 +457,90 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
               className="sm"
               value={hours}
               onChange={(e) => setHours(Number(e.target.value))}
-              style={{ width: 130 }}
+              style={{ width: 110 }}
             >
+              <option value={1}>最近 1 小时</option>
+              <option value={4}>最近 4 小时</option>
               <option value={8}>最近 8 小时</option>
-              <option value={24}>当天 (24小时)</option>
-              <option value={2}>最近 2 小时</option>
+              <option value={24}>最近 24 小时</option>
             </select>
 
             <span style={{ fontSize: 12, color: 'var(--text-3)', marginLeft: 6 }}>日志级别:</span>
-            <select
-              className="sm"
-              value={levelFilter}
-              onChange={(e) => setLevelFilter(e.target.value)}
-              style={{ width: 110 }}
-            >
-              <option value="all">全部级别</option>
-              <option value="EVENT">事件 (EVENT)</option>
-              <option value="INFO">信息 (INFO)</option>
-              <option value="WARN">警告 (WARN)</option>
-              <option value="ERROR">错误 (ERROR)</option>
-            </select>
+            <div style={{ display: 'inline-flex', gap: 4 }}>
+              {['all', 'EVENT', 'WARN', 'ERROR', 'INFO'].map((lvl) => (
+                <button
+                  key={lvl}
+                  type="button"
+                  className={`sm ${levelFilter === lvl ? 'primary' : 'ghost'}`}
+                  style={{ padding: '2px 8px', fontSize: 11 }}
+                  onClick={() => setLevelFilter(lvl)}
+                >
+                  {lvl === 'all' ? '全部' : lvl}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <button
               className="ghost sm"
               onClick={copyLogs}
-              title="复制当前过滤的日志文本到剪贴板"
+              title="复制当前过滤后的日志文本"
+              style={{ padding: '4px 10px' }}
             >
               {copied ? '✓ 已复制' : '📋 复制日志'}
             </button>
             <button
               className="ghost sm"
-              disabled={pruneMut.isPending}
               onClick={() => pruneMut.mutate()}
-              title="立即清理并裁剪超过当前时间范围的历史旧日志"
+              disabled={pruneMut.isPending}
+              title="清理并保留设定小时数以内的日志"
+              style={{ padding: '4px 10px' }}
             >
-              🧹 清理旧日志
+              🧹 清理过期
             </button>
             <button
               className="primary sm"
-              disabled={triggerMut.isPending}
               onClick={() => triggerMut.mutate()}
-              title="立即手动触发一次所有分支与 PR 状态检查"
+              disabled={triggerMut.isPending}
+              style={{ padding: '4px 12px' }}
             >
-              {triggerMut.isPending ? '检查中...' : '⚡ 立即检查'}
+              {triggerMut.isPending ? '正在检查…' : '🔄 立即检查'}
             </button>
           </div>
         </div>
 
-        {/* 日志内容展示终端区 */}
+        {/* 日志控制台主区域 */}
         <div
           style={{
             flex: 1,
-            minHeight: isMaximized ? 320 : 260,
             overflowY: 'auto',
-            background: 'var(--bg)',
-            border: '1px solid var(--border-strong)',
+            background: 'var(--bg-0)',
+            border: '1px solid var(--border)',
             borderRadius: 8,
-            padding: '14px 16px',
+            padding: '12px 14px',
             fontFamily: 'var(--mono)',
             fontSize: 12,
-            lineHeight: 1.65,
-            boxSizing: 'border-box',
+            lineHeight: 1.5,
           }}
         >
           {logs.length === 0 ? (
-            <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-3)' }}>
-              暂无监控日志记录
+            <div style={{ color: 'var(--text-3)', textAlign: 'center', padding: '40px 0' }}>
+              暂无匹配的监控日志记录
             </div>
           ) : (
             logs.map((l, idx) => {
+              let badgeBg = 'rgba(255, 255, 255, 0.08)';
               let badgeColor = 'var(--text-2)';
-              let badgeBg = 'rgba(255, 255, 255, 0.06)';
               if (l.level === 'EVENT') {
-                badgeColor = 'var(--blue)';
-                badgeBg = 'rgba(78, 167, 252, 0.12)';
+                badgeBg = 'rgba(76, 183, 130, 0.2)';
+                badgeColor = 'var(--green)';
               } else if (l.level === 'WARN') {
-                badgeColor = 'var(--yellow)';
-                badgeBg = 'rgba(242, 201, 76, 0.12)';
+                badgeBg = 'rgba(234, 179, 8, 0.2)';
+                badgeColor = '#eab308';
               } else if (l.level === 'ERROR') {
+                badgeBg = 'rgba(239, 68, 68, 0.2)';
                 badgeColor = 'var(--red)';
-                badgeBg = 'rgba(235, 87, 87, 0.15)';
-              } else if (l.level === 'INFO') {
-                badgeColor = 'var(--text-2)';
               }
 
               return (

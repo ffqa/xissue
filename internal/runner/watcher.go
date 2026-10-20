@@ -1,11 +1,14 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,6 +105,114 @@ func (r *Runner) pushNotification(kind, title, body, link, meta string) {
 	if err == nil && n != nil {
 		r.notify.BroadcastNotification(n)
 	}
+	r.sendExternalNotification(kind, title, body, link)
+}
+
+func (r *Runner) SendTestNotification(ctx context.Context) (map[string]any, error) {
+	title := "🔔 xIssue 监控通知测试"
+	body := "这是一条来自 xIssue 监控系统的测试通知，表明通知链路已正常连通！"
+	link := "/projects"
+	r.sendExternalNotification("test", title, body, link)
+	return map[string]any{
+		"ok":      true,
+		"message": "已成功派发测试通知至外部平台（若已配置 Telegram 或 Webhook）",
+	}, nil
+}
+
+func (r *Runner) sendExternalNotification(kind, title, body, link string) {
+	tgToken := strings.TrimSpace(r.cfg.Monitor.TelegramBotToken)
+	tgChatID := strings.TrimSpace(r.cfg.Monitor.TelegramChatID)
+	webhookURL := strings.TrimSpace(r.cfg.Monitor.WebhookURL)
+
+	if tgToken == "" && webhookURL == "" {
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// 1. Telegram Bot 推送
+		if tgToken != "" && tgChatID != "" {
+			tgMsg := fmt.Sprintf("🔔 *%s*\n\n%s", escapeTelegramMarkdown(title), escapeTelegramMarkdown(body))
+			if link != "" {
+				tgMsg += fmt.Sprintf("\n\n🔗 链接: %s", link)
+			}
+			payload, _ := json.Marshal(map[string]any{
+				"chat_id":    tgChatID,
+				"text":       tgMsg,
+				"parse_mode": "Markdown",
+			})
+			tgURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", tgToken)
+			req, err := http.NewRequestWithContext(ctx, "POST", tgURL, bytes.NewReader(payload))
+			if err == nil {
+				req.Header.Set("Content-Type", "application/json")
+				resp, rerr := http.DefaultClient.Do(req)
+				if rerr == nil {
+					resp.Body.Close()
+					r.LogMonitor("EVENT", "notify", fmt.Sprintf("已成功通过 Telegram Bot 推送通知: %s", title))
+				} else {
+					r.LogMonitor("WARN", "notify", fmt.Sprintf("Telegram Bot 推送失败: %v", rerr))
+				}
+			}
+		}
+
+		// 2. 通用 Webhook 推送 (飞书/企微/钉钉/Slack/自定义)
+		if webhookURL != "" {
+			payload, _ := json.Marshal(map[string]any{
+				"event":     kind,
+				"title":     title,
+				"body":      body,
+				"link":      link,
+				"timestamp": time.Now().Format(time.RFC3339),
+			})
+			req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, bytes.NewReader(payload))
+			if err == nil {
+				req.Header.Set("Content-Type", "application/json")
+				resp, rerr := http.DefaultClient.Do(req)
+				if rerr == nil {
+					resp.Body.Close()
+					r.LogMonitor("EVENT", "notify", fmt.Sprintf("已成功通过 Webhook 推送通知: %s", title))
+				} else {
+					r.LogMonitor("WARN", "notify", fmt.Sprintf("Webhook 推送失败: %v", rerr))
+				}
+			}
+		}
+	}()
+}
+
+func escapeTelegramMarkdown(s string) string {
+	return strings.ReplaceAll(s, "_", "\\_")
+}
+
+func IsWithinActiveHours(activeHours string, t time.Time) bool {
+	raw := strings.TrimSpace(activeHours)
+	if raw == "" || raw == "0-24" || raw == "00:00-24:00" {
+		return true
+	}
+	parts := strings.Split(raw, "-")
+	if len(parts) != 2 {
+		return true
+	}
+	parseHourMin := func(s string) int {
+		s = strings.TrimSpace(s)
+		if strings.Contains(s, ":") {
+			p := strings.Split(s, ":")
+			h, _ := strconv.Atoi(p[0])
+			m, _ := strconv.Atoi(p[1])
+			return h*60 + m
+		}
+		h, _ := strconv.Atoi(s)
+		return h * 60
+	}
+	startMin := parseHourMin(parts[0])
+	endMin := parseHourMin(parts[1])
+	nowMin := t.Hour()*60 + t.Minute()
+
+	if startMin <= endMin {
+		return nowMin >= startMin && nowMin < endMin
+	}
+	return nowMin >= startMin || nowMin < endMin
 }
 
 func (r *Runner) mirrorPath(repoID int64) string {
@@ -184,9 +295,11 @@ func (r *Runner) startWatcherLoop() {
 			return
 		case <-time.After(2 * time.Second):
 		}
-		ctx, cancel := context.WithTimeout(r.ctx, 60*time.Second)
-		defer cancel()
-		_, _, _ = r.CheckWatchesAndPRs(ctx, 0)
+		if r.cfg.Monitor.Enabled && IsWithinActiveHours(r.cfg.Monitor.ActiveHours, time.Now()) {
+			ctx, cancel := context.WithTimeout(r.ctx, 60*time.Second)
+			defer cancel()
+			_, _, _ = r.CheckWatchesAndPRs(ctx, 0)
+		}
 		_, _ = r.PruneMonitorLogs(8 * time.Hour)
 	}()
 
@@ -196,6 +309,14 @@ func (r *Runner) startWatcherLoop() {
 			r.LogMonitor("INFO", "watcher", "监控服务收到停止信号，已正常退出")
 			return
 		case <-ticker.C:
+			if !r.cfg.Monitor.Enabled {
+				r.LogMonitor("INFO", "watcher", "监控当前处于暂停状态，已跳过轮询")
+				continue
+			}
+			if !IsWithinActiveHours(r.cfg.Monitor.ActiveHours, time.Now()) {
+				r.LogMonitor("INFO", "watcher", fmt.Sprintf("当前处于非活跃监控时段 (%s)，已跳过轮询以节省资源", r.cfg.Monitor.ActiveHours))
+				continue
+			}
 			ctx, cancel := context.WithTimeout(r.ctx, 60*time.Second)
 			_, _, _ = r.CheckWatchesAndPRs(ctx, 0)
 			cancel()
@@ -655,6 +776,10 @@ type MonitorLogEntry struct {
 // MonitorStatus represents current runtime status of the monitoring daemon.
 type MonitorStatus struct {
 	Running              bool                 `json:"running"`
+	Enabled              bool                 `json:"enabled"`
+	ActiveHours          string               `json:"activeHours"`
+	TelegramConfigured   bool                 `json:"telegramConfigured"`
+	WebhookConfigured    bool                 `json:"webhookConfigured"`
 	IntervalSeconds      int                  `json:"intervalSeconds"`
 	LastCheckTime        *time.Time           `json:"lastCheckTime,omitempty"`
 	NextCheckTime        *time.Time           `json:"nextCheckTime,omitempty"`
@@ -722,6 +847,10 @@ func (r *Runner) GetMonitorStatus(ctx context.Context) (*MonitorStatus, error) {
 
 	res := &MonitorStatus{
 		Running:              true,
+		Enabled:              r.cfg.Monitor.Enabled,
+		ActiveHours:          r.cfg.Monitor.ActiveHours,
+		TelegramConfigured:   strings.TrimSpace(r.cfg.Monitor.TelegramBotToken) != "" && strings.TrimSpace(r.cfg.Monitor.TelegramChatID) != "",
+		WebhookConfigured:    strings.TrimSpace(r.cfg.Monitor.WebhookURL) != "",
 		IntervalSeconds:      90,
 		LastDurationMs:       r.lastDurationMs,
 		WatchesCount:         len(watches),

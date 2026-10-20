@@ -331,7 +331,7 @@ func (r *Runner) ListAgentModels(ctx context.Context, agentName string, refresh 
 		}
 	}
 
-	pctx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	pctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 
 	var currentModel string

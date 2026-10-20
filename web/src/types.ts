@@ -387,8 +387,20 @@ export interface MonitorLogEntry {
   message: string;
 }
 
+export interface MonitorConfig {
+  enabled: boolean;
+  activeHours: string;
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  webhookUrl?: string;
+}
+
 export interface MonitorStatus {
   running: boolean;
+  enabled: boolean;
+  activeHours: string;
+  telegramConfigured: boolean;
+  webhookConfigured: boolean;
   intervalSeconds: number;
   lastCheckTime?: string;
   nextCheckTime?: string;

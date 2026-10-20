@@ -7,20 +7,20 @@ class Xissue < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/ffqa/xissue/releases/download/v0.2.11/xissue-v0.2.11-darwin-arm64.tar.gz"
-      sha256 "81203ae74ff27539f56ba1f3c35979180c1f2f3e8554e2623154a724d9e19c68"
+      sha256 "9d30ccf2f32fddb6b120254954a6ae1038d7d3e428497354635e018f11299ba6"
     else
       url "https://github.com/ffqa/xissue/releases/download/v0.2.11/xissue-v0.2.11-darwin-amd64.tar.gz"
-      sha256 "b50ecf64da38c1e280ca734360525fca16b8974233f497c4c96caea6467187a4"
+      sha256 "8b831fc6fad303d7a6b16053992019ae09dfc6e7c5aa7fd1a0ee1d1bc2fd8030"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
       url "https://github.com/ffqa/xissue/releases/download/v0.2.11/xissue-v0.2.11-linux-arm64.tar.gz"
-      sha256 "50ed8dd62fefe362e00639dc7446b0efa7f9c93fa3b218bee33e97dd5f149b52"
+      sha256 "213a09c489c51b802049dd7f22054858034a85a86a2a9cb63a257478155541ca"
     else
       url "https://github.com/ffqa/xissue/releases/download/v0.2.11/xissue-v0.2.11-linux-amd64.tar.gz"
-      sha256 "aaffba1e5037cbc72048e262a175aec952777a122ad5db829e690b9d2676a1df"
+      sha256 "ad5dcf5bb1e0a452ca7522ba6acf0808d44752d45564e5c9b9cf30a2d4d23a6f"
     end
   end
 

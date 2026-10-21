@@ -6,6 +6,9 @@ CREATE TABLE IF NOT EXISTS projects (
     target_branch      TEXT NOT NULL DEFAULT 'main',
     auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1,
     automation_rules   TEXT NOT NULL DEFAULT '[]',
+    auto_develop       INTEGER NOT NULL DEFAULT 0,
+    auto_develop_agent TEXT NOT NULL DEFAULT '',
+    auto_develop_labels TEXT NOT NULL DEFAULT '[]',
     local_seq          INTEGER NOT NULL DEFAULT 0,
     created_at         TEXT NOT NULL,
     updated_at         TEXT NOT NULL
@@ -63,6 +66,7 @@ CREATE TABLE IF NOT EXISTS runs (
     pr_url        TEXT NOT NULL DEFAULT '',
     pr_state      TEXT NOT NULL DEFAULT '',
     change_record TEXT NOT NULL DEFAULT '',
+    auto_pr       INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL,
     started_at    TEXT,
     ended_at      TEXT

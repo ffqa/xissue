@@ -153,6 +153,9 @@ export default function ProjectPage() {
   const [cfgDevMode, setCfgDevMode] = useState<DevMode>('single_main');
   const [cfgTargetBranch, setCfgTargetBranch] = useState('main');
   const [cfgAutoPR, setCfgAutoPR] = useState(true);
+  const [cfgAutoDevelop, setCfgAutoDevelop] = useState(false);
+  const [cfgAutoDevelopAgent, setCfgAutoDevelopAgent] = useState('');
+  const [cfgAutoDevelopLabels, setCfgAutoDevelopLabels] = useState('bug, fix, error, crash, regression, enhancement, feature, 需求, 缺陷, 优化, 功能, 报错, 崩溃');
   const [cfgAutomationRules, setCfgAutomationRules] = useState<AutomationRule[]>([]);
 
   // 规则配置表单状态
@@ -177,6 +180,9 @@ export default function ProjectPage() {
       devMode?: DevMode;
       targetBranch?: string;
       autoPrOnConfirm?: boolean;
+      autoDevelop?: boolean;
+      autoDevelopAgent?: string;
+      autoDevelopLabels?: string[];
       automationRules?: AutomationRule[];
     }) => api.updateProject(id, b),
     onSuccess: (updated) => {
@@ -561,6 +567,9 @@ export default function ProjectPage() {
             setCfgDevMode(curMode);
             setCfgTargetBranch(p?.targetBranch || (curMode === 'main_dev' ? 'dev' : 'main'));
             setCfgAutoPR(p?.autoPrOnConfirm ?? true);
+            setCfgAutoDevelop(p?.autoDevelop ?? false);
+            setCfgAutoDevelopAgent(p?.autoDevelopAgent ?? '');
+            setCfgAutoDevelopLabels((p?.autoDevelopLabels?.length ? p.autoDevelopLabels : ['bug', 'fix', 'error', 'crash', 'regression', 'enhancement', 'feature', '需求', '缺陷', '优化', '功能', '报错', '崩溃']).join(', '));
             setCfgAutomationRules(p?.automationRules ?? []);
             setSettingsTab('mode');
             setSettingsOpen(true);
@@ -1237,6 +1246,9 @@ export default function ProjectPage() {
                     devMode: cfgDevMode,
                     targetBranch: cfgTargetBranch.trim(),
                     autoPrOnConfirm: cfgAutoPR,
+                    autoDevelop: cfgAutoDevelop,
+                    autoDevelopAgent: cfgAutoDevelopAgent,
+                    autoDevelopLabels: cfgAutoDevelopLabels.split(',').map((s) => s.trim()).filter(Boolean),
                     automationRules: cfgAutomationRules,
                   })
                 }
@@ -1413,6 +1425,69 @@ export default function ProjectPage() {
                   <b>改完验收通过后自动提交/提 PR</b>（根据当前开发模式执行合入或发起 PR，并记录变更）
                 </span>
               </label>
+
+              <div
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: 8,
+                  border: `1px solid ${cfgAutoDevelop ? 'var(--accent)' : 'var(--border)'}`,
+                  background: 'var(--bg-2)',
+                }}
+              >
+                <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={cfgAutoDevelop}
+                    onChange={(e) => setCfgAutoDevelop(e.target.checked)}
+                  />
+                  <span style={{ fontSize: 13 }}>
+                    <b>🤖 自动预开发远程 Issue（只发 PR，不合并）</b>
+                  </span>
+                </label>
+                <div className="small dim" style={{ marginTop: 6, lineHeight: 1.5 }}>
+                  同步到新的远程 Issue 且命中下方标签/关键字时，自动启动 Agent 预开发；完成后自动创建 PR，由管理员审核后决定合并或关闭。
+                  Agent 会先判断是否为真实可实施的需求/Bug，信息不足时不改代码。
+                </div>
+                {cfgAutoDevelop && (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                      gap: 12,
+                      marginTop: 12,
+                    }}
+                  >
+                    <label className="field" style={{ margin: 0 }}>
+                      预开发 Agent
+                      <select
+                        className="sm"
+                        value={cfgAutoDevelopAgent}
+                        onChange={(e) => setCfgAutoDevelopAgent(e.target.value)}
+                      >
+                        <option value="">默认（{defaultAgent}）</option>
+                        {(agentsQ.data ?? []).map((ag) => (
+                          <option key={ag.name} value={ag.name} disabled={!ag.available}>
+                            {ag.name}
+                            {ag.available ? '' : '（不可用）'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field" style={{ margin: 0 }}>
+                      触发标签 / 关键字（逗号分隔）
+                      <input
+                        className="sm mono"
+                        value={cfgAutoDevelopLabels}
+                        onChange={(e) => setCfgAutoDevelopLabels(e.target.value)}
+                        placeholder="bug, feature, 需求, 优化"
+                      />
+                      <span className="small dim" style={{ fontSize: 11, marginTop: 2 }}>
+                        匹配 Issue 标签或标题/正文中的关键字；留空则使用默认集合。
+                      </span>
+                    </label>
+                  </div>
+                )}
+              </div>
 
               <div
                 style={{

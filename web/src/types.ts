@@ -21,7 +21,10 @@ export interface Project {
   devMode?: DevMode;
   targetBranch: string;
   autoPrOnConfirm: boolean;
-  automationRules?: AutomationRule[];
+  autoDevelop: boolean;
+  autoDevelopAgent: string;
+  autoDevelopLabels: string[];
+  automationRules: AutomationRule[];
   repos: Repo[];
   createdAt: string;
   updatedAt: string;
@@ -395,6 +398,7 @@ export interface MonitorLogEntry {
 export interface MonitorConfig {
   enabled: boolean;
   activeHours: string;
+  publicUrl?: string;
   telegramBotToken?: string;
   telegramChatId?: string;
   webhookUrl?: string;
@@ -427,6 +431,7 @@ export interface DocItem {
   source: DocSource;
   title: string;
   path: string;
+  category: string;
   size: number;
   excerpt: string;
   updatedAt: string;

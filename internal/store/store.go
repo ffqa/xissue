@@ -45,6 +45,10 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN target_branch TEXT NOT NULL DEFAULT 'main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN automation_rules TEXT NOT NULL DEFAULT '[]'`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_agent TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_labels TEXT NOT NULL DEFAULT '[]'`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN auto_pr INTEGER NOT NULL DEFAULT 0`)
 	return &Store{db: db}, nil
 }
 
@@ -75,20 +79,27 @@ func nullInt(ns sql.NullInt64) *int64 {
 
 // ---------- Projects ----------
 
-const projectCols = `id, name, description, dev_mode, target_branch, auto_pr_on_confirm, automation_rules, created_at, updated_at`
+const projectCols = `id, name, description, dev_mode, target_branch, auto_pr_on_confirm, automation_rules, auto_develop, auto_develop_agent, auto_develop_labels, created_at, updated_at`
 
 func scanProject(s interface{ Scan(...any) error }) (domain.Project, error) {
 	var p domain.Project
 	var c, u string
-	var autoPR int
+	var autoPR, autoDevelop int
 	var devMode string
-	var autoRulesRaw string
-	err := s.Scan(&p.ID, &p.Name, &p.Description, &devMode, &p.TargetBranch, &autoPR, &autoRulesRaw, &c, &u)
+	var autoRulesRaw, autoLabelsRaw string
+	err := s.Scan(&p.ID, &p.Name, &p.Description, &devMode, &p.TargetBranch, &autoPR, &autoRulesRaw, &autoDevelop, &p.AutoDevelopAgent, &autoLabelsRaw, &c, &u)
 	if err != nil {
 		return p, err
 	}
 	p.CreatedAt, p.UpdatedAt = parseTime(c), parseTime(u)
 	p.AutoPROnConfirm = autoPR != 0
+	p.AutoDevelop = autoDevelop != 0
+	if autoLabelsRaw != "" {
+		_ = json.Unmarshal([]byte(autoLabelsRaw), &p.AutoDevelopLabels)
+	}
+	if len(p.AutoDevelopLabels) == 0 {
+		p.AutoDevelopLabels = domain.DefaultAutoDevelopLabels()
+	}
 	p.DevMode = domain.DevMode(devMode)
 	if p.DevMode != domain.DevModeMainDev && p.DevMode != domain.DevModeSingleMain {
 		p.DevMode = domain.DevModeSingleMain
@@ -168,12 +179,15 @@ func (s *Store) CreateProject(ctx context.Context, name, desc string, devMode ..
 }
 
 type ProjectPatch struct {
-	Name            *string                  `json:"name"`
-	Description     *string                  `json:"description"`
-	DevMode         *domain.DevMode          `json:"devMode"`
-	TargetBranch    *string                  `json:"targetBranch"`
-	AutoPROnConfirm *bool                    `json:"autoPrOnConfirm"`
-	AutomationRules *[]domain.AutomationRule `json:"automationRules"`
+	Name              *string                  `json:"name"`
+	Description       *string                  `json:"description"`
+	DevMode           *domain.DevMode          `json:"devMode"`
+	TargetBranch      *string                  `json:"targetBranch"`
+	AutoPROnConfirm   *bool                    `json:"autoPrOnConfirm"`
+	AutoDevelop       *bool                    `json:"autoDevelop"`
+	AutoDevelopAgent  *string                  `json:"autoDevelopAgent"`
+	AutoDevelopLabels *[]string                `json:"autoDevelopLabels"`
+	AutomationRules   *[]domain.AutomationRule `json:"automationRules"`
 }
 
 func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch) (*domain.Project, error) {
@@ -208,6 +222,24 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 	if patch.AutoPROnConfirm != nil {
 		p.AutoPROnConfirm = *patch.AutoPROnConfirm
 	}
+	if patch.AutoDevelop != nil {
+		p.AutoDevelop = *patch.AutoDevelop
+	}
+	if patch.AutoDevelopAgent != nil {
+		p.AutoDevelopAgent = strings.TrimSpace(*patch.AutoDevelopAgent)
+	}
+	if patch.AutoDevelopLabels != nil {
+		labels := make([]string, 0, len(*patch.AutoDevelopLabels))
+		for _, label := range *patch.AutoDevelopLabels {
+			if label = strings.TrimSpace(label); label != "" {
+				labels = append(labels, label)
+			}
+		}
+		p.AutoDevelopLabels = labels
+	}
+	if len(p.AutoDevelopLabels) == 0 {
+		p.AutoDevelopLabels = domain.DefaultAutoDevelopLabels()
+	}
 	if patch.AutomationRules != nil {
 		p.AutomationRules = *patch.AutomationRules
 	}
@@ -215,9 +247,14 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 	if p.AutoPROnConfirm {
 		autoInt = 1
 	}
+	autoDevInt := 0
+	if p.AutoDevelop {
+		autoDevInt = 1
+	}
 	rulesJSON, _ := json.Marshal(p.AutomationRules)
-	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, dev_mode=?, target_branch=?, auto_pr_on_confirm=?, automation_rules=?, updated_at=? WHERE id=?`,
-		p.Name, p.Description, string(p.DevMode), p.TargetBranch, autoInt, string(rulesJSON), now(), id); err != nil {
+	labelsJSON, _ := json.Marshal(p.AutoDevelopLabels)
+	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, dev_mode=?, target_branch=?, auto_pr_on_confirm=?, automation_rules=?, auto_develop=?, auto_develop_agent=?, auto_develop_labels=?, updated_at=? WHERE id=?`,
+		p.Name, p.Description, string(p.DevMode), p.TargetBranch, autoInt, string(rulesJSON), autoDevInt, p.AutoDevelopAgent, string(labelsJSON), now(), id); err != nil {
 		return nil, err
 	}
 	return s.GetProject(ctx, id)
@@ -540,13 +577,13 @@ func (s *Store) AddComment(ctx context.Context, issueID int64, author, body stri
 
 // ---------- Runs ----------
 
-const runCols = `id, issue_id, agent, model, status, branch, target_branch, workdir, session_id, summary, error, pr_url, pr_state, change_record, created_at, started_at, ended_at`
+const runCols = `id, issue_id, agent, model, status, branch, target_branch, workdir, session_id, summary, error, pr_url, pr_state, change_record, auto_pr, created_at, started_at, ended_at`
 
 func scanRun(sc interface{ Scan(...any) error }) (domain.Run, error) {
 	var r domain.Run
 	var c string
 	var st, en sql.NullString
-	err := sc.Scan(&r.ID, &r.IssueID, &r.Agent, &r.Model, &r.Status, &r.Branch, &r.TargetBranch, &r.Workdir, &r.SessionID, &r.Summary, &r.Error, &r.PRURL, &r.PRState, &r.ChangeRecord, &c, &st, &en)
+	err := sc.Scan(&r.ID, &r.IssueID, &r.Agent, &r.Model, &r.Status, &r.Branch, &r.TargetBranch, &r.Workdir, &r.SessionID, &r.Summary, &r.Error, &r.PRURL, &r.PRState, &r.ChangeRecord, &r.AutoPR, &c, &st, &en)
 	r.CreatedAt, r.StartedAt, r.EndedAt = parseTime(c), parseTimePtr(st), parseTimePtr(en)
 	return r, err
 }
@@ -639,6 +676,7 @@ type RunUpdate struct {
 	PRURL        *string
 	PRState      *string
 	ChangeRecord *string
+	AutoPR       *bool
 	Started      bool
 	Ended        bool
 }
@@ -678,6 +716,9 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, u RunUpdate) (*domain.R
 	}
 	if u.ChangeRecord != nil {
 		add("change_record", *u.ChangeRecord)
+	}
+	if u.AutoPR != nil {
+		add("auto_pr", *u.AutoPR)
 	}
 	if u.Started {
 		add("started_at", now())
@@ -889,4 +930,3 @@ func (s *Store) RecordPREventHandled(ctx context.Context, prURL, eventKey, actio
 		prURL, eventKey, actionLog, t)
 	return err
 }
-

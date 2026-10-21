@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import type { DocItem } from '../types';
@@ -9,6 +10,57 @@ interface Props {
   projectId: number;
   projectName?: string;
   onClose: () => void;
+}
+
+const CATEGORY_META = {
+  requirements: { icon: '📋', label: '需求 / 规格', short: '需求' },
+  adr: { icon: '🧭', label: 'ADR / 决策', short: 'ADR' },
+  reports: { icon: '📊', label: '报告 / 评审', short: '报告' },
+  work: { icon: '🗂', label: '工作 / 计划', short: '工作' },
+  other: { icon: '📄', label: '其他 / 散落文档', short: '其他' },
+} as const;
+
+const CATEGORY_ORDER = ['requirements', 'adr', 'reports', 'work', 'other'] as const;
+
+type CategoryKey = keyof typeof CATEGORY_META;
+
+function normalizeCategory(category?: string): CategoryKey {
+  return category && category in CATEGORY_META ? (category as CategoryKey) : 'other';
+}
+
+interface DirNode {
+  name: string;
+  path: string;
+  dirs: Map<string, DirNode>;
+  docs: DocItem[];
+  total: number;
+}
+
+function buildDirTree(docs: DocItem[]): DirNode {
+  const root: DirNode = { name: '', path: '', dirs: new Map(), docs: [], total: 0 };
+  const sorted = [...docs].sort((a, b) => a.path.localeCompare(b.path));
+  for (const doc of sorted) {
+    const segments = doc.path.replace(/\\/g, '/').split('/').filter(Boolean);
+    segments.pop(); // file name
+    let node = root;
+    for (const seg of segments) {
+      let child = node.dirs.get(seg);
+      if (!child) {
+        child = { name: seg, path: node.path ? `${node.path}/${seg}` : seg, dirs: new Map(), docs: [], total: 0 };
+        node.dirs.set(seg, child);
+      }
+      node = child;
+    }
+    node.docs.push(doc);
+  }
+  const finalize = (node: DirNode): number => {
+    let total = node.docs.length;
+    for (const child of node.dirs.values()) total += finalize(child);
+    node.total = total;
+    return total;
+  };
+  finalize(root);
+  return root;
 }
 
 export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
@@ -33,6 +85,17 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
 
   const docs = docsQ.data ?? [];
   const searchHits = searchQ.data ?? [];
+  const [viewMode, setViewMode] = useState<'tree' | 'category'>('tree');
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const dirTree = useMemo(() => buildDirTree(docs), [docs]);
+  const toggleGroup = (key: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
 
   // 默认选中第一个文档
   useEffect(() => {
@@ -49,6 +112,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
   });
 
   const curDoc = docDetailQ.data;
+  const curCategory = curDoc ? CATEGORY_META[normalizeCategory(curDoc.category)] : null;
 
   // 切换文档时同步编辑框内容并退出编辑态
   useEffect(() => {
@@ -105,9 +169,6 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [isEditing, saveDocMut, onClose]);
-
-  const wikiDocs = docs.filter((d) => d.source === 'github_wiki');
-  const localDocs = docs.filter((d) => d.source === 'local_doc');
 
   return (
     <Modal
@@ -199,6 +260,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                     const normPath = hit.path.replace(/\\/g, '/');
                     const lastSlash = normPath.lastIndexOf('/');
                     const dirPath = lastSlash !== -1 ? normPath.substring(0, lastSlash) : '';
+                    const cat = CATEGORY_META[normalizeCategory(hit.category)];
                     return (
                       <div
                         key={hit.id}
@@ -222,8 +284,13 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                           <b className="small ellipsis" style={{ maxWidth: 200 }} title={hit.title}>
                             {hit.title}
                           </b>
-                          <span className="badge sm" style={{ fontSize: 10 }}>
-                            {hit.source === 'github_wiki' ? 'Wiki' : 'Docs'}
+                          <span className="row" style={{ gap: 3, flexShrink: 0 }}>
+                            <span className="badge sm" style={{ fontSize: 9 }} title={cat.label}>
+                              {cat.icon} {cat.short}
+                            </span>
+                            <span className="badge sm" style={{ fontSize: 9 }}>
+                              {hit.source === 'github_wiki' ? 'Wiki' : 'Docs'}
+                            </span>
                           </span>
                         </div>
                         <div className="muted mono" style={{ fontSize: 11, marginTop: 2, wordBreak: 'break-all' }}>
@@ -247,43 +314,26 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
               </div>
             ) : (
               <>
-                {/* 📘 GitHub Wiki 分组 */}
-                {wikiDocs.length > 0 && (
-                  <div>
-                    <div
-                      className="dim small"
-                      style={{
-                        padding: '6px 12px',
-                        fontWeight: 600,
-                        letterSpacing: 0.5,
-                        textTransform: 'uppercase',
-                        background: 'rgba(255, 255, 255, 0.02)',
-                      }}
-                    >
-                      📘 GitHub Wiki ({wikiDocs.length})
-                    </div>
-                    {wikiDocs.map((item) => renderDocItem(item))}
-                  </div>
-                )}
-
-                {/* 📁 本地仓库文档分组 */}
-                {localDocs.length > 0 && (
-                  <div style={{ marginTop: wikiDocs.length > 0 ? 8 : 0 }}>
-                    <div
-                      className="dim small"
-                      style={{
-                        padding: '6px 12px',
-                        fontWeight: 600,
-                        letterSpacing: 0.5,
-                        textTransform: 'uppercase',
-                        background: 'rgba(255, 255, 255, 0.02)',
-                      }}
-                    >
-                      📁 本地文档 ({localDocs.length})
-                    </div>
-                    {localDocs.map((item) => renderDocItem(item))}
-                  </div>
-                )}
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 6,
+                    padding: '6px 12px',
+                    borderBottom: '1px solid var(--border)',
+                    alignItems: 'center',
+                  }}
+                >
+                  <button className={viewMode === 'tree' ? 'primary sm' : 'ghost sm'} onClick={() => setViewMode('tree')}>
+                    🗂 目录
+                  </button>
+                  <button className={viewMode === 'category' ? 'primary sm' : 'ghost sm'} onClick={() => setViewMode('category')}>
+                    🏷 分类
+                  </button>
+                  <span className="dim small" style={{ marginLeft: 'auto' }}>
+                    {docs.length} 篇
+                  </span>
+                </div>
+                {viewMode === 'tree' ? renderTree() : renderCategories()}
               </>
             )}
           </div>
@@ -330,6 +380,21 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                     >
                       {curDoc.source === 'github_wiki' ? 'GitHub Wiki' : '本地 Docs'}
                     </span>
+                    {curCategory && (
+                      <span
+                        style={{
+                          fontSize: 11,
+                          padding: '1px 6px',
+                          borderRadius: 4,
+                          background: 'var(--bg-2)',
+                          color: 'var(--text-2)',
+                          fontWeight: 600,
+                        }}
+                        title={curCategory.label}
+                      >
+                        {curCategory.icon} {curCategory.label}
+                      </span>
+                    )}
                   </div>
                   <div className="muted mono small" style={{ marginTop: 3 }}>
                     {curDoc.repoName} &middot; <span style={{ color: 'var(--text-1)' }}>{curDoc.path}</span> &middot; 更新于 {fmtTime(curDoc.updatedAt)}
@@ -393,11 +458,87 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
     </Modal>
   );
 
-  function renderDocItem(item: DocItem) {
+  function renderGroupHeader(key: string, depth: number, icon: string, label: string, count: number) {
+    const isCollapsed = collapsed.has(key);
+    return (
+      <div
+        key={key}
+        onClick={() => toggleGroup(key)}
+        className="small"
+        style={{
+          padding: '5px 8px',
+          paddingLeft: 8 + depth * 14,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 4,
+          cursor: 'pointer',
+          userSelect: 'none',
+          fontWeight: 600,
+          background: 'rgba(255, 255, 255, 0.02)',
+        }}
+      >
+        <span style={{ width: 12, flexShrink: 0 }}>{isCollapsed ? '▶' : '▼'}</span>
+        <span className="ellipsis" style={{ flex: 1 }} title={label}>
+          {icon} {label}
+        </span>
+        <span className="dim" style={{ fontSize: 10, flexShrink: 0 }}>
+          {count}
+        </span>
+      </div>
+    );
+  }
+
+  function renderTree(): ReactNode[] {
+    const rows: ReactNode[] = [];
+    const walk = (node: DirNode, depth: number) => {
+      if (node.docs.length > 0) {
+        if (depth === 0) {
+          const key = 'docs:root';
+          rows.push(renderGroupHeader(key, 0, '📄', '根目录散落文档', node.docs.length));
+          if (!collapsed.has(key)) {
+            node.docs.forEach((doc) => rows.push(renderDocItem(doc, 1)));
+          }
+        } else {
+          node.docs.forEach((doc) => rows.push(renderDocItem(doc, depth)));
+        }
+      }
+      const children = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name));
+      for (const child of children) {
+        const key = `dir:${child.path}`;
+        rows.push(renderGroupHeader(key, depth, '📁', child.name, child.total));
+        if (!collapsed.has(key)) walk(child, depth + 1);
+      }
+    };
+    walk(dirTree, 0);
+    return rows;
+  }
+
+  function renderCategories(): ReactNode[] {
+    const groups: Record<CategoryKey, DocItem[]> = { requirements: [], adr: [], reports: [], work: [], other: [] };
+    for (const doc of docs) groups[normalizeCategory(doc.category)].push(doc);
+
+    const rows: ReactNode[] = [];
+    for (const key of CATEGORY_ORDER) {
+      const items = groups[key];
+      if (items.length === 0) continue;
+      const groupKey = `cat:${key}`;
+      rows.push(renderGroupHeader(groupKey, 0, CATEGORY_META[key].icon, CATEGORY_META[key].label, items.length));
+      if (!collapsed.has(groupKey)) {
+        items
+          .sort((a, b) => a.path.localeCompare(b.path))
+          .forEach((doc) => rows.push(renderDocItem(doc, 1, true)));
+      }
+    }
+    return rows;
+  }
+
+  function renderDocItem(item: DocItem, depth = 0, showDirTag = false) {
     const isSelected = selectedDocId === item.id;
     const normPath = item.path.replace(/\\/g, '/');
     const lastSlash = normPath.lastIndexOf('/');
     const dirPath = lastSlash !== -1 ? normPath.substring(0, lastSlash) : '';
+    const category = normalizeCategory(item.category);
+    const meta = CATEGORY_META[category];
 
     return (
       <div
@@ -405,23 +546,32 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
         onClick={() => setSelectedDocId(item.id)}
         style={{
           padding: '8px 12px',
+          paddingLeft: 12 + depth * 14,
           cursor: 'pointer',
           borderLeft: isSelected ? '3px solid var(--accent)' : '3px solid transparent',
           background: isSelected ? 'var(--bg-2)' : 'transparent',
           transition: 'background 0.12s ease',
         }}
       >
-        {dirPath && (
+        {showDirTag && dirPath && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
             <span style={{ fontSize: 10, color: 'var(--text-3)', background: 'var(--bg-2)', padding: '1px 5px', borderRadius: 3 }}>
               📁 {dirPath}
             </span>
           </div>
         )}
-        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-          <b className="small ellipsis" style={{ maxWidth: 240 }} title={item.title}>
+        <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 4 }}>
+          <b className="small ellipsis" style={{ maxWidth: 185 }} title={item.title}>
             {item.title}
           </b>
+          <span className="row" style={{ gap: 3, flexShrink: 0 }}>
+            <span className="badge sm" style={{ fontSize: 9 }} title={meta.label}>
+              {meta.icon} {meta.short}
+            </span>
+            <span className="badge sm" style={{ fontSize: 9 }}>
+              {item.source === 'github_wiki' ? 'Wiki' : 'Docs'}
+            </span>
+          </span>
         </div>
         <div className="muted mono" style={{ fontSize: 11, marginTop: 2, wordBreak: 'break-all' }}>
           {item.path}

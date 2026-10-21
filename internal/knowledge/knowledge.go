@@ -28,6 +28,18 @@ var (
 		".cache":       true,
 		"build":        true,
 		".qoder":       true,
+		"target":       true,
+		"coverage":     true,
+		".venv":        true,
+		"venv":         true,
+		"out":          true,
+		"tmp":          true,
+		"temp":         true,
+		".idea":        true,
+		".vscode":      true,
+		".gradle":      true,
+		"Pods":         true,
+		".terraform":   true,
 	}
 )
 
@@ -125,6 +137,49 @@ func ScanProjectDocs(ctx context.Context, dataDir string, project *domain.Projec
 	return items, nil
 }
 
+var docCategoryRules = []struct {
+	category string
+	words    []string
+}{
+	{"requirements", []string{"requirement", "requirements", "prd", "prds", "spec", "specs"}},
+	{"adr", []string{"adr", "adrs", "decision", "decisions", "rfc", "rfcs"}},
+	{"reports", []string{"report", "reports", "review", "reviews", "audit", "audits", "retro", "retros", "retrospective", "retrospectives"}},
+	{"work", []string{"work", "works", "task", "tasks", "todo", "todos", "plan", "plans", "roadmap", "roadmaps", "milestone", "milestones", "sprint", "sprints", "progress", "okr", "okrs"}},
+}
+
+// categorizeDoc classifies a document by the words in its directory and file name.
+// It is intentionally keyword-based: no content parsing, stable across Wiki/mirror/local scans.
+func categorizeDoc(relPath string) string {
+	norm := filepath.ToSlash(relPath)
+	parts := strings.Split(norm, "/")
+	for _, seg := range parts[:len(parts)-1] {
+		if cat := docCategoryFor(seg); cat != "" {
+			return cat
+		}
+	}
+	if cat := docCategoryFor(parts[len(parts)-1]); cat != "" {
+		return cat
+	}
+	return "other"
+}
+
+func docCategoryFor(name string) string {
+	name = strings.TrimSuffix(name, filepath.Ext(name))
+	tokens := strings.FieldsFunc(strings.ToLower(name), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9')
+	})
+	for _, token := range tokens {
+		for _, rule := range docCategoryRules {
+			for _, word := range rule.words {
+				if token == word {
+					return rule.category
+				}
+			}
+		}
+	}
+	return ""
+}
+
 func docPriority(d domain.DocItem) int {
 	low := strings.ToLower(d.Path)
 	if low == "home.md" || strings.HasPrefix(low, "readme") {
@@ -179,6 +234,7 @@ func scanDirForMarkdown(dir string, repoID int64, repoName string, projectID int
 			Source:    source,
 			Title:     title,
 			Path:      rel,
+			Category:  categorizeDoc(rel),
 			Size:      info.Size(),
 			Excerpt:   excerpt,
 			UpdatedAt: info.ModTime(),
@@ -213,22 +269,6 @@ func scanLocalRepoDocs(repoDir string, repoID int64, repoName string, projectID 
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		lowRel := strings.ToLower(rel)
-
-		// Filter relevant docs:
-		// 1. Root level markdown files: README.md, ARCHITECTURE.md, etc.
-		// 2. Any markdown files under docs/, doc/, spec/, specs/, wiki/
-		isRelevant := !strings.Contains(rel, "/") ||
-			strings.HasPrefix(lowRel, "docs/") ||
-			strings.HasPrefix(lowRel, "doc/") ||
-			strings.HasPrefix(lowRel, "wiki/") ||
-			strings.HasPrefix(lowRel, "specs/") ||
-			strings.HasPrefix(lowRel, "spec/") ||
-			strings.HasPrefix(lowRel, "rfc/")
-
-		if !isRelevant {
-			return nil
-		}
 
 		info, err := d.Info()
 		if err != nil {
@@ -246,6 +286,7 @@ func scanLocalRepoDocs(repoDir string, repoID int64, repoName string, projectID 
 			Source:    domain.DocSourceLocalDoc,
 			Title:     title,
 			Path:      rel,
+			Category:  categorizeDoc(rel),
 			Size:      info.Size(),
 			Excerpt:   excerpt,
 			UpdatedAt: info.ModTime(),
@@ -373,6 +414,7 @@ func scanMirrorDocs(ctx context.Context, mirrorDir, branch string, repoID int64,
 			Source:    domain.DocSourceLocalDoc,
 			Title:     title,
 			Path:      rel,
+			Category:  categorizeDoc(rel),
 			Size:      int64(len(content)),
 			Excerpt:   excerpt,
 			UpdatedAt: time.Now(),
@@ -581,6 +623,7 @@ func GetDocDetail(ctx context.Context, dataDir string, project *domain.Project, 
 			Source:    source,
 			Title:     title,
 			Path:      relPath,
+			Category:  categorizeDoc(relPath),
 			Size:      size,
 			Excerpt:   excerpt,
 			UpdatedAt: modTime,

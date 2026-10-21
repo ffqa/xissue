@@ -241,3 +241,61 @@ func TestSaveDocAllowsNestedPath(t *testing.T) {
 		t.Fatalf("unexpected content: %q", detail.Content)
 	}
 }
+
+func TestCategorizeDoc(t *testing.T) {
+	cases := map[string]string{
+		"docs/requirements/login.md":    "requirements",
+		"docs/prd/checkout.md":          "requirements",
+		"docs/adr/0001-storage.md":      "adr",
+		"docs/decisions/queue.md":       "adr",
+		"reports/weekly-2026-10.md":     "reports",
+		"docs/reviews/pr-42.md":         "reports",
+		"docs/tasks/todo.md":            "work",
+		"docs/plan/2026-roadmap.md":     "work",
+		"docs/architecture/overview.md": "other",
+		"README.md":                     "other",
+		"guides/advanced/setup.md":      "other",
+		"notes/my-report.md":            "reports",
+	}
+	for path, want := range cases {
+		if got := categorizeDoc(path); got != want {
+			t.Errorf("categorizeDoc(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestScanLocalRepoDocsIncludesScatteredMarkdown(t *testing.T) {
+	repoDir := t.TempDir()
+	files := map[string]string{
+		"README.md":                  "# Root\n",
+		"notes/meeting.md":           "# Meeting\n",
+		"guides/advanced/setup.md":   "# Setup\n",
+		"docs/adr/0001-storage.md":   "# ADR\n",
+		"node_modules/pkg/readme.md": "# Ignored\n",
+		".git/hooks/readme.md":       "# Ignored\n",
+	}
+	for rel, content := range files {
+		full := filepath.Join(repoDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	docs := scanLocalRepoDocs(repoDir, 1, "repo", 1)
+	found := make(map[string]bool, len(docs))
+	for _, doc := range docs {
+		found[doc.Path] = true
+	}
+	for _, want := range []string{"README.md", "notes/meeting.md", "guides/advanced/setup.md", "docs/adr/0001-storage.md"} {
+		if !found[want] {
+			t.Errorf("expected scattered doc %q to be scanned, got %v", want, found)
+		}
+	}
+	for _, unwanted := range []string{"node_modules/pkg/readme.md", ".git/hooks/readme.md"} {
+		if found[unwanted] {
+			t.Errorf("ignored path %q should not be scanned", unwanted)
+		}
+	}
+}

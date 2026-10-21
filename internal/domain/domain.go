@@ -34,16 +34,25 @@ const (
 )
 
 type Project struct {
-	ID              int64            `json:"id"`
-	Name            string           `json:"name"`
-	Description     string           `json:"description"`
-	DevMode         DevMode          `json:"devMode"`
-	TargetBranch    string           `json:"targetBranch"`
-	AutoPROnConfirm bool             `json:"autoPrOnConfirm"`
-	AutomationRules []AutomationRule `json:"automationRules"`
-	Repos           []Repo           `json:"repos"`
-	CreatedAt       time.Time        `json:"createdAt"`
-	UpdatedAt       time.Time        `json:"updatedAt"`
+	ID                int64            `json:"id"`
+	Name              string           `json:"name"`
+	Description       string           `json:"description"`
+	DevMode           DevMode          `json:"devMode"`
+	TargetBranch      string           `json:"targetBranch"`
+	AutoPROnConfirm   bool             `json:"autoPrOnConfirm"`
+	AutoDevelop       bool             `json:"autoDevelop"`       // 同步到新 issue 后自动预开发，产物仅开 PR 不合并
+	AutoDevelopAgent  string           `json:"autoDevelopAgent"`  // 预开发使用的 agent，空则取默认
+	AutoDevelopLabels []string         `json:"autoDevelopLabels"` // 视为需求/Bug 的标签或关键字
+	AutomationRules   []AutomationRule `json:"automationRules"`
+	Repos             []Repo           `json:"repos"`
+	CreatedAt         time.Time        `json:"createdAt"`
+	UpdatedAt         time.Time        `json:"updatedAt"`
+}
+
+// DefaultAutoDevelopLabels lists labels/keywords that mark an issue as an
+// actionable bug or feature request for automatic pre-development.
+func DefaultAutoDevelopLabels() []string {
+	return []string{"bug", "fix", "error", "crash", "regression", "enhancement", "feature", "需求", "缺陷", "优化", "功能", "报错", "崩溃"}
 }
 
 type RuleConditions struct {
@@ -174,6 +183,7 @@ type Run struct {
 	PRURL        string     `json:"prUrl"`
 	PRState      string     `json:"prState"`
 	ChangeRecord string     `json:"changeRecord"`
+	AutoPR       bool       `json:"autoPr"` // 自动预开发产生的 run，完成后自动发 PR（不合并）
 	CreatedAt    time.Time  `json:"createdAt"`
 	StartedAt    *time.Time `json:"startedAt"`
 	EndedAt      *time.Time `json:"endedAt"`
@@ -228,6 +238,7 @@ type DocItem struct {
 	Source    DocSource `json:"source"`    // "github_wiki" | "local_doc"
 	Title     string    `json:"title"`     // Extracted title from first markdown header or filename
 	Path      string    `json:"path"`      // Relative file path (e.g. "docs/design.md" or "Home.md")
+	Category  string    `json:"category"`  // requirements | adr | reports | work | other
 	Size      int64     `json:"size"`      // File size in bytes
 	Excerpt   string    `json:"excerpt"`   // Short excerpt for search/list preview
 	UpdatedAt time.Time `json:"updatedAt"` // Last modified time
@@ -245,4 +256,3 @@ type DocSearchResult struct {
 	Snippet string `json:"snippet"` // Matched highlighted snippet with context
 	Score   int    `json:"score"`   // Relevance score
 }
-

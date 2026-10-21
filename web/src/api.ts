@@ -164,6 +164,9 @@ export const api = {
       devMode?: DevMode;
       targetBranch?: string;
       autoPrOnConfirm?: boolean;
+      autoDevelop?: boolean;
+      autoDevelopAgent?: string;
+      autoDevelopLabels?: string[];
       automationRules?: AutomationRule[];
     },
   ) => patch<Project>(`/api/projects/${id}`, b),

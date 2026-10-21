@@ -26,7 +26,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.12"
+const Version = "0.2.13"
 
 type Server struct {
 	cfg    *config.Config
@@ -526,13 +526,13 @@ func (s *Server) handleSyncProject(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	p, err := s.st.GetProject(r.Context(), projectID)
+	proj, err := s.st.GetProject(r.Context(), projectID)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	s.refreshProjectRepos(r.Context(), p)
-	repos := p.Repos
+	s.refreshProjectRepos(r.Context(), proj)
+	repos := proj.Repos
 	imported := 0
 	for _, repo := range repos {
 		p := provider.For(repo.Provider)
@@ -563,10 +563,35 @@ func (s *Server) handleSyncProject(w http.ResponseWriter, r *http.Request) {
 			}
 			if created {
 				imported++
+				s.maybeAutoDevelop(r.Context(), proj, provider.IssueKey(repo, ri.Number))
 			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"imported": imported})
+}
+
+func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key string) {
+	if !p.AutoDevelop {
+		return
+	}
+	issue, err := s.st.FindIssueByKey(ctx, p.ID, key)
+	if err != nil {
+		return
+	}
+	if !runner.IsDevelopableIssue(*issue, p.AutoDevelopLabels) {
+		return
+	}
+	agent := strings.TrimSpace(p.AutoDevelopAgent)
+	if agent == "" {
+		agent = s.runner.DefaultAgentName()
+	}
+	if agent == "" {
+		_, _ = s.st.AddComment(ctx, issue.ID, "system", "🤖 自动预开发已开启，但未配置任何 Agent，无法启动。请在设置中配置 Agent 或指定预开发 Agent。")
+		return
+	}
+	if _, err := s.runner.StartAutoDevelopRun(ctx, issue.ID, agent, runner.AutoDevelopPrompt(issue)); err != nil {
+		_, _ = s.st.AddComment(ctx, issue.ID, "system", "🤖 自动预开发启动失败: "+err.Error())
+	}
 }
 
 func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
@@ -1538,5 +1563,3 @@ func (s *Server) handleSaveProjectDoc(w http.ResponseWriter, r *http.Request) {
 		"message": "文档已成功保存",
 	})
 }
-
-

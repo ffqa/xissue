@@ -4,8 +4,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"gopkg.in/yaml.v3"
@@ -39,8 +41,9 @@ type RunnerConfig struct {
 
 // MonitorConfig controls branch and PR background monitoring and external notifications.
 type MonitorConfig struct {
-	Enabled          bool   `yaml:"enabled" json:"enabled"`                         // 监控总开关 (true=运行, false=暂停)
-	ActiveHours      string `yaml:"activeHours" json:"activeHours"`                 // 活跃时间段，如 "08:00-20:00" 或 "8-20"，留空全天
+	Enabled          bool   `yaml:"enabled" json:"enabled"`                                       // 监控总开关 (true=运行, false=暂停)
+	ActiveHours      string `yaml:"activeHours" json:"activeHours"`                               // 活跃时间段，如 "08:00-20:00" 或 "8-20"，留空全天
+	PublicURL        string `yaml:"publicUrl,omitempty" json:"publicUrl,omitempty"`               // 外部通知里链接使用的访问地址，如 http://100.64.0.2:7789；留空自动推导
 	TelegramBotToken string `yaml:"telegramBotToken,omitempty" json:"telegramBotToken,omitempty"` // Telegram Bot Token
 	TelegramChatID   string `yaml:"telegramChatId,omitempty" json:"telegramChatId,omitempty"`     // Telegram Chat ID
 	WebhookURL       string `yaml:"webhookUrl,omitempty" json:"webhookUrl,omitempty"`             // 通用 Webhook (飞书/企微/钉钉/Slack)
@@ -137,6 +140,76 @@ func (c *Config) MonitorSnapshot() MonitorConfig {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.Monitor
+}
+
+// PublicBaseURL returns the externally reachable base URL used in notifications.
+// An explicit monitor.publicUrl wins; otherwise it is derived from the listen
+// address (unspecified hosts fall back to a non-loopback interface when present).
+func (c *Config) PublicBaseURL() string {
+	mon := c.MonitorSnapshot()
+	if raw := strings.TrimSpace(mon.PublicURL); raw != "" {
+		if !strings.Contains(raw, "://") {
+			raw = "http://" + raw
+		}
+		return strings.TrimRight(raw, "/")
+	}
+	listen := strings.TrimSpace(c.Listen)
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil {
+		if listen == "" {
+			return "http://127.0.0.1:7789"
+		}
+		return "http://" + strings.TrimRight(listen, "/")
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = firstNonLoopbackIPv4()
+	}
+	return "http://" + net.JoinHostPort(host, port)
+}
+
+// AbsoluteURL turns an in-app path (e.g. /projects/2?watch=5) into a clickable
+// absolute URL for external notification channels.
+func (c *Config) AbsoluteURL(target string) string {
+	target = strings.TrimSpace(target)
+	if target == "" || strings.Contains(target, "://") {
+		return target
+	}
+	base := c.PublicBaseURL()
+	if strings.HasPrefix(target, "/") {
+		return base + target
+	}
+	return base + "/" + target
+}
+
+func firstNonLoopbackIPv4() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return "127.0.0.1"
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			}
+			if ip == nil || ip.IsLoopback() || ip.To4() == nil {
+				continue
+			}
+			return ip.String()
+		}
+	}
+	return "127.0.0.1"
 }
 
 // EditorTemplate returns the configured editor URL template.

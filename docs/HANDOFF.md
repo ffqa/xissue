@@ -87,6 +87,25 @@
 - **验证结果**:
   - `go vet ./...`、`go test -count=1 -race ./...`、`gofmt`、前端 `tsc --noEmit` 全部通过；macOS/Linux/Windows 交叉编译通过。
 
+### 2.6 通知可点击链接与远程 Issue 自动预开发（v0.2.13）
+- **外部通知链接绝对化**:
+  - 之前 Telegram / Webhook 通知中的 `link` 是站内相对路径（如 `/projects`），在手机或群聊里无法点击；
+  - `config.MonitorConfig` 新增 `publicUrl`，`Config.PublicBaseURL()` / `AbsoluteURL()` 统一生成绝对链接；未配置时按监听地址推导，监听 `0.0.0.0` 时自动选择本机非回环 IPv4；
+  - Web「策略与通知」面板新增「外部访问地址」输入项，保存到 `monitor.publicUrl`；
+  - 外部通知发送入口 `sendExternalNotification` 统一转换链接，站内推送与应用内通知保持相对路径。
+- **远程 Issue 自动预开发（PR 审核制）**:
+  - `projects` 新增 `auto_develop`、`auto_develop_agent`、`auto_develop_labels` 三个字段（含老库 `ALTER TABLE` 迁移）；
+  - `POST /api/projects/{id}/sync` 导入**新** Issue 后，按标签/标题/正文关键字匹配（英文按词边界匹配，避免 `debug` 命中 `bug`）；命中则启动预开发 Run；
+  - `runs` 新增 `auto_pr` 标记，仅该标记的 Run 在成功完成后自动走 Submit：
+    - 有代码改动：强制 `mode=pr` 创建 PR，**不执行 merge_local**，Issue 进入 `pr_open` 待管理员审核；
+    - 无代码改动：写入系统评论说明未创建 PR，等待人工补充信息；
+  - 预开发 Agent 的提示词要求先判断需求真伪，信息不足时不改代码，并且禁止合并、推送目标分支或自行创建 PR；
+  - 项目设置面板新增开关、预开发 Agent 选择与触发标签/关键字配置。
+- **验证结果**:
+  - 新增 `internal/runner/autodevelop_test.go`（关键字/词边界/提示词/默认 Agent）与 `internal/store/autodevelop_test.go`（项目字段迁移、Run `auto_pr` 持久化）；
+  - 本地桩服务实测：同步命中 Issue 后创建 `autoPr=true` 的 Run；监控测试通知 Webhook 收到 `http://<publicUrl>/projects` 绝对链接；
+  - `go test -count=1 -race ./...`、前端 `tsc --noEmit`、`vite build` 全部通过。
+
 ---
 
 ## 3. 核心架构与关键代码索引
@@ -116,6 +135,7 @@ flowchart TD
 | **跨平台信号** | [`cmd/xissue/kill_posix.go`](file:///Users/gouki/server/ide/cmd/xissue/kill_posix.go)<br>[`cmd/xissue/kill_windows.go`](file:///Users/gouki/server/ide/cmd/xissue/kill_windows.go) | 跨平台进程优雅终止与强制退出封装 |
 | **环境与命令** | [`internal/runner/env.go`](file:///Users/gouki/server/ide/internal/runner/env.go) | 智能扫描用户目录并增强 PATH，`LookupAgentBinary` 解析可执行路径 |
 | **Agent 调度** | [`internal/runner/runner.go`](file:///Users/gouki/server/ide/internal/runner/runner.go) | Agent 模型探测（带 `probeError`）、Run 状态机、工作区管理 |
+| **自动预开发** | [`internal/runner/autodevelop.go`](file:///Users/gouki/server/ide/internal/runner/autodevelop.go) | Issue 需求/Bug 判定、预开发提示词、完成后自动创建 PR（不合并） |
 | **知识库/Wiki** | [`internal/knowledge/knowledge.go`](file:///Users/gouki/server/ide/internal/knowledge/knowledge.go) | Wiki 与本地 Docs 递归扫描、全文搜索、正文读取与持久化保存 |
 | **知识库测试** | [`internal/knowledge/knowledge_test.go`](file:///Users/gouki/server/ide/internal/knowledge/knowledge_test.go) | 包含深层 Wiki 目录与搜索的自动化测试 |
 | **自动化引擎** | [`internal/automation/engine.go`](file:///Users/gouki/server/ide/internal/automation/engine.go) | 自动化规则评估、分支推送触发、动作派发与 Hook 事件派发 |

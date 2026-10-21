@@ -61,6 +61,28 @@ func TestConcurrentConfigAccessAndAtomicSave(t *testing.T) {
 	}
 }
 
+func TestPublicBaseURLAndAbsoluteURL(t *testing.T) {
+	cfg := Default()
+	cfg.Listen = "127.0.0.1:7789"
+	if got := cfg.PublicBaseURL(); got != "http://127.0.0.1:7789" {
+		t.Fatalf("derived base URL = %q", got)
+	}
+	if got := cfg.AbsoluteURL("/projects/2?watch=5"); got != "http://127.0.0.1:7789/projects/2?watch=5" {
+		t.Fatalf("absolute URL = %q", got)
+	}
+	if got := cfg.AbsoluteURL("https://example.com/x"); got != "https://example.com/x" {
+		t.Fatalf("absolute URL should stay unchanged, got %q", got)
+	}
+
+	cfg.Monitor = MonitorConfig{PublicURL: "100.64.0.2:7789/"}
+	if got := cfg.PublicBaseURL(); got != "http://100.64.0.2:7789" {
+		t.Fatalf("explicit base URL = %q", got)
+	}
+	if got := cfg.AbsoluteURL("/projects/1"); got != "http://100.64.0.2:7789/projects/1" {
+		t.Fatalf("explicit absolute URL = %q", got)
+	}
+}
+
 func TestAgentSnapshotsAreDefensiveCopies(t *testing.T) {
 	cfg := Default()
 	cfg.Agents = map[string]AgentConfig{

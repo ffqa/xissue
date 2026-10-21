@@ -37,6 +37,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
 
   const [cfgEnabled, setCfgEnabled] = useState(true);
   const [cfgActiveHours, setCfgActiveHours] = useState('08:00-20:00');
+  const [cfgPublicUrl, setCfgPublicUrl] = useState('');
   const [cfgTgToken, setCfgTgToken] = useState('');
   const [cfgTgChatId, setCfgTgChatId] = useState('');
   const [cfgWebhookUrl, setCfgWebhookUrl] = useState('');
@@ -45,6 +46,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
     if (configQ.data) {
       setCfgEnabled(configQ.data.enabled ?? true);
       setCfgActiveHours(configQ.data.activeHours || '08:00-20:00');
+      setCfgPublicUrl(configQ.data.publicUrl || '');
       setCfgTgToken(configQ.data.telegramBotToken || '');
       setCfgTgChatId(configQ.data.telegramChatId || '');
       setCfgWebhookUrl(configQ.data.webhookUrl || '');
@@ -117,6 +119,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
     updateConfigMut.mutate({
       enabled: nextEnabled,
       activeHours: cfgActiveHours,
+      publicUrl: cfgPublicUrl,
       telegramBotToken: cfgTgToken,
       telegramChatId: cfgTgChatId,
       webhookUrl: cfgWebhookUrl,
@@ -127,6 +130,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
     updateConfigMut.mutate({
       enabled: cfgEnabled,
       activeHours: cfgActiveHours,
+      publicUrl: cfgPublicUrl,
       telegramBotToken: cfgTgToken,
       telegramChatId: cfgTgChatId,
       webhookUrl: cfgWebhookUrl,
@@ -291,6 +295,20 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
                 />
                 <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
                   非工作时间段自动休眠，停止后台轮询以节省资源与电量。
+                </span>
+              </label>
+
+              <label className="field" style={{ margin: 0 }}>
+                外部访问地址 (通知链接)
+                <input
+                  type="text"
+                  className="sm mono"
+                  placeholder="如 http://100.64.0.2:7789"
+                  value={cfgPublicUrl}
+                  onChange={(e) => setCfgPublicUrl(e.target.value)}
+                />
+                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
+                  通知里的链接需要它才能点击；留空时按监听地址自动推导（0.0.0.0 时取本机非回环 IP）。
                 </span>
               </label>
 

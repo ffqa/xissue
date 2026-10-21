@@ -121,6 +121,7 @@ func (r *Runner) SendTestNotification(ctx context.Context) (map[string]any, erro
 
 func (r *Runner) sendExternalNotification(kind, title, body, link string) {
 	mon := r.cfg.MonitorSnapshot()
+	link = r.cfg.AbsoluteURL(link)
 	tgToken := strings.TrimSpace(mon.TelegramBotToken)
 	tgChatID := strings.TrimSpace(mon.TelegramChatID)
 	webhookURL := strings.TrimSpace(mon.WebhookURL)

@@ -118,14 +118,14 @@ type cachedAgentModels struct {
 
 // Runner manages local execution of runs.
 type Runner struct {
-	cfg        *config.Config
-	st         *store.Store
-	notify     Notifier
-	budget     *budget
-	mu         sync.Mutex
-	active          map[int64]*activeRun              // runID -> activeRun
-	warm            map[int64]*warmSession            // runID -> idle warm ACP process
-	allowSet        map[int64]map[string]bool         // runID -> allowed ACP tool kinds
+	cfg             *config.Config
+	st              *store.Store
+	notify          Notifier
+	budget          *budget
+	mu              sync.Mutex
+	active          map[int64]*activeRun      // runID -> activeRun
+	warm            map[int64]*warmSession    // runID -> idle warm ACP process
+	allowSet        map[int64]map[string]bool // runID -> allowed ACP tool kinds
 	ctx             context.Context
 	cancel          context.CancelFunc
 	stopOnce        sync.Once
@@ -507,6 +507,16 @@ func (r *Runner) ListAgentModels(ctx context.Context, agentName string, refresh 
 
 // StartRun creates a new Run record and launches the agent asynchronously.
 func (r *Runner) StartRun(ctx context.Context, issueID int64, agentName, modelName, extraPrompt string) (*domain.Run, error) {
+	return r.startRun(ctx, issueID, agentName, modelName, extraPrompt, false)
+}
+
+// StartAutoDevelopRun starts a run whose changes are submitted as a PR (never
+// merged) once the agent finishes.
+func (r *Runner) StartAutoDevelopRun(ctx context.Context, issueID int64, agentName, extraPrompt string) (*domain.Run, error) {
+	return r.startRun(ctx, issueID, agentName, "", extraPrompt, true)
+}
+
+func (r *Runner) startRun(ctx context.Context, issueID int64, agentName, modelName, extraPrompt string, autoPR bool) (*domain.Run, error) {
 	ac, ok := r.cfg.Agent(agentName)
 	if !ok {
 		return nil, fmt.Errorf("unknown agent %q", agentName)
@@ -542,7 +552,11 @@ func (r *Runner) StartRun(ctx context.Context, issueID int64, agentName, modelNa
 	}
 	branch := fmt.Sprintf("agent/%s-run-%d", sanitizeBranch(issue.Key), run.ID)
 	workdir := filepath.Join(r.cfg.RunsDir(), fmt.Sprintf("run-%d", run.ID))
-	run, err = r.st.UpdateRun(ctx, run.ID, store.RunUpdate{Branch: &branch, Workdir: &workdir})
+	upd := store.RunUpdate{Branch: &branch, Workdir: &workdir}
+	if autoPR {
+		upd.AutoPR = &autoPR
+	}
+	run, err = r.st.UpdateRun(ctx, run.ID, upd)
 	if err != nil {
 		return nil, err
 	}
@@ -790,6 +804,7 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 	runID := act.runID
 	issueID := act.issueID
 	ctx := act.ctx
+	autoSubmit := false
 	defer func() {
 		if rec := recover(); rec != nil {
 			r.settleOpenTools(act, "failed")
@@ -801,6 +816,9 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 		delete(r.allowSet, runID)
 		r.mu.Unlock()
 		close(act.done)
+		if autoSubmit && !isResume {
+			go r.autoSubmitPR(runID)
+		}
 	}()
 
 	memMB := ac.MemoryMB
@@ -1004,6 +1022,9 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 		_, _ = r.ArchiveRun(context.Background(), run.ID)
 	}()
 	r.pushNotification("run_done", fmt.Sprintf("[%s] 执行完成，待验收", issue.Key), issue.Title, fmt.Sprintf("/issues/%d", issueID), "")
+	if run.AutoPR {
+		autoSubmit = true
+	}
 }
 
 func (r *Runner) prepareWorkspace(ctx context.Context, run *domain.Run, proj *domain.Project, issue *domain.Issue) error {

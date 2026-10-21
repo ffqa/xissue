@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.12` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.13` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.12`
+- **最新发布版本**: `v0.2.13`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -178,7 +178,7 @@ curl -sS http://127.0.0.1:7789/api/health
 curl -sS "http://127.0.0.1:7789/api/agents/opencode/models?refresh=1"
 
 # 6. 发布后同步本地 Homebrew Tap（brew info 读的是本地 clone，不会自动 fetch）
-GH_TOKEN="$(gh auth token)" bash scripts/brew-publish.sh v0.2.12
+GH_TOKEN="$(gh auth token)" bash scripts/brew-publish.sh v0.2.13
 git -C "$(brew --repo ffqa/tap)" fetch origin main
 git -C "$(brew --repo ffqa/tap)" reset --hard origin/main
 brew info ffqa/tap/xissue

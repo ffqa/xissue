@@ -193,6 +193,21 @@ export default function ProjectPage() {
     onError: (e) => toast.error((e as Error).message),
   });
 
+  const saveRulesMut = useMutation({
+    mutationFn: (rules: AutomationRule[]) => api.updateProject(id, { automationRules: rules }),
+    onSuccess: (updated) => {
+      qc.setQueryData(qk.project(id), updated);
+    },
+    onError: (e) => toast.error(`规则自动保存失败: ${(e as Error).message}`),
+  });
+
+  // Rules are persisted as soon as they are added/toggled/deleted, so closing
+  // the settings dialog (or navigating away) can never discard them.
+  const persistRules = (rules: AutomationRule[]) => {
+    setCfgAutomationRules(rules);
+    saveRulesMut.mutate(rules);
+  };
+
   const defaultAgent =
     (agentsQ.data ?? []).find((a) => a.available && a.name === 'opencode')?.name ||
     (agentsQ.data ?? []).find((a) => a.available)?.name ||
@@ -1556,7 +1571,7 @@ export default function ProjectPage() {
                   <div>
                     <b style={{ fontSize: 14 }}>🅰️ 声明式自动化规则 (内置免代码)</b>
                     <span className="small dim" style={{ marginLeft: 8 }}>
-                      识别指定作者的 Report 或特定评论，自动执行合并 PR、完成 Issue 或拉取代码
+                      识别指定作者的 Report 或特定评论，自动执行合并 PR、完成 Issue 或拉取代码（规则改动即时保存）
                     </span>
                   </div>
                   <button
@@ -1794,9 +1809,9 @@ export default function ProjectPage() {
                             actions: acts,
                           };
 
-                          setCfgAutomationRules((prev) => [...prev, newRule]);
+                          persistRules([...cfgAutomationRules, newRule]);
                           setNewRuleOpen(false);
-                          toast.success(`已添加规则「${newRule.name}」，记得点击下方保存设置`);
+                          toast.success(`已添加规则「${newRule.name}」并自动保存`);
                         }}
                       >
                         加入规则列表
@@ -1842,8 +1857,8 @@ export default function ProjectPage() {
                             checked={rule.enabled}
                             onChange={(e) => {
                               const checked = e.target.checked;
-                              setCfgAutomationRules((prev) =>
-                                prev.map((r, i) => (i === idx ? { ...r, enabled: checked } : r))
+                              persistRules(
+                                cfgAutomationRules.map((r, i) => (i === idx ? { ...r, enabled: checked } : r))
                               );
                             }}
                             title={rule.enabled ? '已启用 (点击停用)' : '已停用 (点击启用)'}
@@ -1916,7 +1931,7 @@ export default function ProjectPage() {
                           className="sm ghost"
                           style={{ color: 'var(--red)', padding: '2px 8px' }}
                           onClick={() => {
-                            setCfgAutomationRules((prev) => prev.filter((_, i) => i !== idx));
+                            persistRules(cfgAutomationRules.filter((_, i) => i !== idx));
                           }}
                           title="删除此规则"
                         >

@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.13` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.14` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.13`
+- **最新发布版本**: `v0.2.14`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -106,6 +106,20 @@
   - 本地桩服务实测：同步命中 Issue 后创建 `autoPr=true` 的 Run；监控测试通知 Webhook 收到 `http://<publicUrl>/projects` 绝对链接；
   - `go test -count=1 -race ./...`、前端 `tsc --noEmit`、`vite build` 全部通过。
 
+### 2.7 自动化 A 区规则丢失修复（v0.2.14）
+- **现象**: 在项目设置的「🅰️ 声明式自动化规则」中填写并「加入规则列表」后，关闭弹窗再进入，规则消失。
+- **定位**:
+  - 后端 `PATCH /api/projects/{id}` 与 SQLite `automation_rules` 均正常，直接调用 API 写入后可持久化与重启读取；
+  - 根因在前端：新增/启停/删除规则只修改 `cfgAutomationRules` 本地状态，必须再点击弹窗底部「保存设置」才会提交；通过 Esc、点击遮罩或「取消」关闭时改动全部丢弃。
+- **修复**:
+  - 新增 `saveRulesMut` 与 `persistRules()`；规则的**新增、启用/停用、删除**都会立即调用 `PATCH /api/projects/{id}` 自动保存；
+  - 自动保存不会关闭弹窗，失败时 Toast 提示，原「保存设置」仍保留作为兜底；
+  - 面板文案标注「规则改动即时保存」。
+- **验证**:
+  - 浏览器实测：新增规则后不点「保存设置」，直接点「取消」关闭并重新进入，规则仍在；
+  - 自动保存后立即查询 API 与 SQLite，规则已落库；
+  - `tsc --noEmit`、`vite build` 通过。
+
 ---
 
 ## 3. 核心架构与关键代码索引
@@ -178,7 +192,7 @@ curl -sS http://127.0.0.1:7789/api/health
 curl -sS "http://127.0.0.1:7789/api/agents/opencode/models?refresh=1"
 
 # 6. 发布后同步本地 Homebrew Tap（brew info 读的是本地 clone，不会自动 fetch）
-GH_TOKEN="$(gh auth token)" bash scripts/brew-publish.sh v0.2.13
+GH_TOKEN="$(gh auth token)" bash scripts/brew-publish.sh v0.2.14
 git -C "$(brew --repo ffqa/tap)" fetch origin main
 git -C "$(brew --repo ffqa/tap)" reset --hard origin/main
 brew info ffqa/tap/xissue

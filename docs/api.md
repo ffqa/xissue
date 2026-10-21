@@ -4,9 +4,13 @@
 
 ## 鉴权
 
-- 默认无鉴权（监听 127.0.0.1 / Tailscale）。
+- 默认无 token（监听 127.0.0.1 / Tailscale），但仍有跨站防护：
+  - 校验 `Host` 头，只接受 `127.0.0.1` / `localhost` / `::1` 或与 `-listen` 一致的主机（防 DNS rebinding）；
+  - 所有状态变更请求（`POST` / `PUT` / `PATCH` / `DELETE`）若带 `Origin`，必须是同源；
+  - 状态变更请求还必须带 `X-XIssue: 1` 自定义头，或提供有效 Bearer token（`/api/mcp` 除外，供 CLI/IDE 调用）。
 - 若配置了 `token`：请求需带 `Authorization: Bearer <token>`，或 Cookie `xissue_token=<token>`。
-  访问 `/?token=<token>` 时服务端会写入该 Cookie 并重定向到 `/`。WebSocket 依赖 Cookie。
+  访问 `/?token=<token>` 时服务端会写入该 Cookie 并重定向到 `/`。WebSocket 依赖 Cookie，并校验 Origin。
+- `GET /api/fs/browse` / `GET /api/fs/inspect` 无根目录白名单；配置 token 后应视为敏感接口。
 
 ## 类型
 
@@ -95,6 +99,8 @@ interface RunEvent {
 | stderr / system | `{ text: string }` |
 
 ## 接口
+
+> 下表为 M1 阶段的核心接口，并非完整路由清单；`internal/server/server.go` 中注册的 agents 管理、监控配置、watches、docs/Wiki、cherry-pick、plugins、notifications、MCP 等端点未全部列出。以代码注册表为准。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|

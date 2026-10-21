@@ -26,7 +26,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.11"
+const Version = "0.2.12"
 
 type Server struct {
 	cfg    *config.Config
@@ -254,7 +254,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                true,
 		"version":           Version,
-		"editorUrlTemplate": s.cfg.EditorURLTemplate,
+		"editorUrlTemplate": s.cfg.EditorTemplate(),
 	})
 }
 
@@ -1314,7 +1314,7 @@ func (s *Server) handleMonitorStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetMonitorConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.cfg.Monitor)
+	writeJSON(w, http.StatusOK, s.cfg.MonitorSnapshot())
 }
 
 func (s *Server) handleUpdateMonitorConfig(w http.ResponseWriter, r *http.Request) {
@@ -1332,7 +1332,7 @@ func (s *Server) handleUpdateMonitorConfig(w http.ResponseWriter, r *http.Reques
 		status = "已暂停"
 	}
 	s.runner.LogMonitor("EVENT", "watcher", fmt.Sprintf("监控配置已更新: 状态=%s, 活跃时段=%s", status, body.ActiveHours))
-	writeJSON(w, http.StatusOK, s.cfg.Monitor)
+	writeJSON(w, http.StatusOK, s.cfg.MonitorSnapshot())
 }
 
 func (s *Server) handleTestNotify(w http.ResponseWriter, r *http.Request) {

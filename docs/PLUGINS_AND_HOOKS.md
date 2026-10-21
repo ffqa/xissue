@@ -39,16 +39,18 @@ flowchart TD
 
 ## 🔌 二、全生命周期注入点矩阵 (Lifecycle Injection Points)
 
-无论编写 Layer 2 的 Hook 脚本，还是 Layer 3 的插件，均监听以下标准注入点：
+无论编写 Layer 2 的 Hook 脚本，还是 Layer 3 的插件，均监听以下标准注入点（下表为**当前代码实际派发**的事件）：
 
 | 注入点 (Event Name) | 对应 Hook 脚本名 | 触发时机与典型应用场景 |
 | :--- | :--- | :--- |
 | `branch_push` | `on-branch-push` | **监控分支收到新代码推送**：触发后续提交追踪、自动建 Issue、拉取镜像、运行 Agent 分析审查 |
 | `pr_merged` | `on-pr-merged` | **PR 成功合并到目标分支**：记录合并基准点、重置后续提交计数、触发部署流水线或通知 |
-| `notification_dispatch`| `on-notify` | **系统发出通知**：接管或扩展通知渠道（扩展飞书卡片、企业微信、钉钉加签、Bark、macOS 桌面横幅等） |
-| `pr_created` | `on-pr-created` | **本地任务提交并创建新 PR 成功**：自动向团队群推送 PR 审查邀请、触发 CI 预检 |
+| `notification_dispatch`| （仅插件，项目 Hook 未接入） | **系统发出通知**：接管或扩展通知渠道（扩展飞书卡片、企业微信、钉钉加签、Bark、macOS 桌面横幅等） |
 | `pr_comment` | `on-pr-comment` | **PR 收到新评论或检查报告**：识别 QA 报告或 Bot 指令自动合入 PR 或打标签 |
 | `pr_review` | `on-pr-review` | **PR 收到审核批准 (Review)**：指定审核人 Approved 后自动触发合入 |
+| `pr_created` | `on-pr-created` | **规划中**：目前仅在 Hook 检测清单中展示，提交 PR 时不会派发 |
+
+> 规划中的注入点（尚未实现派发）：`issue_created`、`issue_status_changed`、`run_started`、`run_finished`、`tool_call_intercept`。请勿依赖这些事件编写线上插件。
 
 ---
 
@@ -238,10 +240,14 @@ urllib.request.urlopen(bark_url)
 
 ## 🛡️ 六、执行安全与沙箱保护机制
 
-1. **执行超时熔断**：每个 Hook 或插件进程拥有 **15 秒执行超时保护**，超时后进程树自动被 SIGKILL 终止，绝不挂起主服务或阻塞监控循环；
-2. **安全信任隔离**：外部未认证人员发起的 PR 评论，受安全保护策略限制，禁止触发本地 Layer 2 脚本，杜绝外部 RCE；
-3. **独立进程空间**：插件以独立子进程运行，崩溃或异常退出不会影响 xIssue 自身稳定性；
-4. **统一日志审计**：插件的 `stderr` 输出与执行状态会实时记录在 xIssue 日志系统（`~/.xissue/xissue.log`），可在 Web 监控面板的「实时日志」中直观排查。
+1. **执行超时熔断**：每个 Hook 或插件进程拥有 **15 秒执行超时保护**；Unix 下命令以独立进程组启动，超时后整组 SIGKILL，孙进程不会残留（Windows 仅终止直接子进程）；
+2. **安全信任边界**：
+   - 项目级 Layer 2 Hook 仅从**本地目录添加的仓库**执行；远程镜像仓库、run worktree 中的 `.xissue/hooks` 不会被执行；
+   - `pr_comment` / `pr_review` 只有评论作者等于 PR 作者或被任意自动化规则显式点名的作者才会触发 Hook；
+   - `branch_push` 仅对本地目录仓库执行，且需满足 `shouldRunProjectHooks`（非本地来源还要求作者属于规则白名单）；
+3. **清单失败即禁用**：`plugin.yaml` 读取或解析失败时插件默认 `Enabled=false`，不会被意外启用；
+4. **独立进程空间**：插件以独立子进程运行，崩溃或异常退出不会影响 xIssue 自身稳定性；
+5. **日志审计**：Hook/Plugin 非零退出时，其 `stderr` 会随错误写入监控日志；目前不会逐行实时转发插件输出。
 
 ---
 

@@ -22,6 +22,7 @@ build: web server ## 完整构建前端静态资源并内嵌打包为 bin/xissue
 web: ## 仅类型检查并构建前端 (web -> internal/server/dist)
 	./web/node_modules/.bin/tsc -p web/tsconfig.json --noEmit
 	./web/node_modules/.bin/vite build web
+	@mkdir -p internal/server/dist && touch internal/server/dist/.gitkeep
 
 server: ## 仅编译 Go 后端二进制 (bin/xissue，使用已构建的前端产物)
 	go build -o $(BINARY) ./cmd/xissue

@@ -83,19 +83,19 @@ chmod +x ~/.local/bin/xissue
   - 看板卡片仅展示**标题**与**两行摘要**，干净清爽；完整描述、评论、状态下拉与代码审查均在详情页内操作。
   - 支持直接拖拽卡片跨列流转：将卡片拖入 **⚡ 执行中 (Running)** 列即可自动唤醒默认 AI Agent 开始执行任务。
 - **全 IDE / CLI Agent 通用 MCP 接入 (`xissue mcp`)**：
-  - 支持 `xissue mcp --install` 一键注入到 Claude Code、Cursor、Windsurf、VS Code Copilot、OpenCode、Gemini CLI、Antigravity、Qoder CLI (`qoderclicn`)、Cline、Roo Code、Zed 等。
+  - 支持 `xissue mcp --install` 一键注入到 Claude Code、Cursor、Windsurf、OpenCode、Qoder CLI (`qoderclicn`) 等已检测到的客户端（可在 Web 界面或 `GET /api/mcp/status` 查看本机支持的目标）。
   - 支持通过 MCP 直接创建任务并传 `autoRun=true` 立即调度后台 Agent。
 - **通用 ACP Agent 驱动 & 热会话复用（Warm ACP Session）**：
   - 通过 Agent Client Protocol (stdio JSON-RPC) 统一对接 `opencode`、`omp`、`codex` 等 Agent。
   - 首轮完成后进程自动进入 20 分钟热驻留池；发送追加指令（“继续”）时直接在原进程内热恢复上下文，**0 进程重启、0 重复历史 Token 消耗**。
 - **🔔 通知中心 + 分支监控 (Watch) + PR 状态自动同步**：
-  - 监控任意仓库分支推送动态，发现新提交立即弹窗/响铃通知，并可一键带入提交 SHA 打开 **🍒 Cherry-Pick 创建 PR**。
+  - 监控任意仓库分支推送动态，发现新提交立即发送应用内通知；可在「📜 提交记录」中查看最近 25 条 Commit、复制 SHA、跳转平台或基于该提交新建 Issue（Cherry-Pick 入口位于项目页顶部菜单）。
   - 自动轮询同步 `PR Open` 任务的远端合并/关闭状态，合并后自动流转至 `Done`。
 - **🍒 Cherry-Pick 创建 PR & 标准改动记录生成**：
   - 支持在提交审查或 Cherry-Pick 时自动生成团队规范格式改动记录（`本次改动：a. / b. / 分支 / PR / 备注`），一键复制备查。
 - **⚡ ABC 三层自动化与插件扩展架构**：
   - **🅰️ 声明式规则 (Layer 1)**：在项目设置中直接配置特定审核人员（如 `@qa-team` 或 `@release-bot`）的 Report 格式与正则模式，满足条件自动触发合并 PR (Squash/Merge)、将 Issue 状态流转为 `Done`、自动 Pull 本地代码及桌面通知；
-  - **🅱️ 项目级 Hooks 脚本 (Layer 2)**：在代码库根目录放置 `.xissue/hooks/on-pr-comment` 或 `on-pr-review` 脚本，接收 stdin JSON 上下文并自由定制私有流转逻辑（*注：仅对以本地目录添加的仓库生效；纯远程 Git URL 镜像仓库无本地工作树，建议使用 Layer 1 规则或 Layer 3 全局插件*）；
+  - **🅱️ 项目级 Hooks 脚本 (Layer 2)**：在代码库根目录放置 `.xissue/hooks/on-pr-comment` 或 `on-pr-review` 脚本，接收 stdin JSON 上下文并自由定制私有流转逻辑（*注：本项目 Hook 仅对以本地目录添加的仓库生效；远程镜像仓库及 `pr_merged` 事件不执行仓库内脚本，避免外部合并触发本地代码执行。`branch_push` 仅本地仓库执行，且受自动化规则作者门控*）；
   - **🅲️ 规范化生态插件 (Layer 3)**：支持在全局 `~/.xissue/plugins/` 放置带 `plugin.yaml` 清单的独立插件，与社区共享自动化扩展。
 - **内置审查与暗色/亮色主题切换**：
   - Web UI 内嵌本地打包的 Monaco DiffEditor，支持行内编辑保存、一键跳回 VSCode/Cursor。

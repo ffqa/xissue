@@ -3,6 +3,8 @@ package runner
 import (
 	"testing"
 	"time"
+
+	"github.com/xpier/xissue/internal/domain"
 )
 
 func TestIsWithinActiveHours(t *testing.T) {
@@ -75,5 +77,32 @@ func TestIsWithinActiveHours(t *testing.T) {
 				t.Errorf("IsWithinActiveHours(%q, %v) = %v; want %v", tt.raw, tt.t, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestShouldRunProjectHooks(t *testing.T) {
+	localDir := t.TempDir()
+	localRepo := &domain.Repo{RemoteURL: localDir}
+	remoteRepo := &domain.Repo{RemoteURL: "https://github.com/acme/repo.git"}
+	rules := []domain.AutomationRule{{
+		Enabled:    true,
+		Trigger:    "branch_push",
+		Conditions: domain.RuleConditions{Author: "@release-bot"},
+	}}
+
+	if !shouldRunProjectHooks(localRepo, localDir, "anyone", nil) {
+		t.Fatal("local working copy should be allowed to run hooks")
+	}
+	if shouldRunProjectHooks(remoteRepo, "/tmp/worktree", "stranger", rules) {
+		t.Fatal("remote repository with untrusted author must not run hooks")
+	}
+	if !shouldRunProjectHooks(remoteRepo, "/tmp/worktree", "release-bot", rules) {
+		t.Fatal("remote repository with a trusted rule author should run hooks")
+	}
+	if shouldRunProjectHooks(remoteRepo, "", "release-bot", rules) {
+		t.Fatal("missing workdir must not run hooks")
+	}
+	if shouldRunProjectHooks(nil, localDir, "anyone", nil) {
+		t.Fatal("nil repo must not run hooks")
 	}
 }

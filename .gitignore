@@ -1,8 +1,7 @@
 bin/
-dist/
+/dist/
 web/node_modules/
 .DS_Store
 internal/server/dist/*
-!internal/server/dist/index.html
 !internal/server/dist/.gitkeep
 .qoder/

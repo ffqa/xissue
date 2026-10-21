@@ -1,11 +1,11 @@
 {
   "name": "xissue-web",
   "private": true,
-  "version": "0.2.11",
+  "version": "0.2.12",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node -e \"require('fs').writeFileSync('../internal/server/dist/.gitkeep','')\"",
     "preview": "vite preview"
   },
   "dependencies": {

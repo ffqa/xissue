@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -47,6 +48,7 @@ type MonitorConfig struct {
 
 // Config is the root configuration.
 type Config struct {
+	mu                sync.RWMutex
 	Path              string                 `yaml:"-" json:"-"`
 	Listen            string                 `yaml:"listen"`
 	Token             string                 `yaml:"token"`
@@ -57,6 +59,98 @@ type Config struct {
 	Permissions       PermissionPolicy       `yaml:"permissions"`
 	Runner            RunnerConfig           `yaml:"runner"`
 	Monitor           MonitorConfig          `yaml:"monitor"`
+}
+
+func cloneAgent(ac AgentConfig) AgentConfig {
+	ac.Args = append([]string(nil), ac.Args...)
+	ac.Models = append([]string(nil), ac.Models...)
+	if ac.Env != nil {
+		env := make(map[string]string, len(ac.Env))
+		for k, v := range ac.Env {
+			env[k] = v
+		}
+		ac.Env = env
+	}
+	return ac
+}
+
+// Agent returns a defensive copy of one agent configuration.
+func (c *Config) Agent(name string) (AgentConfig, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	ac, ok := c.Agents[name]
+	if !ok {
+		return AgentConfig{}, false
+	}
+	return cloneAgent(ac), true
+}
+
+// AgentsSnapshot returns a defensive copy of all configured agents.
+func (c *Config) AgentsSnapshot() map[string]AgentConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make(map[string]AgentConfig, len(c.Agents))
+	for name, ac := range c.Agents {
+		out[name] = cloneAgent(ac)
+	}
+	return out
+}
+
+// SetAgent stores an agent configuration and persists config.yaml atomically.
+func (c *Config) SetAgent(name string, ac AgentConfig) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Agents == nil {
+		c.Agents = map[string]AgentConfig{}
+	}
+	c.Agents[name] = cloneAgent(ac)
+	return c.saveLocked()
+}
+
+// DeleteAgent removes an agent configuration and persists config.yaml atomically.
+func (c *Config) DeleteAgent(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.Agents, name)
+	return c.saveLocked()
+}
+
+// RunnerSnapshot returns a copy of the runner settings.
+func (c *Config) RunnerSnapshot() RunnerConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Runner
+}
+
+// PermissionsSnapshot returns a copy of the permission policy.
+func (c *Config) PermissionsSnapshot() PermissionPolicy {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	p := c.Permissions
+	p.AutoAllowKinds = append([]string(nil), c.Permissions.AutoAllowKinds...)
+	p.AlwaysAskPatterns = append([]string(nil), c.Permissions.AlwaysAskPatterns...)
+	return p
+}
+
+// MonitorSnapshot returns a copy of the monitor settings.
+func (c *Config) MonitorSnapshot() MonitorConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Monitor
+}
+
+// EditorTemplate returns the configured editor URL template.
+func (c *Config) EditorTemplate() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.EditorURLTemplate
+}
+
+// ExportMarkdownEnabled reports whether markdown export is enabled.
+func (c *Config) ExportMarkdownEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ExportMarkdown
 }
 
 // DefaultDataDir returns ~/.xissue.
@@ -133,8 +227,14 @@ func Load(path string) (*Config, error) {
 	return cfg, nil
 }
 
-// Save writes the current configuration back to disk.
+// Save writes the current configuration back to disk atomically.
 func (c *Config) Save() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.saveLocked()
+}
+
+func (c *Config) saveLocked() error {
 	path := c.Path
 	if path == "" {
 		path = filepath.Join(c.DataDir, "config.yaml")
@@ -147,7 +247,28 @@ func (c *Config) Save() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, out, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(out); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // Reload re-reads the config file from disk and updates c in-place.
@@ -156,6 +277,8 @@ func (c *Config) Reload() error {
 	if err != nil {
 		return err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.Agents = fresh.Agents
 	c.Permissions = fresh.Permissions
 	c.Runner = fresh.Runner
@@ -167,8 +290,10 @@ func (c *Config) Reload() error {
 
 // UpdateMonitor updates the monitor configuration and writes config.yaml back to disk.
 func (c *Config) UpdateMonitor(m MonitorConfig) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.Monitor = m
-	return c.Save()
+	return c.saveLocked()
 }
 
 // Path helpers.

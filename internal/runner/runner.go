@@ -179,10 +179,9 @@ func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 
 // ListAgents returns configured agents and whether their command is installed.
 func (r *Runner) ListAgents() []AgentStatus {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	out := make([]AgentStatus, 0, len(r.cfg.Agents))
-	for name, ac := range r.cfg.Agents {
+	agents := r.cfg.AgentsSnapshot()
+	out := make([]AgentStatus, 0, len(agents))
+	for name, ac := range agents {
 		_, err := LookupAgentBinary(ac.Command)
 		args := ac.Args
 		if args == nil {
@@ -250,11 +249,7 @@ func (r *Runner) UpsertAgent(name string, ac config.AgentConfig) (*AgentStatus, 
 		ac.MemoryMB = 500
 	}
 
-	r.mu.Lock()
-	if r.cfg.Agents == nil {
-		r.cfg.Agents = map[string]config.AgentConfig{}
-	}
-	oldAgent, existed := r.cfg.Agents[name]
+	oldAgent, existed := r.cfg.Agent(name)
 	if existed && oldAgent.Env != nil && ac.Env != nil {
 		for k, v := range ac.Env {
 			if v == "******" && oldAgent.Env[k] != "" {
@@ -262,10 +257,7 @@ func (r *Runner) UpsertAgent(name string, ac config.AgentConfig) (*AgentStatus, 
 			}
 		}
 	}
-	r.cfg.Agents[name] = ac
-	err := r.cfg.Save()
-	r.mu.Unlock()
-	if err != nil {
+	if err := r.cfg.SetAgent(name, ac); err != nil {
 		return nil, err
 	}
 
@@ -288,11 +280,7 @@ func (r *Runner) UpsertAgent(name string, ac config.AgentConfig) (*AgentStatus, 
 
 // DeleteAgent removes an agent from ~/.xissue/config.yaml.
 func (r *Runner) DeleteAgent(name string) error {
-	r.mu.Lock()
-	delete(r.cfg.Agents, name)
-	err := r.cfg.Save()
-	r.mu.Unlock()
-	if err != nil {
+	if err := r.cfg.DeleteAgent(name); err != nil {
 		return err
 	}
 	r.modelMu.Lock()
@@ -303,10 +291,7 @@ func (r *Runner) DeleteAgent(name string) error {
 
 // ReloadAgents reloads ~/.xissue/config.yaml from disk and clears the model discovery cache.
 func (r *Runner) ReloadAgents() ([]AgentStatus, error) {
-	r.mu.Lock()
-	err := r.cfg.Reload()
-	r.mu.Unlock()
-	if err != nil {
+	if err := r.cfg.Reload(); err != nil {
 		return nil, err
 	}
 	r.modelMu.Lock()
@@ -317,9 +302,7 @@ func (r *Runner) ReloadAgents() ([]AgentStatus, error) {
 
 // ListAgentModels probes an agent via ACP (and local config files + bound custom models) for available providers and models.
 func (r *Runner) ListAgentModels(ctx context.Context, agentName string, refresh bool) (*AgentModels, error) {
-	r.mu.Lock()
-	ac, ok := r.cfg.Agents[agentName]
-	r.mu.Unlock()
+	ac, ok := r.cfg.Agent(agentName)
 	if !ok {
 		return nil, fmt.Errorf("unknown agent %q", agentName)
 	}
@@ -524,8 +507,11 @@ func (r *Runner) ListAgentModels(ctx context.Context, agentName string, refresh 
 
 // StartRun creates a new Run record and launches the agent asynchronously.
 func (r *Runner) StartRun(ctx context.Context, issueID int64, agentName, modelName, extraPrompt string) (*domain.Run, error) {
+	ac, ok := r.cfg.Agent(agentName)
+	if !ok {
+		return nil, fmt.Errorf("unknown agent %q", agentName)
+	}
 	r.mu.Lock()
-	ac, ok := r.cfg.Agents[agentName]
 	for _, a := range r.active {
 		if a.issueID == issueID {
 			r.mu.Unlock()
@@ -533,9 +519,6 @@ func (r *Runner) StartRun(ctx context.Context, issueID int64, agentName, modelNa
 		}
 	}
 	r.mu.Unlock()
-	if !ok {
-		return nil, fmt.Errorf("unknown agent %q", agentName)
-	}
 	binPath, err := LookupAgentBinary(ac.Command)
 	if err != nil {
 		return nil, fmt.Errorf("agent binary %q not found in PATH or standard user directories", ac.Command)
@@ -601,9 +584,7 @@ func (r *Runner) SendMessage(ctx context.Context, runID int64, text string) erro
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
-	ac, ok := r.cfg.Agents[run.Agent]
-	r.mu.Unlock()
+	ac, ok := r.cfg.Agent(run.Agent)
 	if !ok {
 		return fmt.Errorf("unknown agent %q", run.Agent)
 	}
@@ -856,7 +837,7 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 	}
 
 	var wrap []string
-	if r.cfg.Runner.UseSystemdRun && runtime.GOOS == "linux" && ac.MemoryMB > 0 {
+	if r.cfg.RunnerSnapshot().UseSystemdRun && runtime.GOOS == "linux" && ac.MemoryMB > 0 {
 		if _, err := exec.LookPath("systemd-run"); err == nil {
 			wrap = []string{"systemd-run", "--user", "--scope", "-q", fmt.Sprintf("-pMemoryMax=%dM", ac.MemoryMB), "--"}
 		}
@@ -1123,10 +1104,14 @@ func (r *Runner) handlePermission(ctx context.Context, act *activeRun, req acp.P
 
 func (r *Runner) autoApproveOption(runID int64, kind, title string, tc map[string]any, opts []acp.PermissionOption) string {
 	rawText := fmt.Sprintf("%s %v", title, tc["rawInput"])
+	perm := r.cfg.PermissionsSnapshot()
+	alwaysAsk := perm.AlwaysAskPatterns
+	autoAllow := perm.AutoAllowKinds
+	allowedKinds := map[string]bool{}
 	r.mu.Lock()
-	alwaysAsk := append([]string(nil), r.cfg.Permissions.AlwaysAskPatterns...)
-	autoAllow := append([]string(nil), r.cfg.Permissions.AutoAllowKinds...)
-	allowedKinds := r.allowSet[runID]
+	for k, v := range r.allowSet[runID] {
+		allowedKinds[k] = v
+	}
 	r.mu.Unlock()
 
 	for _, pat := range alwaysAsk {

@@ -1,6 +1,8 @@
 package automation
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/xpier/xissue/internal/domain"
@@ -56,5 +58,45 @@ func TestMatchBranchPushRule(t *testing.T) {
 	}
 	if MatchBranchPushRule(ruleRegex, "feature/v1.2", "bob", "any message") {
 		t.Errorf("expected regex branch to not match, got true")
+	}
+}
+
+func TestListPluginsDisablesMalformedManifest(t *testing.T) {
+	root := t.TempDir()
+	bad := filepath.Join(root, "bad-plugin")
+	if err := os.MkdirAll(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad, "plugin.yaml"), []byte("events: [branch_push\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bad, "run.py"), []byte("print('x')\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	good := filepath.Join(root, "good-plugin")
+	if err := os.MkdirAll(good, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "name: good\nevents:\n  - branch_push\nentrypoint: run.py\n"
+	if err := os.WriteFile(filepath.Join(good, "plugin.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	plugins := NewEngine(root).ListPlugins()
+	if len(plugins) != 2 {
+		t.Fatalf("expected 2 plugins, got %d", len(plugins))
+	}
+	for _, p := range plugins {
+		switch p.ID {
+		case "bad-plugin":
+			if p.Enabled {
+				t.Fatal("malformed manifest must not enable the plugin")
+			}
+		case "good-plugin":
+			if !p.Enabled {
+				t.Fatal("valid manifest should be enabled")
+			}
+		}
 	}
 }

@@ -14,7 +14,7 @@ import (
 // ExportIssueMarkdown writes a complete Markdown archive of an issue (body, runs, comments)
 // to <issuesDir>/project-<id>/<key>.md so local issues are easy to grep and back up.
 func (r *Runner) ExportIssueMarkdown(ctx context.Context, issueID int64) {
-	if !r.cfg.ExportMarkdown {
+	if !r.cfg.ExportMarkdownEnabled() {
 		return
 	}
 	issue, err := r.st.GetIssue(ctx, issueID)

@@ -120,9 +120,10 @@ func (r *Runner) SendTestNotification(ctx context.Context) (map[string]any, erro
 }
 
 func (r *Runner) sendExternalNotification(kind, title, body, link string) {
-	tgToken := strings.TrimSpace(r.cfg.Monitor.TelegramBotToken)
-	tgChatID := strings.TrimSpace(r.cfg.Monitor.TelegramChatID)
-	webhookURL := strings.TrimSpace(r.cfg.Monitor.WebhookURL)
+	mon := r.cfg.MonitorSnapshot()
+	tgToken := strings.TrimSpace(mon.TelegramBotToken)
+	tgChatID := strings.TrimSpace(mon.TelegramChatID)
+	webhookURL := strings.TrimSpace(mon.WebhookURL)
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -307,7 +308,7 @@ func (r *Runner) startWatcherLoop() {
 			return
 		case <-time.After(2 * time.Second):
 		}
-		if r.cfg.Monitor.Enabled && IsWithinActiveHours(r.cfg.Monitor.ActiveHours, time.Now()) {
+		if mon := r.cfg.MonitorSnapshot(); mon.Enabled && IsWithinActiveHours(mon.ActiveHours, time.Now()) {
 			ctx, cancel := context.WithTimeout(r.ctx, 60*time.Second)
 			defer cancel()
 			_, _, _ = r.CheckWatchesAndPRs(ctx, 0)
@@ -321,12 +322,13 @@ func (r *Runner) startWatcherLoop() {
 			r.LogMonitor("INFO", "watcher", "监控服务收到停止信号，已正常退出")
 			return
 		case <-ticker.C:
-			if !r.cfg.Monitor.Enabled {
+			mon := r.cfg.MonitorSnapshot()
+			if !mon.Enabled {
 				r.LogMonitor("INFO", "watcher", "监控当前处于暂停状态，已跳过轮询")
 				continue
 			}
-			if !IsWithinActiveHours(r.cfg.Monitor.ActiveHours, time.Now()) {
-				r.LogMonitor("INFO", "watcher", fmt.Sprintf("当前处于非活跃监控时段 (%s)，已跳过轮询以节省资源", r.cfg.Monitor.ActiveHours))
+			if !IsWithinActiveHours(mon.ActiveHours, time.Now()) {
+				r.LogMonitor("INFO", "watcher", fmt.Sprintf("当前处于非活跃监控时段 (%s)，已跳过轮询以节省资源", mon.ActiveHours))
 				continue
 			}
 			ctx, cancel := context.WithTimeout(r.ctx, 60*time.Second)
@@ -862,12 +864,13 @@ func (r *Runner) GetMonitorStatus(ctx context.Context) (*MonitorStatus, error) {
 	r.monitorMu.RLock()
 	defer r.monitorMu.RUnlock()
 
+	mon := r.cfg.MonitorSnapshot()
 	res := &MonitorStatus{
 		Running:              true,
-		Enabled:              r.cfg.Monitor.Enabled,
-		ActiveHours:          r.cfg.Monitor.ActiveHours,
-		TelegramConfigured:   strings.TrimSpace(r.cfg.Monitor.TelegramBotToken) != "" && strings.TrimSpace(r.cfg.Monitor.TelegramChatID) != "",
-		WebhookConfigured:    strings.TrimSpace(r.cfg.Monitor.WebhookURL) != "",
+		Enabled:              mon.Enabled,
+		ActiveHours:          mon.ActiveHours,
+		TelegramConfigured:   strings.TrimSpace(mon.TelegramBotToken) != "" && strings.TrimSpace(mon.TelegramChatID) != "",
+		WebhookConfigured:    strings.TrimSpace(mon.WebhookURL) != "",
 		IntervalSeconds:      90,
 		LastDurationMs:       r.lastDurationMs,
 		WatchesCount:         len(watches),
@@ -971,18 +974,11 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 		repo, _ = r.st.GetRepo(ctx, *issue.RepoID)
 	}
 
-	// 优先定位真实本地仓库工作区，若为空才回退到 run.Workdir
+	// Prefer the repo's own local working tree. For remote repos the run worktree
+	// is used, but hooks stay gated by isTrustedAuthor below.
 	workdir := ""
 	if repo != nil && gitx.IsLocalDir(repo.RemoteURL) {
 		workdir = repo.RemoteURL
-	}
-	if workdir == "" && project != nil {
-		for _, rp := range project.Repos {
-			if gitx.IsLocalDir(rp.RemoteURL) {
-				workdir = rp.RemoteURL
-				break
-			}
-		}
 	}
 	if workdir == "" {
 		workdir = run.Workdir
@@ -1206,6 +1202,19 @@ func isTrustedAuthor(author, prAuthor string, rules []domain.AutomationRule) boo
 	return false
 }
 
+// shouldRunProjectHooks decides whether repo-supplied Layer-2 scripts may run.
+// Only locally-added repositories are eligible; for any other source the push
+// author must be explicitly trusted by a configured automation rule.
+func shouldRunProjectHooks(repo *domain.Repo, workdir, author string, rules []domain.AutomationRule) bool {
+	if repo == nil || workdir == "" {
+		return false
+	}
+	if gitx.IsLocalDir(repo.RemoteURL) {
+		return true
+	}
+	return isTrustedAuthor(author, "", rules)
+}
+
 // ListPlugins returns installed ecosystem plugins.
 func (r *Runner) ListPlugins() []domain.PluginInfo {
 	if r.automation == nil {
@@ -1224,17 +1233,12 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 		return err
 	}
 
+	// Layer 2 scripts come from the repository working tree, so they may only run
+	// for locally-added repositories. Never fall back to another repo's workdir:
+	// that would execute project A's hooks for a push to project B.
 	workdir := ""
 	if repo != nil && gitx.IsLocalDir(repo.RemoteURL) {
 		workdir = repo.RemoteURL
-	}
-	if workdir == "" && len(project.Repos) > 0 {
-		for _, rp := range project.Repos {
-			if gitx.IsLocalDir(rp.RemoteURL) {
-				workdir = rp.RemoteURL
-				break
-			}
-		}
 	}
 
 	payload := automation.PREventContext{
@@ -1249,9 +1253,15 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 	// Layer 1: Rules
 	actions := r.automation.EvaluateBranchPushRules(project.AutomationRules, w.Branch, tip.Author, tip.Subject)
 
-	// Layer 2: Project Hooks (on-branch-push)
-	if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
-		actions = append(actions, hookActions...)
+	// Layer 2: Project Hooks (on-branch-push), gated to local working copies.
+	if shouldRunProjectHooks(repo, workdir, tip.Author, project.AutomationRules) {
+		if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
+			actions = append(actions, hookActions...)
+		} else {
+			r.LogMonitor("WARN", "automation", fmt.Sprintf("Layer 2 Hook 执行失败: %v", herr))
+		}
+	} else if workdir != "" {
+		r.LogMonitor("WARN", "automation", fmt.Sprintf("推送作者 @%s 未匹配任何自动化规则，已阻断 Layer 2 本地 Hooks 执行", tip.Author))
 	}
 
 	// Layer 3: Plugins
@@ -1296,7 +1306,7 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 			if act.Type == "trigger_run" {
 				agentName := act.Agent
 				if agentName == "" {
-					for name := range r.cfg.Agents {
+					for name := range r.cfg.AgentsSnapshot() {
 						agentName = name
 						break
 					}
@@ -1345,20 +1355,12 @@ func (r *Runner) processPRMergedAutomation(ctx context.Context, issue *domain.Is
 	if issue.RepoID != nil {
 		repo, _ = r.st.GetRepo(ctx, *issue.RepoID)
 	}
+	// Layer 2 scripts must come from a user-owned working copy. A run worktree is
+	// cloned from the remote repository, so executing its hooks on an externally
+	// merged PR would be remote code execution. Cross-repo fallbacks are forbidden.
 	workdir := ""
 	if repo != nil && gitx.IsLocalDir(repo.RemoteURL) {
 		workdir = repo.RemoteURL
-	}
-	if workdir == "" && len(project.Repos) > 0 {
-		for _, rp := range project.Repos {
-			if gitx.IsLocalDir(rp.RemoteURL) {
-				workdir = rp.RemoteURL
-				break
-			}
-		}
-	}
-	if workdir == "" {
-		workdir = run.Workdir
 	}
 
 	payload := automation.PREventContext{

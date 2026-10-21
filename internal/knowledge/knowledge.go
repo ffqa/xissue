@@ -314,6 +314,9 @@ func scanMirrorDocs(ctx context.Context, mirrorDir, branch string, repoID int64,
 	if branch == "" {
 		branch = "HEAD"
 	}
+	if err := gitx.ValidateBranchName(branch); err != nil {
+		return list
+	}
 	out, err := gitx.Run(ctx, mirrorDir, "ls-tree", "-r", "--name-only", branch)
 	if err != nil {
 		return list
@@ -378,16 +381,86 @@ func scanMirrorDocs(ctx context.Context, mirrorDir, branch string, repoID int64,
 	return list
 }
 
+// splitDocID parses "source:repoID:relPath" and validates the document path.
+func splitDocID(docID string) (sourceKind, repoIDStr, relPath string, err error) {
+	parts := strings.SplitN(strings.TrimSpace(docID), ":", 3)
+	if len(parts) < 3 {
+		return "", "", "", fmt.Errorf("无效的文档 ID: %s", docID)
+	}
+	clean, err := sanitizeDocRelPath(parts[2])
+	if err != nil {
+		return "", "", "", err
+	}
+	return parts[0], parts[1], clean, nil
+}
+
+// sanitizeDocRelPath validates a client-supplied document path and returns a cleaned
+// OS-native relative path. Absolute paths, volume names, NUL bytes and any ".."
+// component are rejected before the path is joined to a repository root.
+func sanitizeDocRelPath(relPath string) (string, error) {
+	raw := strings.TrimSpace(relPath)
+	if raw == "" || strings.ContainsRune(raw, 0) {
+		return "", fmt.Errorf("非法文档路径: %q", relPath)
+	}
+	if strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, `\`) {
+		return "", fmt.Errorf("文档路径不允许使用绝对路径: %s", relPath)
+	}
+	clean := filepath.Clean(filepath.FromSlash(raw))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("文档路径越界: %s", relPath)
+	}
+	if filepath.IsAbs(clean) || filepath.VolumeName(clean) != "" {
+		return "", fmt.Errorf("文档路径不允许使用绝对路径: %s", relPath)
+	}
+	return clean, nil
+}
+
+func pathWithin(base, target string) bool {
+	rel, err := filepath.Rel(base, target)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// secureDocPath joins base with a validated relative path and rejects symlink
+// escapes, including symlinked parent directories and a symlinked target file.
+func secureDocPath(base, relPath string) (string, error) {
+	clean, err := sanitizeDocRelPath(relPath)
+	if err != nil {
+		return "", err
+	}
+	full := filepath.Join(base, clean)
+	if !pathWithin(base, full) {
+		return "", fmt.Errorf("文档路径越界: %s", relPath)
+	}
+	baseReal := base
+	if resolved, err := filepath.EvalSymlinks(base); err == nil {
+		baseReal = resolved
+	}
+	probe := full
+	for {
+		if resolved, err := filepath.EvalSymlinks(probe); err == nil {
+			if !pathWithin(baseReal, resolved) {
+				return "", fmt.Errorf("文档路径通过符号链接逃逸出允许目录: %s", relPath)
+			}
+			break
+		}
+		parent := filepath.Dir(probe)
+		if parent == probe {
+			break
+		}
+		probe = parent
+	}
+	return full, nil
+}
+
 // ResolveDocFilePath resolves a docID to its absolute filesystem path.
 func ResolveDocFilePath(dataDir string, project *domain.Project, docID string) (string, *domain.Repo, error) {
-	parts := strings.SplitN(docID, ":", 3)
-	if len(parts) < 3 {
-		return "", nil, fmt.Errorf("无效的文档 ID: %s", docID)
+	sourceKind, repoIDStr, relPath, err := splitDocID(docID)
+	if err != nil {
+		return "", nil, err
 	}
-
-	sourceKind := parts[0]
-	repoIDStr := parts[1]
-	relPath := parts[2]
 
 	var repo *domain.Repo
 	for i := range project.Repos {
@@ -402,8 +475,10 @@ func ResolveDocFilePath(dataDir string, project *domain.Project, docID string) (
 	}
 
 	if sourceKind == "wiki" {
-		wikiDir := WikiDir(dataDir, repo.ID)
-		fullPath := filepath.Join(wikiDir, relPath)
+		fullPath, err := secureDocPath(WikiDir(dataDir, repo.ID), relPath)
+		if err != nil {
+			return "", nil, err
+		}
 		return fullPath, repo, nil
 	}
 
@@ -412,7 +487,10 @@ func ResolveDocFilePath(dataDir string, project *domain.Project, docID string) (
 		if localDir == "" {
 			return "", nil, fmt.Errorf("仓库 %s 没有可访问的本地目录", repo.Name)
 		}
-		fullPath := filepath.Join(localDir, relPath)
+		fullPath, err := secureDocPath(localDir, relPath)
+		if err != nil {
+			return "", nil, err
+		}
 		return fullPath, repo, nil
 	}
 
@@ -426,13 +504,10 @@ func ResolveDocFilePath(dataDir string, project *domain.Project, docID string) (
 
 // GetDocDetail retrieves full content and metadata for a single document.
 func GetDocDetail(ctx context.Context, dataDir string, project *domain.Project, docID string) (*domain.DocDetail, error) {
-	parts := strings.SplitN(docID, ":", 3)
-	if len(parts) < 3 {
-		return nil, fmt.Errorf("无效的文档 ID: %s", docID)
+	sourceKind, _, relPath, err := splitDocID(docID)
+	if err != nil {
+		return nil, err
 	}
-
-	sourceKind := parts[0]
-	relPath := parts[2]
 
 	pathOrMirror, repo, err := ResolveDocFilePath(dataDir, project, docID)
 	if err != nil {
@@ -445,11 +520,14 @@ func GetDocDetail(ctx context.Context, dataDir string, project *domain.Project, 
 	var title, excerpt string
 
 	if sourceKind == "mirror" {
-		branch := repo.DefaultBranch
+		branch := strings.TrimSpace(repo.DefaultBranch)
 		if branch == "" {
 			branch = "HEAD"
 		}
-		content, gerr := gitx.Run(ctx, pathOrMirror, "show", branch+":"+relPath)
+		if err := gitx.ValidateBranchName(branch); err != nil {
+			return nil, fmt.Errorf("仓库默认分支非法: %w", err)
+		}
+		content, gerr := gitx.Run(ctx, pathOrMirror, "show", branch+":"+filepath.ToSlash(relPath))
 		if gerr != nil {
 			return nil, fmt.Errorf("从镜像读取文档失败: %w", gerr)
 		}

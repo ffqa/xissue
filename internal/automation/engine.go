@@ -277,9 +277,12 @@ func (e *Engine) runScriptWithPayload(ctx context.Context, scriptPath string, pa
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	setProcessGroup(cmd)
 	cmd.Cancel = func() error {
-		return cmd.Process.Kill()
+		return killProcessTree(cmd)
 	}
+	// Bound Wait even if a grandchild inherited the stdout/stderr pipes.
+	cmd.WaitDelay = 2 * time.Second
 
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("hook %s failed: %v (%s)", filepath.Base(scriptPath), err, strings.TrimSpace(stderr.String()))
@@ -376,34 +379,44 @@ func (e *Engine) ListPlugins() []domain.PluginInfo {
 		}
 
 		data, err := os.ReadFile(manifestFile)
-		if err == nil {
-			var m struct {
-				Name        string   `yaml:"name" json:"name"`
-				Version     string   `yaml:"version" json:"version"`
-				Description string   `yaml:"description" json:"description"`
-				Author      string   `yaml:"author" json:"author"`
-				Events      []string `yaml:"events" json:"events"`
-				Enabled     *bool    `yaml:"enabled" json:"enabled"`
-			}
-			_ = yaml.Unmarshal(data, &m)
-			if m.Name != "" {
-				info.Name = m.Name
-			}
-			if m.Version != "" {
-				info.Version = m.Version
-			}
-			if m.Description != "" {
-				info.Description = m.Description
-			}
-			if m.Author != "" {
-				info.Author = m.Author
-			}
-			if len(m.Events) > 0 {
-				info.Events = m.Events
-			}
-			if m.Enabled != nil {
-				info.Enabled = *m.Enabled
-			}
+		if err != nil {
+			info.Enabled = false
+			info.Description = "manifest 读取失败: " + err.Error()
+			out = append(out, info)
+			continue
+		}
+		var m struct {
+			Name        string   `yaml:"name" json:"name"`
+			Version     string   `yaml:"version" json:"version"`
+			Description string   `yaml:"description" json:"description"`
+			Author      string   `yaml:"author" json:"author"`
+			Events      []string `yaml:"events" json:"events"`
+			Enabled     *bool    `yaml:"enabled" json:"enabled"`
+		}
+		if err := yaml.Unmarshal(data, &m); err != nil {
+			// A malformed manifest must never enable an external script by accident.
+			info.Enabled = false
+			info.Description = "manifest 解析失败: " + err.Error()
+			out = append(out, info)
+			continue
+		}
+		if m.Name != "" {
+			info.Name = m.Name
+		}
+		if m.Version != "" {
+			info.Version = m.Version
+		}
+		if m.Description != "" {
+			info.Description = m.Description
+		}
+		if m.Author != "" {
+			info.Author = m.Author
+		}
+		if len(m.Events) > 0 {
+			info.Events = m.Events
+		}
+		if m.Enabled != nil {
+			info.Enabled = *m.Enabled
 		}
 
 		out = append(out, info)

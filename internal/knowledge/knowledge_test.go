@@ -114,3 +114,130 @@ func TestKnowledgeScanAndSearch(t *testing.T) {
 		t.Errorf("saved content mismatch")
 	}
 }
+
+func TestDocPathTraversalRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, "data")
+	repoDir := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(WikiDir(dataDir, 7), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(tmpDir, "secret.txt")
+	if err := os.WriteFile(outside, []byte("do-not-touch"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	proj := &domain.Project{
+		ID:   1,
+		Name: "traversal",
+		Repos: []domain.Repo{{
+			ID:        7,
+			ProjectID: 1,
+			Name:      "repo",
+			RemoteURL: repoDir,
+		}},
+	}
+	ctx := context.Background()
+
+	badIDs := []string{
+		"local:7:../secret.txt",
+		"local:7:../../etc/passwd",
+		"local:7:a/../../secret.txt",
+		"local:7:.",
+		"local:7:..",
+		"local:7:",
+		"wiki:7:../secret.txt",
+		"local:7:/etc/passwd",
+		"wiki:7:" + outside,
+		"local:7:bad\x00name",
+	}
+	for _, id := range badIDs {
+		if _, err := GetDocDetail(ctx, dataDir, proj, id); err == nil {
+			t.Errorf("GetDocDetail(%q) should be rejected", id)
+		}
+		if err := SaveDoc(ctx, dataDir, proj, id, "pwned"); err == nil {
+			t.Errorf("SaveDoc(%q) should be rejected", id)
+		}
+	}
+
+	got, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatalf("outside file disappeared: %v", err)
+	}
+	if string(got) != "do-not-touch" {
+		t.Fatalf("outside file was modified: %q", got)
+	}
+}
+
+func TestDocPathSymlinkEscapeRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, "data")
+	repoDir := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(tmpDir, "outside.md")
+	if err := os.WriteFile(outside, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(repoDir, "leak.md")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	proj := &domain.Project{
+		ID:   1,
+		Name: "symlink",
+		Repos: []domain.Repo{{
+			ID:        7,
+			ProjectID: 1,
+			Name:      "repo",
+			RemoteURL: repoDir,
+		}},
+	}
+	ctx := context.Background()
+	if _, err := GetDocDetail(ctx, dataDir, proj, "local:7:leak.md"); err == nil {
+		t.Fatal("expected symlink escape read to be rejected")
+	}
+	if err := SaveDoc(ctx, dataDir, proj, "local:7:leak.md", "pwned"); err == nil {
+		t.Fatal("expected symlink escape write to be rejected")
+	}
+	got, _ := os.ReadFile(outside)
+	if string(got) != "outside" {
+		t.Fatalf("outside file was modified: %q", got)
+	}
+}
+
+func TestSaveDocAllowsNestedPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	dataDir := filepath.Join(tmpDir, "data")
+	repoDir := filepath.Join(tmpDir, "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	proj := &domain.Project{
+		ID:   1,
+		Name: "nested",
+		Repos: []domain.Repo{{
+			ID:        7,
+			ProjectID: 1,
+			Name:      "repo",
+			RemoteURL: repoDir,
+		}},
+	}
+	ctx := context.Background()
+	if err := SaveDoc(ctx, dataDir, proj, "local:7:guides/deep/new.md", "# New\n"); err != nil {
+		t.Fatalf("SaveDoc nested path failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "guides", "deep", "new.md")); err != nil {
+		t.Fatalf("nested file not written: %v", err)
+	}
+	detail, err := GetDocDetail(ctx, dataDir, proj, "local:7:guides/deep/new.md")
+	if err != nil {
+		t.Fatalf("GetDocDetail nested path failed: %v", err)
+	}
+	if detail.Content != "# New\n" {
+		t.Fatalf("unexpected content: %q", detail.Content)
+	}
+}

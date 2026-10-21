@@ -156,6 +156,12 @@ xissue service restart
 # 5. 验证健康检查与 Agent 探测
 curl -sS http://127.0.0.1:7789/api/health
 curl -sS "http://127.0.0.1:7789/api/agents/opencode/models?refresh=1"
+
+# 6. 发布后同步本地 Homebrew Tap（brew info 读的是本地 clone，不会自动 fetch）
+GH_TOKEN="$(gh auth token)" bash scripts/brew-publish.sh v0.2.12
+git -C "$(brew --repo ffqa/tap)" fetch origin main
+git -C "$(brew --repo ffqa/tap)" reset --hard origin/main
+brew info ffqa/tap/xissue
 ```
 
 ---

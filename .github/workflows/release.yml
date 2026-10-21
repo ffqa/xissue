@@ -18,6 +18,9 @@ jobs:
   release:
     name: Build & Publish Release
     runs-on: ubuntu-latest
+    env:
+      # Job-level indirection: step-level `if` cannot read secrets directly.
+      TAP_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -98,13 +101,19 @@ jobs:
             dist/release/*.zip
             dist/release/SHA256SUMS.txt
 
+      - name: Warn when Homebrew Tap token is missing
+        if: env.TAP_TOKEN == ''
+        run: |
+          echo "::warning title=Homebrew Tap not updated::TAP_GITHUB_TOKEN is not configured. Add a PAT with write access to ffqa/homebrew-tap under Settings → Secrets and variables → Actions, or run scripts/brew-publish.sh manually after the release."
+
       - name: Update Homebrew Tap Formula
+        if: env.TAP_TOKEN != ''
         env:
-          GH_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN || secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ env.TAP_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME}"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ github.event.inputs.tag }}"
           fi
-          bash scripts/brew-publish.sh "${VERSION}" || echo "Homebrew Tap update skipped or requires TAP_GITHUB_TOKEN secret"
+          bash scripts/brew-publish.sh "${VERSION}"
 

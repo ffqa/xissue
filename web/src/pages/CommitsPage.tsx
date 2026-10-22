@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { Crumbs, fmtTime } from '../components/common';
 import { copyText } from '../clipboard';
@@ -60,8 +60,9 @@ export default function CommitsPage() {
   const projectId = Number(id);
   const [search, setSearch] = useSearchParams();
   const selectedRef = useRef<HTMLDivElement | null>(null);
+  const qc = useQueryClient();
 
-  const projectQ = useQuery({ queryKey: qk.project(projectId), queryFn: () => api.project(projectId), enabled: !!projectId });
+  const projectQ = useQuery({ queryKey: qk.project(projectId), queryFn: () => api.project(projectId, false), enabled: !!projectId });
   const project = projectQ.data;
   const repos = project?.repos ?? [];
 
@@ -89,6 +90,14 @@ export default function CommitsPage() {
     enabled: !!repoId && !!branch,
   });
   const commits = commitsQ.data ?? [];
+  const refreshMut = useMutation({
+    mutationFn: () => api.repoCommits(repoId, branch, 50, true),
+    onSuccess: (data) => {
+      qc.setQueryData(qk.repoCommits(repoId, branch), data);
+      toast.success('已同步远端提交');
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
   const selectedSha = shaFromUrl || commits[0]?.sha || '';
   const detailQ = useQuery({
     queryKey: qk.repoCommitDetail(repoId, selectedSha),
@@ -189,8 +198,8 @@ export default function CommitsPage() {
             </option>
           ))}
         </select>
-        <button className="sm" onClick={() => void commitsQ.refetch()} disabled={commitsQ.isFetching}>
-          {commitsQ.isFetching ? '刷新中…' : '↻ 刷新'}
+        <button className="sm" onClick={() => refreshMut.mutate()} disabled={refreshMut.isPending || commitsQ.isFetching}>
+          {refreshMut.isPending ? '同步中…' : '↻ 同步远端'}
         </button>
         {branchUrl && (
           <a className="ghost sm btn" href={branchUrl} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>

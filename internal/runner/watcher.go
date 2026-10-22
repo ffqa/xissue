@@ -256,26 +256,37 @@ func (r *Runner) ensureRepoMirror(ctx context.Context, repo domain.Repo) (string
 	return mirror, nil
 }
 
-// ListRepoBranches fetches the repo mirror and returns available branch names.
-func (r *Runner) ListRepoBranches(ctx context.Context, repoID int64) ([]string, error) {
+// ListRepoBranches returns branch names from the mirror. refresh forces a fetch.
+func (r *Runner) ListRepoBranches(ctx context.Context, repoID int64, refresh bool) ([]string, error) {
 	repo, err := r.st.GetRepo(ctx, repoID)
 	if err != nil {
 		return nil, err
 	}
-	mirror, err := r.ensureRepoMirror(ctx, *repo)
+	mirror := r.mirrorPath(repo.ID)
+	if refresh {
+		mirror, err = r.ensureRepoMirror(ctx, *repo)
+	} else {
+		err = gitx.EnsureMirrorCached(ctx, repo.RemoteURL, mirror)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return gitx.ListBranches(ctx, mirror)
 }
 
-// ListRepoCommits fetches the repo mirror and returns recent commits on branch.
-func (r *Runner) ListRepoCommits(ctx context.Context, repoID int64, branch string, limit int) ([]gitx.CommitInfo, error) {
+// ListRepoCommits returns recent commits on branch. Unless refresh is true it
+// reads the existing mirror to keep UI navigation fast.
+func (r *Runner) ListRepoCommits(ctx context.Context, repoID int64, branch string, limit int, refresh bool) ([]gitx.CommitInfo, error) {
 	repo, err := r.st.GetRepo(ctx, repoID)
 	if err != nil {
 		return nil, err
 	}
-	mirror, err := r.ensureRepoMirror(ctx, *repo)
+	mirror := r.mirrorPath(repo.ID)
+	if refresh {
+		mirror, err = r.ensureRepoMirror(ctx, *repo)
+	} else {
+		err = gitx.EnsureMirrorCached(ctx, repo.RemoteURL, mirror)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -291,8 +302,17 @@ func (r *Runner) GetRepoCommitDetail(ctx context.Context, repoID int64, sha stri
 	if err != nil {
 		return gitx.CommitDetail{}, err
 	}
-	mirror, err := r.ensureRepoMirror(ctx, *repo)
-	if err != nil {
+	mirror := r.mirrorPath(repo.ID)
+	if err := gitx.EnsureMirrorCached(ctx, repo.RemoteURL, mirror); err != nil {
+		return gitx.CommitDetail{}, err
+	}
+	detail, err := gitx.GetCommitDetail(ctx, mirror, sha)
+	if err == nil {
+		return detail, nil
+	}
+	// The commit may be newer than the cached mirror; fetch once and retry.
+	mirror, fetchErr := r.ensureRepoMirror(ctx, *repo)
+	if fetchErr != nil {
 		return gitx.CommitDetail{}, err
 	}
 	return gitx.GetCommitDetail(ctx, mirror, sha)

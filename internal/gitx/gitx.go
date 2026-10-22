@@ -87,6 +87,16 @@ func ensureLocalRepoHasCommit(ctx context.Context, dir, base string) error {
 // EnsureMirror makes sure a bare partial clone of remote exists at path and is up to date.
 // All run worktrees are created from this mirror so they share one object store.
 func EnsureMirror(ctx context.Context, remote, path string) error {
+	return ensureMirror(ctx, remote, path, true)
+}
+
+// EnsureMirrorCached makes sure a mirror exists but skips the network fetch.
+// Use it for read-only UI paths; call EnsureMirror on an explicit refresh.
+func EnsureMirrorCached(ctx context.Context, remote, path string) error {
+	return ensureMirror(ctx, remote, path, false)
+}
+
+func ensureMirror(ctx context.Context, remote, path string, fetch bool) error {
 	remote = strings.TrimSpace(remote)
 	if strings.HasPrefix(remote, "-") || strings.HasPrefix(remote, "ext::") {
 		return fmt.Errorf("unsafe remote URL %q", remote)
@@ -115,6 +125,9 @@ func EnsureMirror(ctx context.Context, remote, path string) error {
 	// Always ensure the fetch refspec is set so `fetch origin` populates refs/remotes/origin/*.
 	if _, err := Run(ctx, path, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"); err != nil {
 		return err
+	}
+	if !fetch {
+		return nil
 	}
 	_, err := Run(ctx, path, "fetch", "--prune", "origin")
 	return err

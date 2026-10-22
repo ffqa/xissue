@@ -28,7 +28,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.16"
+const Version = "0.2.17"
 
 type Server struct {
 	cfg    *config.Config
@@ -446,7 +446,9 @@ func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	s.refreshProjectRepos(r.Context(), p)
+	if r.URL.Query().Get("refresh") != "0" {
+		s.refreshProjectRepos(r.Context(), p)
+	}
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -460,7 +462,9 @@ func (s *Server) handleRefreshRepos(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	s.refreshProjectRepos(r.Context(), p)
+	if r.URL.Query().Get("refresh") != "0" {
+		s.refreshProjectRepos(r.Context(), p)
+	}
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -1355,7 +1359,7 @@ func (s *Server) handleRepoBranches(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	branches, err := s.runner.ListRepoBranches(r.Context(), repoID)
+	branches, err := s.runner.ListRepoBranches(r.Context(), repoID, r.URL.Query().Get("refresh") == "1")
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
@@ -1373,7 +1377,8 @@ func (s *Server) handleRepoCommits(w http.ResponseWriter, r *http.Request) {
 	}
 	branch := r.URL.Query().Get("branch")
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	commits, err := s.runner.ListRepoCommits(r.Context(), repoID, branch, limit)
+	refresh := r.URL.Query().Get("refresh") == "1"
+	commits, err := s.runner.ListRepoCommits(r.Context(), repoID, branch, limit, refresh)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return

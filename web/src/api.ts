@@ -161,7 +161,7 @@ export const api = {
   projects: () => get<Project[]>('/api/projects'),
   createProject: (b: { name: string; description: string; devMode?: DevMode }) =>
     post<Project>('/api/projects', b),
-  project: (id: number) => get<Project>(`/api/projects/${id}`),
+  project: (id: number, refresh = true) => get<Project>(`/api/projects/${id}?refresh=${refresh ? 1 : 0}`),
   updateProject: (
     id: number,
     b: {
@@ -223,9 +223,9 @@ export const api = {
   cherryPick: (projectId: number, b: CherryPickRequest) =>
     post<CherryPickResult>(`/api/projects/${projectId}/cherry-pick`, b),
 
-  repoBranches: (repoId: number) => get<string[]>(`/api/repos/${repoId}/branches`),
-  repoCommits: (repoId: number, branch?: string, limit = 30) =>
-    get<CommitInfo[]>(`/api/repos/${repoId}/commits?${q({ branch: branch ?? '', limit })}`),
+  repoBranches: (repoId: number, refresh = false) => get<string[]>(`/api/repos/${repoId}/branches?refresh=${refresh ? 1 : 0}`),
+  repoCommits: (repoId: number, branch?: string, limit = 30, refresh = false) =>
+    get<CommitInfo[]>(`/api/repos/${repoId}/commits?${q({ branch: branch ?? '', limit, refresh: refresh ? 1 : 0 })}`),
   repoCommitDetail: (repoId: number, sha: string) =>
     get<CommitDetail>(`/api/repos/${repoId}/commits/${encodeURIComponent(sha)}`),
 

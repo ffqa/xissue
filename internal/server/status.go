@@ -137,3 +137,20 @@ func (s *Server) collectSystemStatus() SystemStatus {
 func (s *Server) handleSystemStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.collectSystemStatus())
 }
+
+// statusLoop samples and fans out status only while a browser is connected.
+func (s *Server) statusLoop() {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-ticker.C:
+		}
+		if s.hub.ClientCount() == 0 {
+			continue
+		}
+		s.hub.BroadcastStatus(s.collectSystemStatus())
+	}
+}

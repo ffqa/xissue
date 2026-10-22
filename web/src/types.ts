@@ -425,6 +425,7 @@ export type WsMessage =
   | { type: 'run_updated'; run: Run }
   | { type: 'issue_updated'; issue: Issue }
   | { type: 'notification'; notification: Notification }
+  | { type: 'status'; status: SystemStatus }
   | { type: 'heartbeat' };
 
 export interface MonitorLogEntry {

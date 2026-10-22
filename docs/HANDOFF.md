@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.18` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.19` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.18`
+- **最新发布版本**: `v0.2.19`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -146,6 +146,12 @@
 - 顶栏「🧩 插件」：全局列出 `plugins/` 下所有插件，支持即时启用/停用、manifest 错误展示、README 预览与 `config.json` 生成/编辑/保存；
 - 停用写入 `.disabled`，事件派发前即时检查，停用后不会再触发；配置原子写入 `0600`，插件以自身目录为 cwd 读取 `config.json`；
 - 修复 `-data-dir` 测试实例把配置写回真实 `~/.xissue/config.yaml` 的隔离缺陷；现在未显式传 `-config` 时默认读取/写入 data-dir 下的 `config.yaml`。
+
+### 2.12 知识库阅读体验与状态通道优化
+- 知识库弹窗新增「全屏 / 退出全屏」与「隐藏 / 显示目录侧栏」按钮；全屏时正文最大宽度自动放宽，Esc 优先退出编辑、再退出全屏、最后关闭弹窗；
+- 目录树默认折叠，只展示顶层目录；每一级都先显示子目录、再显示该目录下的散落文档；
+- 底部状态栏改为优先通过现有 WebSocket 推送（`{type:"status"}`，每 2 秒），仅在 WS 未连接时回退到 `GET /api/status` HTTP 轮询；
+- 顶栏移除「实时已连接」「重启」「版本号」，统一并入底部状态栏；顶栏保留通知、监控、插件、主题、MCP 等全局工具。
 
 ### 2.11 提交记录页、自动升级与实时状态栏
 - **独立提交记录页**：新增 `/projects/:id/commits?repo=&branch=&sha=`，左侧提交列表、右侧 GitHub 风格详情（元信息、文件增删统计、统一 diff）；支持从通知/监控卡片直达并高亮目标 Commit；

@@ -322,6 +322,8 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .modal { width: min(740px, 94vw); max-height: 88vh; display: flex; flex-direction: column; background: var(--bg-1); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: var(--shadow); }
 .modal.modal-lg { width: min(880px, 95vw); }
 .modal.modal-xl { width: min(1020px, 96vw); }
+.modal-backdrop.fullscreen { padding-top: 0; }
+.modal.modal-fullscreen { width: 100vw; height: 100vh; max-height: 100vh; border-radius: 0; border: 0; }
 .modal-h { padding: 12px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; flex: none; }
 .modal-b { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; flex: 1; min-height: 0; }
 .modal-f { padding: 12px 18px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; flex: none; }
@@ -527,3 +529,6 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
   .statusbar { gap: 8px; font-size: 10px; }
   .statusbar .status-item:nth-child(n+6) { display: none; }
 }
+
+.statusbar .ws-ind { font-size: 10px; gap: 4px; }
+.statusbar .status-restart { height: 18px; padding: 0 7px; font-size: 10px; line-height: 1; }

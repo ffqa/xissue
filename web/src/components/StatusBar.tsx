@@ -1,5 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, qk } from '../api';
+import { useWsState } from '../realtime';
+import { toast } from '../toast';
 
 function fmtBytes(n: number): string {
   if (!n || n < 0) return '0 B';
@@ -24,19 +26,42 @@ function fmtUptime(sec: number): string {
 }
 
 export function StatusBar() {
+  const wsState = useWsState();
   const q = useQuery({
     queryKey: qk.status,
     queryFn: api.status,
-    refetchInterval: 2000,
+    // Normal path: status is pushed over the existing WebSocket. Only poll
+    // HTTP while the socket is down (or still connecting).
+    enabled: wsState !== 'open',
+    refetchInterval: wsState === 'open' ? false : 2000,
     refetchIntervalInBackground: true,
-    staleTime: 1000,
+    staleTime: Infinity,
     retry: false,
   });
+  const restart = useMutation({
+    mutationFn: api.restartServer,
+    onSuccess: () => toast.info('服务正在重启，WebSocket 将自动重连…'),
+    onError: (e) => toast.error((e as Error).message),
+  });
   const st = q.data;
+  const wsLabel = wsState === 'open' ? 'WS 实时' : wsState === 'connecting' ? 'WS 连接中…' : 'HTTP 兜底';
   if (!st) {
     return (
       <footer className="statusbar">
+        <span className={`ws-ind ${wsState}`}>
+          <span className="dot" /> {wsLabel}
+        </span>
         <span className="dim">{q.isError ? '状态采集不可用' : '状态采集中…'}</span>
+        <span className="grow" />
+        <button
+          type="button"
+          className="ghost sm status-restart"
+          title="重启 xIssue 服务"
+          disabled={restart.isPending}
+          onClick={() => restart.mutate()}
+        >
+          {restart.isPending ? '重启中…' : '↻ 重启'}
+        </button>
       </footer>
     );
   }
@@ -66,9 +91,19 @@ export function StatusBar() {
       </span>
       <span className="status-item">G {st.goroutines}</span>
       <span className="grow" />
-      <span className="status-item dim">
-        {st.autoUpdate ? '自动更新已开启' : '自动更新已关闭'} · 实时
+      <span className={`ws-ind ${wsState}`} title="状态通道：WebSocket 推送；断线时自动切换 HTTP 轮询">
+        <span className="dot" /> {wsLabel}
       </span>
+      <span className="status-item dim">{st.autoUpdate ? '自动更新已开启' : '自动更新已关闭'}</span>
+      <button
+        type="button"
+        className="ghost sm status-restart"
+        title="重启 xIssue 服务（编译新版本后点击即可生效）"
+        disabled={restart.isPending}
+        onClick={() => restart.mutate()}
+      >
+        {restart.isPending ? '重启中…' : '↻ 重启'}
+      </button>
     </footer>
   );
 }

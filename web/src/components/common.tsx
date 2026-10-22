@@ -52,6 +52,8 @@ export function Modal({
   size = 'md',
   bodyStyle,
   style,
+  fullscreen = false,
+  headerActions,
 }: {
   title: ReactNode;
   onClose: () => void;
@@ -61,6 +63,8 @@ export function Modal({
   size?: 'md' | 'lg' | 'xl';
   bodyStyle?: React.CSSProperties;
   style?: React.CSSProperties;
+  fullscreen?: boolean;
+  headerActions?: ReactNode;
 }) {
   useEffect(() => {
     ensureEscapeListener();
@@ -72,10 +76,14 @@ export function Modal({
     };
   }, [onEscape, onClose]);
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal modal-${size}`} role="dialog" style={style}>
+    <div
+      className={`modal-backdrop${fullscreen ? ' fullscreen' : ''}`}
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className={`modal modal-${size}${fullscreen ? ' modal-fullscreen' : ''}`} role="dialog" style={style}>
         <div className="modal-h">
           <h2 className="grow">{title}</h2>
+          {headerActions}
           <button className="ghost sm" onClick={onClose} title="关闭 (Esc)">
             ✕
           </button>

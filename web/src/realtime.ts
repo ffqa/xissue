@@ -107,6 +107,9 @@ function handleMessage(qc: QueryClient, msg: WsMessage) {
       toast.info(`🔔 ${n.title}`);
       break;
     }
+    case 'status':
+      qc.setQueryData(qk.status, msg.status);
+      break;
     case 'heartbeat':
       break;
   }

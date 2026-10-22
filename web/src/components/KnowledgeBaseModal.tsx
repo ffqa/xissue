@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
@@ -70,6 +70,9 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
+  const [fullscreen, setFullscreen] = useState(false);
+  const [sidebarHidden, setSidebarHidden] = useState(false);
+  const collapsedInitialized = useRef(false);
 
   // 1. 文档列表查询
   const docsQ = useQuery({
@@ -95,6 +98,24 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
   const [viewMode, setViewMode] = useState<'tree' | 'category'>('tree');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const dirTree = useMemo(() => buildDirTree(docs), [docs]);
+
+  // Tree view starts collapsed: show the directory hierarchy first, then let
+  // the user expand only the branches they care about.
+  useEffect(() => {
+    if (collapsedInitialized.current || docs.length === 0) return;
+    const keys = new Set<string>();
+    const walk = (node: DirNode, depth: number) => {
+      for (const child of node.dirs.values()) {
+        keys.add(`dir:${child.path}`);
+        walk(child, depth + 1);
+      }
+      if (node.docs.length > 0 && depth === 0) keys.add('docs:root');
+    };
+    walk(dirTree, 0);
+    setCollapsed(keys);
+    collapsedInitialized.current = true;
+  }, [docs, dirTree]);
+
   const toggleGroup = (key: string) => {
     setCollapsed((prev) => {
       const next = new Set(prev);
@@ -178,10 +199,31 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
         </div>
       }
       size="xl"
+      fullscreen={fullscreen}
+      headerActions={
+        <div className="row" style={{ gap: 4 }}>
+          <button
+            className="ghost sm"
+            title={fullscreen ? '退出全屏' : '全屏查看 (Esc 可退出)'}
+            onClick={() => setFullscreen((v) => !v)}
+          >
+            {fullscreen ? '🗗' : '⛶'}
+          </button>
+          <button
+            className="ghost sm"
+            title={sidebarHidden ? '显示目录侧栏' : '隐藏目录侧栏，最大化阅读宽度'}
+            onClick={() => setSidebarHidden((v) => !v)}
+          >
+            {sidebarHidden ? '▥' : '▤'}
+          </button>
+        </div>
+      }
       onClose={onClose}
       onEscape={() => {
         if (isEditing) {
           setIsEditing(false);
+        } else if (fullscreen) {
+          setFullscreen(false);
         } else {
           onClose();
         }
@@ -189,8 +231,8 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
       bodyStyle={{
         padding: 0,
         overflow: 'hidden',
-        height: '78vh',
-        minHeight: 520,
+        height: fullscreen ? undefined : '78vh',
+        minHeight: fullscreen ? 0 : 520,
         display: 'flex',
         flexDirection: 'column',
       }}
@@ -198,7 +240,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '320px 1fr',
+          gridTemplateColumns: sidebarHidden ? '0 1fr' : '320px 1fr',
           height: '100%',
           minHeight: 0,
           flex: 1,
@@ -210,12 +252,12 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
         <div
           style={{
             borderRight: '1px solid var(--border)',
-            display: 'flex',
             flexDirection: 'column',
             height: '100%',
             minHeight: 0,
             overflow: 'hidden',
             background: 'var(--bg-0)',
+            display: sidebarHidden ? 'none' : 'flex',
           }}
         >
           {/* 搜索框与同步按钮 */}
@@ -456,7 +498,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                     }}
                   />
                 ) : (
-                  <div style={{ maxWidth: 860, margin: '0 auto', wordBreak: 'break-word' }}>
+                  <div style={{ maxWidth: fullscreen || sidebarHidden ? 1200 : 860, margin: '0 auto', wordBreak: 'break-word' }}>
                     <Markdown>{curDoc.content || '*(此文档为空)*'}</Markdown>
                   </div>
                 )}
@@ -501,6 +543,13 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
   function renderTree(): ReactNode[] {
     const rows: ReactNode[] = [];
     const walk = (node: DirNode, depth: number) => {
+      // Directories first; loose files in this directory after subdirectories.
+      const children = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name));
+      for (const child of children) {
+        const key = `dir:${child.path}`;
+        rows.push(renderGroupHeader(key, depth, '📁', child.name, child.total));
+        if (!collapsed.has(key)) walk(child, depth + 1);
+      }
       if (node.docs.length > 0) {
         if (depth === 0) {
           const key = 'docs:root';
@@ -511,12 +560,6 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
         } else {
           node.docs.forEach((doc) => rows.push(renderDocItem(doc, depth)));
         }
-      }
-      const children = [...node.dirs.values()].sort((a, b) => a.name.localeCompare(b.name));
-      for (const child of children) {
-        const key = `dir:${child.path}`;
-        rows.push(renderGroupHeader(key, depth, '📁', child.name, child.total));
-        if (!collapsed.has(key)) walk(child, depth + 1);
       }
     };
     walk(dirTree, 0);

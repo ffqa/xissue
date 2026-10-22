@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, Route, Routes, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from './api';
-import { useRealtime, useWsState } from './realtime';
-import { Toaster, toast } from './toast';
+import { useRealtime } from './realtime';
+import { Toaster } from './toast';
 import { useTheme } from './theme';
 import { AgentManagerModal } from './components/AgentManagerModal';
 import { MonitorModal } from './components/MonitorModal';
@@ -15,15 +15,6 @@ import ProjectPage from './pages/ProjectPage';
 import IssuePage from './pages/IssuePage';
 import CommitsPage from './pages/CommitsPage';
 
-function WsIndicator() {
-  const s = useWsState();
-  const label = s === 'open' ? '实时已连接' : s === 'connecting' ? '连接中…' : '已断开，重连中';
-  return (
-    <span className={`ws-ind ${s}`} title="WebSocket">
-      <span className="dot" /> {label}
-    </span>
-  );
-}
 
 function NotificationBell() {
   const qc = useQueryClient();
@@ -211,15 +202,7 @@ export default function App() {
   const [agentMgrOpen, setAgentMgrOpen] = useState(false);
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [pluginsOpen, setPluginsOpen] = useState(false);
-  const health = useQuery({ queryKey: qk.health, queryFn: api.health, staleTime: Infinity });
-  const restart = useMutation({
-    mutationFn: api.restartServer,
-    onSuccess: () => {
-      toast.info('服务正在重启，WebSocket 将自动重连…');
-      setTimeout(() => qc.invalidateQueries(), 1200);
-    },
-    onError: (e) => toast.error((e as Error).message),
-  });
+
 
   return (
     <div className="app">
@@ -228,7 +211,6 @@ export default function App() {
           xIssue
         </Link>
         <div id="crumbs" className="crumbs grow" />
-        <WsIndicator />
         <NotificationBell />
         <button
           className="ghost sm"
@@ -260,15 +242,6 @@ export default function App() {
         >
           ⚙ MCP
         </button>
-        <button
-          className="ghost sm"
-          title="重启 xIssue 服务（编译新版本后点击即可生效）"
-          disabled={restart.isPending}
-          onClick={() => restart.mutate()}
-        >
-          ↻ 重启
-        </button>
-        {health.data && <span className="dim small">v{health.data.version}</span>}
       </header>
       <main className="main">
         <Routes>

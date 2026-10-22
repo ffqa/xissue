@@ -28,7 +28,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.18"
+const Version = "0.2.19"
 
 type Server struct {
 	cfg    *config.Config
@@ -73,6 +73,7 @@ func New(cfg *config.Config, st *store.Store) *Server {
 	s.routes()
 	go s.issueSyncLoop()
 	go s.autoUpdateLoop()
+	go s.statusLoop()
 	return s
 }
 

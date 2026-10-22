@@ -23,6 +23,13 @@ func newHub() *Hub {
 	return &Hub{clients: map[chan []byte]struct{}{}}
 }
 
+// ClientCount reports how many browser WebSockets are connected.
+func (h *Hub) ClientCount() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.clients)
+}
+
 func (h *Hub) broadcast(payload any) {
 	b, err := json.Marshal(payload)
 	if err != nil {
@@ -65,6 +72,15 @@ func (h *Hub) BroadcastNotification(n *domain.Notification) {
 	h.broadcast(map[string]any{
 		"type":         "notification",
 		"notification": n,
+	})
+}
+
+// BroadcastStatus pushes the live system status over the existing WebSocket,
+// so the status bar does not need to poll HTTP while connected.
+func (h *Hub) BroadcastStatus(st SystemStatus) {
+	h.broadcast(map[string]any{
+		"type":   "status",
+		"status": st,
 	})
 }
 

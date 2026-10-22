@@ -156,6 +156,9 @@ interface RunEvent {
 { type: "run_event", runId, issueId, event: RunEvent }
 { type: "run_updated", run: Run }
 { type: "issue_updated", issue: Issue }
+{ type: "notification", notification: Notification }
+{ type: "status", status: SystemStatus }  // 每 2 秒；状态栏优先使用此通道
+{ type: "heartbeat" }
 ```
 
 错误统一返回 `{ error: string }` 与对应 HTTP 状态码。

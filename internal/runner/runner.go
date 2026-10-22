@@ -156,7 +156,7 @@ func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 		allowSet:    map[int64]map[string]bool{},
 		modelCache:  map[string]cachedAgentModels{},
 		monitorLogs: []MonitorLogEntry{},
-		automation:  automation.NewEngine(""),
+		automation:  automation.NewEngine(cfg.PluginsDir()),
 	}
 	// Mark any runs left active by a previous server process as failed and sync their parent issues.
 	if runs, err := st.ListActiveRuns(context.Background()); err == nil {
@@ -174,6 +174,7 @@ func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 		}
 	}
 	go r.startWatcherLoop()
+	r.setupLifecycleObservers()
 	return r
 }
 
@@ -577,6 +578,7 @@ func (r *Runner) startRun(ctx context.Context, issueID int64, agentName, modelNa
 		r.emitEvent(run.ID, issue.ID, "user", map[string]any{"text": extraPrompt})
 	}
 	go r.executeTurn(act, proj, issue, ac, prompt, false)
+	go r.dispatchRunEvent(run.ID, automation.EventRunStarted)
 	return run, nil
 }
 
@@ -692,6 +694,9 @@ func (r *Runner) closeWarmClient(runID int64) {
 // Shutdown terminates all active and warm agent processes gracefully before server exit/restart.
 func (r *Runner) Shutdown() {
 	r.stopOnce.Do(func() {
+		if r.st != nil {
+			r.st.SetIssueObservers(nil, nil)
+		}
 		if r.cancel != nil {
 			r.cancel()
 		}
@@ -1022,6 +1027,7 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 		_, _ = r.ArchiveRun(context.Background(), run.ID)
 	}()
 	r.pushNotification("run_done", fmt.Sprintf("[%s] 执行完成，待验收", issue.Key), issue.Title, fmt.Sprintf("/issues/%d", issueID), "")
+	go r.dispatchRunEvent(runID, automation.EventRunFinished)
 	if run.AutoPR {
 		autoSubmit = true
 	}
@@ -1364,6 +1370,14 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 						firstPRURL = url
 					}
 					prLinks = append(prLinks, fmt.Sprintf("- `%s`: %s", repo.Name, url))
+					r.dispatchPRCreated(proj, &repo, issue, &provider.PRDetailInfo{
+						Number:      prNumberFromURL(url),
+						Title:       prTitle,
+						State:       "open",
+						URL:         url,
+						HeadRefName: run.Branch,
+						BaseRefName: targetBranch,
+					})
 				}
 			}
 		}
@@ -1490,6 +1504,9 @@ func (r *Runner) Discard(ctx context.Context, runID int64) error {
 	if u, err := r.st.UpdateRun(ctx, run.ID, store.RunUpdate{Status: &st, Workdir: &empty, Ended: true}); err == nil {
 		r.notify.BroadcastRunUpdated(u)
 	}
+	if run.EndedAt == nil {
+		go r.dispatchRunEvent(run.ID, automation.EventRunFinished)
+	}
 	return nil
 }
 
@@ -1605,6 +1622,9 @@ func (r *Runner) setRunStatus(runID, issueID int64, st domain.RunStatus, started
 	if issue, err := r.st.GetIssue(context.Background(), issueID); err == nil {
 		r.notify.BroadcastIssueUpdated(issue)
 	}
+	if ended {
+		go r.dispatchRunEvent(runID, automation.EventRunFinished)
+	}
 }
 
 func (r *Runner) failRun(runID, issueID int64, msg string) {
@@ -1620,6 +1640,7 @@ func (r *Runner) failRun(runID, issueID int64, msg string) {
 		r.notify.BroadcastIssueUpdated(issue)
 		r.pushNotification("run_done", fmt.Sprintf("[%s] 执行失败", issue.Key), msg, fmt.Sprintf("/issues/%d", issueID), "")
 	}
+	go r.dispatchRunEvent(runID, automation.EventRunFinished)
 	go func() {
 		time.Sleep(300 * time.Millisecond)
 		_, _ = r.ArchiveRun(context.Background(), runID)

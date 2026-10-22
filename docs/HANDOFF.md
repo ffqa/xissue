@@ -39,11 +39,11 @@
   - 联动动作支持：自动新建 Issue（`create_issue`）、自动调度指定 Agent 执行（`trigger_run`）、自动拉取本地代码（`pull_local`）以及发送通知（`notify`）。
 - **插件与 Hook 定制规范 ([`docs/PLUGINS_AND_HOOKS.md`](file:///Users/gouki/server/ide/docs/PLUGINS_AND_HOOKS.md))**:
   - 设计并落地了三层定制架构（Event Hooks、Filter/Enrich Plugins、Action Providers）；
-  - 已落地的生命周期注入点（与代码一致）：`branch_push`、`pr_comment`、`pr_review`、`pr_merged`、`notification_dispatch`（仅插件）；`pr_created` 已在 Hook 检测清单中声明但尚未派发；`issue_created`、`issue_status_changed`、`run_started`、`run_finished`、`tool_call_intercept` 为后续规划项；
+  - 已落地的生命周期注入点（与代码一致）：`branch_push`、`pr_created`、`pr_merged`、`pr_comment`、`pr_review`、`notification_dispatch`、`issue_created`、`issue_status_changed`、`run_started`、`run_finished`；`tool_call_intercept` 仍为后续规划项；
   - 带有 15 秒执行超时保护（Unix 下按进程组 SIGKILL，子进程不会残留），采用标准输入输出 JSON 契约通信，确保宿主程序永不死锁；项目级 Hook 仅对本地目录仓库执行，`pr_comment`/`pr_review` 另有作者信任门控；
-- **开箱即用示例插件工程**:
-  - [`plugins/follow-commit-watcher`](file:///Users/gouki/server/ide/plugins/follow-commit-watcher): 追踪指定提交合并后的第 N 次提交或特定作者提交，可查看指定文件内容与生成 Diff 摘要；
-  - [`plugins/custom-notifier`](file:///Users/gouki/server/ide/plugins/custom-notifier): 全面扩展通知渠道（飞书卡片、企业微信 Markdown、钉钉、Bark 与 macOS 桌面原生通知）。
+- **开箱即用示例插件工程**（已迁移至独立官方仓库）:
+  - [xissue-plugins](https://github.com/ffqa/xissue-plugins): 官方插件目录（`custom-notifier`、`follow-commit-watcher`、`slack-notifier`、`run-audit`）；
+  - [xissue-plugin-template](https://github.com/ffqa/xissue-plugin-template): 插件模板仓库，含三种语言入口、fixtures、清单校验与 CI。
 
 ### 2.3 异机模型探测不可用排查与智能 PATH 方案
 - **排查出的三大根因**:
@@ -120,6 +120,14 @@
   - 自动保存后立即查询 API 与 SQLite，规则已落库；
   - `tsc --noEmit`、`vite build` 通过。
 
+### 2.8 插件生态独立（v0.2.15）
+- **契约 v1**: `plugin.yaml` 新增 `apiVersion`、`permissions` 与严格校验；未知事件/权限、缺失 entrypoint、绝对路径或 `..`/符号链接逃逸一律 fail-closed；`.disabled` 标记实现无需改动 manifest 的启停；
+- **安装链路**: 新增 `xissue plugin list|install|enable|disable|check`。安装器支持官方目录（`index.json`）、任意 `owner/repo`、monorepo `--path`、`--force` 原子替换；默认目录为 `<data-dir>/plugins`（默认 `~/.xissue/plugins`）；
+- **生命周期事件补齐**: 实际派发 `pr_created`、`issue_created`、`issue_status_changed`、`run_started`、`run_finished`；新增对应项目 Hook 检测项；`pr_merged` 现在会执行 `notify`/`pull_local`/`set_issue_status` 动作，并忽略 `merge_pr`；
+- **动作白名单**: 生命周期事件仅执行 `notify`，防止事件递归与 Token 失控；`branch_push`/`pr_comment`/`pr_review` 保留完整动作集；
+- **独立仓库**: 模板 <https://github.com/ffqa/xissue-plugin-template>，目录 <https://github.com/ffqa/xissue-plugins>（`custom-notifier`、`follow-commit-watcher`、`slack-notifier`、`run-audit`）；主仓不再重复维护示例插件；
+- **验证**: 新增 manifest/安装器/生命周期测试；真实从 GitHub 目录安装四个插件；浏览器验证插件 API 版本、权限、启用/禁用与错误状态展示；`go test -race`、`go vet`、`tsc`、`vite build` 通过。
+
 ---
 
 ## 3. 核心架构与关键代码索引
@@ -136,7 +144,7 @@ flowchart TD
     
     D -->|filepath.WalkDir| H["GitHub Wiki (wikis/repo-X) & Local Docs"]
     
-    E -->|Life-Cycle Events| I["Plugin & Hook Sandbox (plugins/)"]
+    E -->|Life-Cycle Events| I["Plugin & Hook Dispatch<br/>(~/.xissue/plugins + .xissue/hooks)"]
     E -->|Branch Watch Loop| G
 ```
 
@@ -153,9 +161,11 @@ flowchart TD
 | **知识库/Wiki** | [`internal/knowledge/knowledge.go`](file:///Users/gouki/server/ide/internal/knowledge/knowledge.go) | Wiki 与本地 Docs 递归扫描、全文搜索、正文读取与持久化保存 |
 | **知识库测试** | [`internal/knowledge/knowledge_test.go`](file:///Users/gouki/server/ide/internal/knowledge/knowledge_test.go) | 包含深层 Wiki 目录与搜索的自动化测试 |
 | **自动化引擎** | [`internal/automation/engine.go`](file:///Users/gouki/server/ide/internal/automation/engine.go) | 自动化规则评估、分支推送触发、动作派发与 Hook 事件派发 |
-| **插件系统文档** | [`docs/PLUGINS_AND_HOOKS.md`](file:///Users/gouki/server/ide/docs/PLUGINS_AND_HOOKS.md) | Hook 与插件编写方案、注入点数据契约、调试指南 |
-| **示例插件** | [`plugins/follow-commit-watcher/`](file:///Users/gouki/server/ide/plugins/follow-commit-watcher/) | 提交跟进、深层文件内容查看与 Diff 分析示例插件 |
-| **通知插件** | [`plugins/custom-notifier/`](file:///Users/gouki/server/ide/plugins/custom-notifier/) | 扩展飞书、钉钉、企微、Bark、macOS 桌面通知的示例插件 |
+| **插件系统** | [`internal/automation/manifest.go`](file:///Users/gouki/server/ide/internal/automation/manifest.go) | API v1 清单校验、事件白名单、entrypoint 逃逸防护 |
+| **插件安装** | [`internal/automation/install.go`](file:///Users/gouki/server/ide/internal/automation/install.go) | 目录索引、git clone、原子安装与 enable/disable |
+| **插件文档** | [`docs/PLUGINS_AND_HOOKS.md`](file:///Users/gouki/server/ide/docs/PLUGINS_AND_HOOKS.md) | Hook 与插件编写方案、注入点数据契约、调试指南 |
+| **插件模板** | [ffqa/xissue-plugin-template](https://github.com/ffqa/xissue-plugin-template) | Python/Node/Shell 入口、fixtures、清单校验与 CI |
+| **官方插件目录** | [ffqa/xissue-plugins](https://github.com/ffqa/xissue-plugins) | 通知渠道、提交追踪与 Run 审计插件 |
 | **通用弹窗** | [`web/src/components/common.tsx`](file:///Users/gouki/server/ide/web/src/components/common.tsx) | 统一 `Modal` 组件，支持 Esc 监听、`bodyStyle` 定制 |
 | **知识库弹窗** | [`web/src/components/KnowledgeBaseModal.tsx`](file:///Users/gouki/server/ide/web/src/components/KnowledgeBaseModal.tsx) | 深层目录展示、独立滚动区域、Markdown 预览与实时编辑 |
 | **提交详情弹窗** | [`web/src/components/WatchCommitDetailModal.tsx`](file:///Users/gouki/server/ide/web/src/components/WatchCommitDetailModal.tsx) | 分支历史 Commit 详情查看、外链跳转、一键生成 Issue |

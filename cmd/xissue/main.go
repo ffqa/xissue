@@ -38,6 +38,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  service [cmd]        管理开机自启常驻服务 (install/uninstall/status/restart)\n")
 		fmt.Fprintf(os.Stderr, "  update [--check]     检查并升级 xIssue (支持 Homebrew / 独立二进制自更新)\n")
 		fmt.Fprintf(os.Stderr, "  mcp [--install]      运行或注册 MCP JSON-RPC 服务到本机 IDE / Agent\n")
+		fmt.Fprintf(os.Stderr, "  plugin <cmd>         插件管理 (list/install/enable/disable/check)\n")
 		fmt.Fprintf(os.Stderr, "  version              打印当前版本并退出\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
@@ -90,6 +91,11 @@ func main() {
 			}
 		}
 		runMCPStdio(cfg)
+		return
+	}
+
+	if flag.NArg() > 0 && flag.Arg(0) == "plugin" {
+		runPlugin(cfg, flag.Args()[1:])
 		return
 	}
 
@@ -192,4 +198,3 @@ func runMCPStdio(cfg *config.Config) {
 		}
 	}
 }
-

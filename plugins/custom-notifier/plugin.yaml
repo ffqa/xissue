@@ -1,7 +1,0 @@
-name: custom-notifier
-version: 1.0.0
-description: 自定义通知渠道扩展插件，支持飞书卡片、企业微信 Markdown、钉钉加签机器人、Bark 及 macOS 桌面通知
-author: xIssue Team
-entrypoint: run.py
-events:
-  - notification_dispatch

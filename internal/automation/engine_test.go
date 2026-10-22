@@ -94,8 +94,11 @@ func TestListPluginsDisablesMalformedManifest(t *testing.T) {
 	if err := os.MkdirAll(good, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	manifest := "name: good\nevents:\n  - branch_push\nentrypoint: run.py\n"
+	manifest := "apiVersion: 1\nname: good\nevents:\n  - branch_push\nentrypoint: run.py\n"
 	if err := os.WriteFile(filepath.Join(good, "plugin.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(good, "run.py"), []byte("print('x')\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 

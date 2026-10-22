@@ -105,6 +105,7 @@ interface RunEvent {
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/health` | `{ ok, version, editorUrlTemplate }`。`editorUrlTemplate` 如 `vscode://file{path}`，前端替换 `{path}` 为绝对路径 |
+| GET | `/api/plugins` | 已安装插件 → `PluginInfo[]`（`apiVersion`、`events`、`permissions`、`enabled`、`error`）；CLI 为 `xissue plugin list` |
 | GET | `/api/agents` | `[{ name, command, available }]` |
 | GET | `/api/projects` | `Project[]` |
 | POST | `/api/projects` | `{ name, description }` → `Project` |

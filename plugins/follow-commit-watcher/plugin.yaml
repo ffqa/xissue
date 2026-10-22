@@ -1,8 +1,0 @@
-name: follow-commit-watcher
-version: 1.0.0
-description: 追踪本人或指定作者提交被合并后的后续第 N 次提交变动，可提取指定文件并生成 Diff 摘要发通知
-author: xIssue Team
-entrypoint: run.py
-events:
-  - branch_push
-  - pr_merged

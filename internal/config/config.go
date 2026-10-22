@@ -442,3 +442,4 @@ func (c *Config) DBPath() string     { return filepath.Join(c.DataDir, "xissue.d
 func (c *Config) MirrorsDir() string { return filepath.Join(c.DataDir, "mirrors") }
 func (c *Config) RunsDir() string    { return filepath.Join(c.DataDir, "runs") }
 func (c *Config) IssuesDir() string  { return filepath.Join(c.DataDir, "issues") }
+func (c *Config) PluginsDir() string { return filepath.Join(c.DataDir, "plugins") }

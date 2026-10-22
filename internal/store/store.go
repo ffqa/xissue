@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -23,6 +24,43 @@ var ErrNotFound = errors.New("not found")
 
 type Store struct {
 	db *sql.DB
+
+	obsMu          sync.RWMutex
+	onIssueCreated func(*domain.Issue)
+	onIssueStatus  func(*domain.Issue, domain.IssueStatus)
+}
+
+// SetIssueObservers registers lifecycle callbacks. Callbacks must return
+// quickly; slow work belongs in a goroutine. Passing nil clears an observer.
+func (s *Store) SetIssueObservers(created func(*domain.Issue), statusChanged func(*domain.Issue, domain.IssueStatus)) {
+	s.obsMu.Lock()
+	s.onIssueCreated = created
+	s.onIssueStatus = statusChanged
+	s.obsMu.Unlock()
+}
+
+func (s *Store) emitIssueCreated(issue *domain.Issue) {
+	if issue == nil {
+		return
+	}
+	s.obsMu.RLock()
+	fn := s.onIssueCreated
+	s.obsMu.RUnlock()
+	if fn != nil {
+		fn(issue)
+	}
+}
+
+func (s *Store) emitIssueStatusChanged(issue *domain.Issue, previous domain.IssueStatus) {
+	if issue == nil || issue.Status == previous {
+		return
+	}
+	s.obsMu.RLock()
+	fn := s.onIssueStatus
+	s.obsMu.RUnlock()
+	if fn != nil {
+		fn(issue, previous)
+	}
 }
 
 func Open(path string) (*Store, error) {
@@ -500,7 +538,12 @@ func (s *Store) CreateLocalIssue(ctx context.Context, projectID int64, title, bo
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return s.GetIssue(ctx, id)
+	issue, err := s.GetIssue(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	s.emitIssueCreated(issue)
+	return issue, nil
 }
 
 // UpsertRemoteIssue inserts or refreshes an issue imported from a git platform.
@@ -519,7 +562,13 @@ func (s *Store) UpsertRemoteIssue(ctx context.Context, i domain.Issue) (created 
 	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO issues(project_id, key, source, repo_id, remote_number, remote_url, title, body, labels, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 		i.ProjectID, i.Key, "remote", i.RepoID, i.RemoteNumber, i.RemoteURL, i.Title, i.Body, string(lb), domain.IssueTodo, t, t)
-	return err == nil, err
+	if err != nil {
+		return false, err
+	}
+	if createdIssue, gerr := s.FindIssueByKey(ctx, i.ProjectID, i.Key); gerr == nil {
+		s.emitIssueCreated(createdIssue)
+	}
+	return true, nil
 }
 
 type IssuePatch struct {
@@ -530,6 +579,18 @@ type IssuePatch struct {
 
 func (s *Store) UpdateIssue(ctx context.Context, id int64, p IssuePatch) (*domain.Issue, error) {
 	sets, args := []string{}, []any{}
+	previousStatus := domain.IssueStatus("")
+	if p.Status != nil {
+		if !domain.ValidIssueStatus(*p.Status) {
+			return nil, fmt.Errorf("invalid status %q", *p.Status)
+		}
+		if err := s.db.QueryRowContext(ctx, `SELECT status FROM issues WHERE id=?`, id).Scan(&previousStatus); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, ErrNotFound
+			}
+			return nil, err
+		}
+	}
 	if p.Title != nil {
 		sets, args = append(sets, "title=?"), append(args, *p.Title)
 	}
@@ -537,9 +598,6 @@ func (s *Store) UpdateIssue(ctx context.Context, id int64, p IssuePatch) (*domai
 		sets, args = append(sets, "body=?"), append(args, *p.Body)
 	}
 	if p.Status != nil {
-		if !domain.ValidIssueStatus(*p.Status) {
-			return nil, fmt.Errorf("invalid status %q", *p.Status)
-		}
 		sets, args = append(sets, "status=?"), append(args, *p.Status)
 	}
 	sets, args = append(sets, "updated_at=?"), append(args, now())
@@ -547,7 +605,14 @@ func (s *Store) UpdateIssue(ctx context.Context, id int64, p IssuePatch) (*domai
 	if _, err := s.db.ExecContext(ctx, `UPDATE issues SET `+strings.Join(sets, ",")+` WHERE id=?`, args...); err != nil {
 		return nil, err
 	}
-	return s.GetIssue(ctx, id)
+	issue, err := s.GetIssue(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if p.Status != nil {
+		s.emitIssueStatusChanged(issue, previousStatus)
+	}
+	return issue, nil
 }
 
 // MarkIssuePublished converts a local issue into a remote one, keeping history.

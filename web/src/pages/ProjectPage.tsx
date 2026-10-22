@@ -2119,7 +2119,8 @@ export default function ProjectPage() {
                 >
                   {(pluginsQ.data ?? []).length === 0 ? (
                     <div style={{ color: 'var(--text-3)', fontSize: 12, lineHeight: 1.6 }}>
-                      暂未检测到外部生态插件。支持在 <code>~/.xissue/plugins/&lt;plugin-id&gt;/plugin.yaml</code> 中声明插件清单与 entrypoint 脚本，系统将在 PR 评论与审核生命周期自动调用！
+                      暂未检测到生态插件。使用 <code>xissue plugin install &lt;name&gt;</code> 从官方目录安装，或把插件放入{' '}
+                      <code>~/.xissue/plugins/&lt;plugin-id&gt;/</code> 后刷新。插件需声明 <code>apiVersion: 1</code>。
                     </div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -2128,19 +2129,36 @@ export default function ProjectPage() {
                           key={p.id}
                           style={{
                             display: 'flex',
-                            alignItems: 'center',
+                            alignItems: 'flex-start',
                             justifyContent: 'space-between',
-                            padding: '6px 10px',
+                            padding: '8px 10px',
                             background: 'var(--bg-1)',
                             border: '1px solid var(--border)',
                             borderRadius: 6,
+                            gap: 12,
                           }}
                         >
-                          <div>
-                            <b>{p.name}</b> <span className="dim small">v{p.version}</span>
-                            <span className="dim small" style={{ marginLeft: 6 }}>({p.description || '生态插件'})</span>
+                          <div style={{ minWidth: 0 }}>
+                            <b>{p.name}</b> <span className="dim small">v{p.version}</span>{' '}
+                            <span className="badge mono" style={{ fontSize: 10 }}>api v{p.apiVersion}</span>
+                            <div className="dim small" style={{ marginTop: 2 }}>{p.description || '生态插件'}</div>
+                            <div className="dim mono" style={{ fontSize: 10, marginTop: 4 }}>
+                              {p.events.join(', ')}
+                              {p.permissions.length > 0 && ` · ${p.permissions.join(', ')}`}
+                            </div>
+                            {p.error && (
+                              <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>{p.error}</div>
+                            )}
                           </div>
-                          <span style={{ fontSize: 11, color: 'var(--green)' }}>✓ 已加载</span>
+                          <span
+                            style={{
+                              fontSize: 11,
+                              whiteSpace: 'nowrap',
+                              color: p.enabled ? 'var(--green)' : p.error ? 'var(--red)' : 'var(--text-3)',
+                            }}
+                          >
+                            {p.enabled ? '✓ 已启用' : p.error ? '✕ 清单无效' : '○ 已禁用'}
+                          </span>
                         </div>
                       ))}
                     </div>

@@ -44,13 +44,97 @@ flowchart TD
 | 注入点 (Event Name) | 对应 Hook 脚本名 | 触发时机与典型应用场景 |
 | :--- | :--- | :--- |
 | `branch_push` | `on-branch-push` | **监控分支收到新代码推送**：触发后续提交追踪、自动建 Issue、拉取镜像、运行 Agent 分析审查 |
+| `pr_created` | `on-pr-created` | **xIssue 成功创建 PR**：发送通知、记录 PR 元数据、触发外部审查 |
 | `pr_merged` | `on-pr-merged` | **PR 成功合并到目标分支**：记录合并基准点、重置后续提交计数、触发部署流水线或通知 |
-| `notification_dispatch`| （仅插件，项目 Hook 未接入） | **系统发出通知**：接管或扩展通知渠道（扩展飞书卡片、企业微信、钉钉加签、Bark、macOS 桌面横幅等） |
+| `notification_dispatch` | `on-notify` | **系统发出通知**：扩展飞书卡片、企业微信、钉钉加签、Bark、Slack、macOS 桌面横幅等渠道 |
 | `pr_comment` | `on-pr-comment` | **PR 收到新评论或检查报告**：识别 QA 报告或 Bot 指令自动合入 PR 或打标签 |
 | `pr_review` | `on-pr-review` | **PR 收到审核批准 (Review)**：指定审核人 Approved 后自动触发合入 |
-| `pr_created` | `on-pr-created` | **规划中**：目前仅在 Hook 检测清单中展示，提交 PR 时不会派发 |
+| `issue_created` | `on-issue-created` | **本地或远程 Issue 首次创建**：自动打标、外部系统同步、自定义通知 |
+| `issue_status_changed` | `on-issue-status-changed` | **Issue 状态变化**：同步 Jira/Linear、审计状态流转、通知负责人 |
+| `run_started` | `on-run-started` | **Agent Run 开始**：写入审计日志、设置外部计时器 |
+| `run_finished` | `on-run-finished` | **Run 完成、失败或取消**：审计日志、失败告警、派生后续任务 |
 
-> 规划中的注入点（尚未实现派发）：`issue_created`、`issue_status_changed`、`run_started`、`run_finished`、`tool_call_intercept`。请勿依赖这些事件编写线上插件。
+> 尚未实现派发的注入点：`tool_call_intercept`。请勿依赖该事件编写线上插件。
+
+### 事件动作支持范围
+
+不同事件拥有不同的上下文与安全边界：
+
+| 事件 | 支持执行的 Action |
+| :--- | :--- |
+| `branch_push`、`pr_comment`、`pr_review` | 全部：`notify`、`create_issue`、`trigger_run`、`pull_local`、`merge_pr`、`set_issue_status` |
+| `pr_merged` | `notify`、`pull_local`、`set_issue_status`（`merge_pr` 会被忽略，避免重复合并） |
+| `issue_created`、`issue_status_changed`、`run_started`、`run_finished`、`pr_created`、`notification_dispatch` | 仅 `notify`；其余动作会被记录并忽略，防止事件递归与 Token 失控 |
+
+事件回调始终执行插件；插件返回的 Action 由上述白名单决定是否落地。生命周期事件的上下文包含 `issue`、`run`、`previousStatus`、`timestamp` 等字段。
+
+---
+
+## 🧩 二点五、插件契约 v1、安装与生态仓库
+
+### 1. `plugin.yaml` v1
+
+```yaml
+apiVersion: 1
+name: my-plugin          # 小写 id，同时作为安装目录名
+version: 1.0.0
+description: 一句话说明
+author: your-name
+entrypoint: run.py       # 相对路径，不允许绝对路径或 .. 逃逸
+events:
+  - issue_created
+  - run_finished
+permissions:             # 仅声明与审计，不是沙箱
+  - notify
+  - network
+```
+
+校验规则（不满足时插件保持禁用并在 UI/CLI 显示错误）：
+
+- `apiVersion` 必须为 `1`（旧清单缺省视为 v1）；
+- `name` 必须匹配 `^[a-z0-9][a-z0-9._-]{0,63}$`；
+- `events` 非空且只能使用上表事件名或 `all` / `*`；
+- `entrypoint` 必须位于插件目录内，禁止绝对路径、`..` 与符号链接逃逸；
+- `permissions` 仅允许 `repo:read`、`repo:write`、`network`、`notify`、`process`；
+- 清单损坏、事件未知或 entrypoint 缺失时 fail-closed。
+
+JSON Schema 见仓库 [`schemas/plugin.schema.json`](../schemas/plugin.schema.json)。
+
+### 2. 安装命令
+
+```bash
+# 从官方目录安装
+xissue plugin install custom-notifier
+
+# 从任意 GitHub 仓库安装
+xissue plugin install your-github-user/your-plugin
+
+# monorepo 子目录
+xissue plugin install your-github-user/monorepo --path plugins/my-plugin
+
+# 本地开发
+xissue plugin check .
+ln -s "$PWD" ~/.xissue/plugins/my-plugin
+
+xissue plugin list
+xissue plugin disable my-plugin
+xissue plugin enable my-plugin
+```
+
+安装器会 `git clone --depth 1`、校验 manifest、复制到
+`~/.xissue/plugins/<name>`（或 `-data-dir` 对应的 `plugins/`）。默认不覆盖已有安装，使用 `--force` 替换。目录索引可通过 `--catalog` 或 `XISSUE_PLUGIN_INDEX` 覆盖。
+
+- 官方模板仓库：<https://github.com/ffqa/xissue-plugin-template>
+- 官方插件目录：<https://github.com/ffqa/xissue-plugins>（`index.json` 为机器可读索引）
+- 当前目录插件：`custom-notifier`、`follow-commit-watcher`、`slack-notifier`、`run-audit`
+
+### 3. 执行模型与安全边界
+
+- 插件以当前用户权限运行，manifest 的 `permissions` **不会**限制文件、网络或子进程访问；只安装你信任的代码。
+- 每次调用 15 秒超时；Unix 下以独立进程组启动，超时后整组 SIGKILL。
+- Python entrypoint 使用 `python3`，JavaScript 使用 `node`，其他 entrypoint 直接执行。
+- 插件目录即工作目录；状态文件应写入插件目录或显式配置的路径。
+- Layer 2 项目 Hook 仍仅对本地目录仓库执行；远程镜像与 run worktree 中的脚本不会被执行。
 
 ---
 
@@ -138,26 +222,32 @@ xIssue 通过标准输入（`stdin`）将上下文信息以 JSON 格式传递给
 
 用户常见需求：*“我的 PR 合并后，我想追踪主线分支接下来的第 1 次或前 3 次提交，看别人有没有改坏我的模块，或者直接查看该提交下的指定文件与 Diff。”*
 
-内置完整实现详见项目目录：[`plugins/follow-commit-watcher`](file:///Users/gouki/server/ide/plugins/follow-commit-watcher)。
+内置完整实现详见官方插件仓库：[`follow-commit-watcher`](https://github.com/ffqa/xissue-plugins/tree/main/plugins/follow-commit-watcher)。
 
 ### 1. 插件结构
 ```
-plugins/follow-commit-watcher/
+follow-commit-watcher/
 ├── plugin.yaml          # 插件清单 (声明监听 branch_push 与 pr_merged)
 ├── run.py               # 核心逻辑 (Python 3 标准库，无外部依赖)
-└── config.json          # 自定义配置 (指定关注作者、关注的文件清单)
+├── config.example.json  # 示例配置 (关注作者、关注文件、镜像目录)
+└── README.md
 ```
 
 ### 2. 插件元数据 `plugin.yaml`
 ```yaml
+apiVersion: 1
 name: follow-commit-watcher
-version: 1.0.0
-description: 追踪本人或指定作者提交被合并后的后续第 N 次提交变动，可提取指定文件并生成 Diff 摘要发通知
-author: Developer
+version: 1.1.0
+description: 追踪合并后或指定作者的后续提交，提取文件预览并通知
+author: ffqa
 entrypoint: run.py
 events:
   - branch_push
   - pr_merged
+permissions:
+  - repo:read
+  - process
+  - notify
 ```
 
 ### 3. 查看指定文件内容与 Diff 的核心实现技巧
@@ -187,16 +277,20 @@ diff_stat = subprocess.check_output(
 
 ## 📢 五、实战二：像 DeepSeek Harness 一样定制通知渠道
 
-内置完整实现详见项目目录：[`plugins/custom-notifier`](file:///Users/gouki/server/ide/plugins/custom-notifier)。
+内置完整实现详见官方插件仓库：[`custom-notifier`](https://github.com/ffqa/xissue-plugins/tree/main/plugins/custom-notifier)。
 
 ### 1. 监听 `notification_dispatch`
 只需在 `plugin.yaml` 中声明：
 ```yaml
+apiVersion: 1
 name: custom-notifier
-version: 1.0.0
+version: 1.1.0
 entrypoint: run.py
 events:
   - notification_dispatch
+permissions:
+  - network
+  - process
 ```
 
 ### 2. 派发到任意平台
@@ -204,10 +298,10 @@ events:
 
 #### 派发到 macOS 原生桌面横幅
 ```python
-clean_title = title.replace('"', '\\"')
-clean_body = body.replace('"', '\\"').replace("\n", " ")[:120]
-subprocess.run(["osascript", "-e", f'display notification "{clean_body}" with title "{clean_title}"'])
+script = "on run argv\ndisplay notification (item 2 of argv) with title (item 1 of argv)\nend run"
+subprocess.run(["osascript", "-e", script, title[:120], body.replace("\n", " ")[:180]])
 ```
+使用 `argv` 传参，避免把通知正文拼接进 AppleScript 造成注入。
 
 #### 派发到飞书富文本互动卡片
 ```python
@@ -245,9 +339,11 @@ urllib.request.urlopen(bark_url)
    - 项目级 Layer 2 Hook 仅从**本地目录添加的仓库**执行；远程镜像仓库、run worktree 中的 `.xissue/hooks` 不会被执行；
    - `pr_comment` / `pr_review` 只有评论作者等于 PR 作者或被任意自动化规则显式点名的作者才会触发 Hook；
    - `branch_push` 仅对本地目录仓库执行，且需满足 `shouldRunProjectHooks`（非本地来源还要求作者属于规则白名单）；
-3. **清单失败即禁用**：`plugin.yaml` 读取或解析失败时插件默认 `Enabled=false`，不会被意外启用；
+3. **清单失败即禁用**：`plugin.yaml` 缺失、解析失败、API 版本不支持、事件未知或 entrypoint 逃逸时，插件 `Enabled=false`，不会被意外启用；
 4. **独立进程空间**：插件以独立子进程运行，崩溃或异常退出不会影响 xIssue 自身稳定性；
-5. **日志审计**：Hook/Plugin 非零退出时，其 `stderr` 会随错误写入监控日志；目前不会逐行实时转发插件输出。
+5. **权限声明不是沙箱**：`permissions` 仅用于审计与 UI 展示。插件以当前用户身份运行，可读写文件、访问网络、启动子进程；请只安装可信代码；
+6. **生命周期动作白名单**：`issue_*`、`run_*`、`pr_created`、`notification_dispatch` 仅执行 `notify`，避免插件递归触发事件；`pr_merged` 忽略 `merge_pr`；
+7. **日志审计**：Hook/Plugin 非零退出时，其 `stderr` 会随错误写入监控日志；目前不会逐行实时转发插件输出。
 
 ---
 
@@ -256,8 +352,12 @@ urllib.request.urlopen(bark_url)
 无需等待后台事件触发，可以直接在终端中通过管道喂入 Mock JSON 进行毫秒级本地测试：
 
 ```bash
-# 测试 follow-commit-watcher 插件
-cat << 'EOF' | python3 plugins/follow-commit-watcher/run.py
+# 校验清单
+xissue plugin check .
+
+# 测试 follow-commit-watcher 插件（官方插件仓库）
+git clone https://github.com/ffqa/xissue-plugins /tmp/xissue-plugins
+cat << 'EOF' | python3 /tmp/xissue-plugins/plugins/follow-commit-watcher/run.py
 {
   "event": "branch_push",
   "branch": "main",
@@ -273,4 +373,4 @@ cat << 'EOF' | python3 plugins/follow-commit-watcher/run.py
 EOF
 ```
 
-控制台会即时输出生成的 Action JSON，确保上线运行零失误。
+控制台会即时输出生成的 Action JSON，确保上线运行零失误。模板仓库提供 `fixtures/` 与 `scripts/validate_manifest.py`，可直接在 CI 中复跑。

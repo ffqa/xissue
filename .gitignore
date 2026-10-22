@@ -5,6 +5,3 @@ web/node_modules/
 internal/server/dist/*
 !internal/server/dist/.gitkeep
 .qoder/
-
-# Plugin runtime state
-plugins/follow-commit-watcher/.watcher_state.json

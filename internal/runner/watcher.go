@@ -1379,10 +1379,29 @@ func (r *Runner) processPRMergedAutomation(ctx context.Context, issue *domain.Is
 	}
 
 	// Layer 2: Hooks (on-pr-merged)
-	_, _ = r.automation.ExecuteProjectHooks(ctx, workdir, payload)
+	var actions []domain.RuleAction
+	if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
+		actions = append(actions, hookActions...)
+	}
 
 	// Layer 3: Plugins
-	_, _ = r.automation.ExecutePlugins(ctx, payload)
+	if plugActions, perr := r.automation.ExecutePlugins(ctx, payload); perr == nil {
+		actions = append(actions, plugActions...)
+	}
+
+	// The PR is already merged; never run merge_pr again from this event.
+	filtered := actions[:0]
+	for _, act := range actions {
+		if act.Type != "merge_pr" {
+			filtered = append(filtered, act)
+		} else {
+			r.LogMonitor("WARN", "automation", "pr_merged 事件忽略 merge_pr 动作（PR 已合并）")
+		}
+	}
+	if len(filtered) > 0 {
+		r.LogMonitor("EVENT", "automation", fmt.Sprintf("PR #%d 合并事件触发 %d 个生命周期动作", prDetail.Number, len(filtered)))
+		_, _ = r.executeActions(ctx, filtered, project, repo, issue, run, prDetail, "PR 合并", prDetail.Author)
+	}
 
 	r.LogMonitor("EVENT", "automation", fmt.Sprintf("PR #%d 合并事件已成功派发至生命周期 Hooks 与插件 (pr_merged)", prDetail.Number))
 	return nil

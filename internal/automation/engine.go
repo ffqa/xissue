@@ -10,13 +10,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/gitx"
 	"github.com/xpier/xissue/internal/provider"
-	"gopkg.in/yaml.v3"
 )
 
 // NotificationEventContext provides notification dispatch details to hooks and plugins.
@@ -30,17 +30,20 @@ type NotificationEventContext struct {
 
 // PREventContext is passed to Hook scripts and Plugins via stdin.
 type PREventContext struct {
-	Event        string                    `json:"event"` // pr_comment | pr_review | branch_push | pr_merged | pr_created | notification_dispatch
-	Project      domain.Project            `json:"project"`
-	Repo         *domain.Repo              `json:"repo,omitempty"`
-	Branch       string                    `json:"branch,omitempty"`
-	TipSHA       string                    `json:"tipSha,omitempty"`
-	Commits      []gitx.CommitInfo         `json:"commits,omitempty"`
-	Issue        *domain.Issue             `json:"issue,omitempty"`
-	PR           *provider.PRDetailInfo    `json:"pr,omitempty"`
-	Comment      *provider.PRComment       `json:"comment,omitempty"`
-	Review       *provider.PRReview        `json:"review,omitempty"`
-	Notification *NotificationEventContext `json:"notification,omitempty"`
+	Event          string                    `json:"event"` // pr_comment | pr_review | branch_push | pr_merged | pr_created | notification_dispatch
+	Project        domain.Project            `json:"project"`
+	Repo           *domain.Repo              `json:"repo,omitempty"`
+	Branch         string                    `json:"branch,omitempty"`
+	TipSHA         string                    `json:"tipSha,omitempty"`
+	Commits        []gitx.CommitInfo         `json:"commits,omitempty"`
+	Issue          *domain.Issue             `json:"issue,omitempty"`
+	PR             *provider.PRDetailInfo    `json:"pr,omitempty"`
+	Comment        *provider.PRComment       `json:"comment,omitempty"`
+	Review         *provider.PRReview        `json:"review,omitempty"`
+	Notification   *NotificationEventContext `json:"notification,omitempty"`
+	Run            *domain.Run               `json:"run,omitempty"`
+	PreviousStatus string                    `json:"previousStatus,omitempty"`
+	Timestamp      string                    `json:"timestamp,omitempty"`
 }
 
 // HookResult is parsed from Hook script or Plugin stdout.
@@ -217,26 +220,20 @@ func (e *Engine) ExecutePlugins(ctx context.Context, payload PREventContext) ([]
 	var actions []domain.RuleAction
 
 	for _, p := range plugins {
-		if !p.Enabled {
+		if !p.Enabled || p.Error != "" {
 			continue
 		}
-		hasEvent := false
-		for _, ev := range p.Events {
-			if ev == payload.Event || ev == "all" || ev == "*" {
-				hasEvent = true
-				break
-			}
-		}
-		if !hasEvent {
+		if !pluginEventMatches(p.Events, payload.Event) {
 			continue
 		}
-
-		manifestFile := filepath.Join(p.Path, "plugin.yaml")
-		entrypoint := e.getPluginEntrypoint(manifestFile)
-		if entrypoint == "" {
-			entrypoint = "run"
+		manifest, _, err := LoadPluginManifest(p.Path)
+		if err != nil {
+			continue
 		}
-		entryPath := filepath.Join(p.Path, entrypoint)
+		entryPath, err := securePluginPath(p.Path, manifest.Entrypoint)
+		if err != nil {
+			continue
+		}
 		if info, err := os.Stat(entryPath); err == nil && !info.IsDir() {
 			acts, err := e.runScriptWithPayload(ctx, entryPath, payload)
 			if err == nil {
@@ -314,6 +311,10 @@ func DetectHooks(workdir string) []domain.HookStatus {
 		{"on-pr-comment", "pr_comment", "PR 收到新评论或报告时触发"},
 		{"on-pr-review", "pr_review", "PR 收到审核批准 (Review) 时触发"},
 		{"on-pr-created", "pr_created", "新 PR 提交创建成功时触发"},
+		{"on-issue-created", "issue_created", "本地或远程 Issue 首次创建时触发"},
+		{"on-issue-status-changed", "issue_status_changed", "Issue 状态发生变化时触发"},
+		{"on-run-started", "run_started", "Agent Run 开始执行时触发"},
+		{"on-run-finished", "run_finished", "Agent Run 完成、失败或取消时触发"},
 	}
 
 	var out []domain.HookStatus
@@ -349,93 +350,51 @@ func DetectHooks(workdir string) []domain.HookStatus {
 	return out
 }
 
-// ListPlugins scans global plugins directory (~/.xissue/plugins).
+// ListPlugins scans the plugins directory and reports both valid and broken installs.
 func (e *Engine) ListPlugins() []domain.PluginInfo {
 	entries, err := os.ReadDir(e.pluginsDir)
 	if err != nil {
 		return nil
 	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	var out []domain.PluginInfo
 	for _, entry := range entries {
-		if !entry.IsDir() {
+		if strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		pluginDir := filepath.Join(e.pluginsDir, entry.Name())
-		manifestFile := filepath.Join(pluginDir, "plugin.yaml")
-		if _, err := os.Stat(manifestFile); err != nil {
-			manifestFile = filepath.Join(pluginDir, "plugin.json")
-			if _, err2 := os.Stat(manifestFile); err2 != nil {
-				continue
-			}
+		if info, err := os.Stat(pluginDir); err != nil || !info.IsDir() {
+			continue
 		}
-
 		info := domain.PluginInfo{
-			ID:      entry.Name(),
-			Name:    entry.Name(),
-			Version: "1.0.0",
-			Path:    pluginDir,
-			Enabled: true,
-			Events:  []string{"pr_comment", "pr_review"},
+			ID:          entry.Name(),
+			Name:        entry.Name(),
+			Version:     "0.0.0",
+			APIVersion:  PluginAPIVersion,
+			Path:        pluginDir,
+			Enabled:     false,
+			Events:      []string{},
+			Permissions: []string{},
 		}
-
-		data, err := os.ReadFile(manifestFile)
+		manifest, _, err := LoadPluginManifest(pluginDir)
 		if err != nil {
-			info.Enabled = false
-			info.Description = "manifest 读取失败: " + err.Error()
+			info.Error = err.Error()
+			info.Description = "插件清单无效: " + err.Error()
 			out = append(out, info)
 			continue
 		}
-		var m struct {
-			Name        string   `yaml:"name" json:"name"`
-			Version     string   `yaml:"version" json:"version"`
-			Description string   `yaml:"description" json:"description"`
-			Author      string   `yaml:"author" json:"author"`
-			Events      []string `yaml:"events" json:"events"`
-			Enabled     *bool    `yaml:"enabled" json:"enabled"`
-		}
-		if err := yaml.Unmarshal(data, &m); err != nil {
-			// A malformed manifest must never enable an external script by accident.
+		info.Name = manifest.Name
+		info.Version = manifest.Version
+		info.APIVersion = manifest.APIVersion
+		info.Description = manifest.Description
+		info.Author = manifest.Author
+		info.Events = manifest.Events
+		info.Permissions = manifest.Permissions
+		info.Enabled = manifest.Enabled == nil || *manifest.Enabled
+		if _, statErr := os.Stat(filepath.Join(pluginDir, PluginDisabledFile)); statErr == nil {
 			info.Enabled = false
-			info.Description = "manifest 解析失败: " + err.Error()
-			out = append(out, info)
-			continue
 		}
-		if m.Name != "" {
-			info.Name = m.Name
-		}
-		if m.Version != "" {
-			info.Version = m.Version
-		}
-		if m.Description != "" {
-			info.Description = m.Description
-		}
-		if m.Author != "" {
-			info.Author = m.Author
-		}
-		if len(m.Events) > 0 {
-			info.Events = m.Events
-		}
-		if m.Enabled != nil {
-			info.Enabled = *m.Enabled
-		}
-
 		out = append(out, info)
 	}
 	return out
-}
-
-func (e *Engine) getPluginEntrypoint(manifestFile string) string {
-	data, err := os.ReadFile(manifestFile)
-	if err != nil {
-		return "run"
-	}
-	var m struct {
-		Entrypoint string `yaml:"entrypoint" json:"entrypoint"`
-	}
-	_ = yaml.Unmarshal(data, &m)
-	ep := filepath.Clean(strings.TrimSpace(m.Entrypoint))
-	if ep != "" && !filepath.IsAbs(ep) && !strings.HasPrefix(ep, "..") {
-		return ep
-	}
-	return "run"
 }

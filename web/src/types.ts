@@ -71,11 +71,14 @@ export interface PluginInfo {
   id: string;
   name: string;
   version: string;
+  apiVersion: number;
   description: string;
   author: string;
   events: string[];
+  permissions: string[];
   path: string;
   enabled: boolean;
+  error?: string;
 }
 
 export type IssueStatus = 'backlog' | 'todo' | 'running' | 'review' | 'pr_open' | 'done' | 'failed';

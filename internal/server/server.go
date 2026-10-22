@@ -28,7 +28,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.17"
+const Version = "0.2.18"
 
 type Server struct {
 	cfg    *config.Config
@@ -636,6 +636,8 @@ func (s *Server) syncProjectIssues(ctx context.Context, proj *domain.Project) (i
 			if created {
 				imported++
 				s.handleNewRemoteIssue(ctx, proj, repo, ri)
+			} else {
+				s.triageExistingRemoteIssue(ctx, proj, repo, ri)
 			}
 		}
 	}
@@ -668,6 +670,33 @@ func (s *Server) handleNewRemoteIssue(ctx context.Context, proj *domain.Project,
 		return
 	}
 	s.maybeAutoDevelop(ctx, proj, issue.Key, ri.Author, triage)
+}
+
+// triageExistingRemoteIssue backfills canonical labels for issues imported
+// before triage existed. It never starts an agent run.
+func (s *Server) triageExistingRemoteIssue(ctx context.Context, proj *domain.Project, repo domain.Repo, ri provider.RemoteIssue) {
+	issue, err := s.st.FindIssueByKey(ctx, proj.ID, provider.IssueKey(repo, ri.Number))
+	if err != nil || issue.Status == domain.IssueDone {
+		return
+	}
+	for _, label := range issue.Labels {
+		switch strings.ToLower(strings.TrimSpace(label)) {
+		case "bug", "enhancement", "suggestion":
+			return
+		}
+	}
+	triage := runner.ClassifyIssue(*issue)
+	if triage.Kind == runner.IssueKindUnknown {
+		return
+	}
+	if updated, err := s.st.AddIssueLabels(ctx, issue.ID, triage.Label); err == nil {
+		issue = updated
+		s.hub.BroadcastIssueUpdated(issue)
+	}
+	if err := provider.For(repo.Provider).AddLabels(ctx, repo, ri.Number, []string{triage.Label}); err != nil {
+		s.runner.LogMonitor("WARN", "triage", fmt.Sprintf("%s 远程补标失败 (%s): %v", issue.Key, triage.Label, err))
+	}
+	s.runner.LogMonitor("EVENT", "triage", fmt.Sprintf("%s 历史 Issue 补判为 %s (%s)", issue.Key, triage.Kind, triage.Reason))
 }
 
 // syncAllProjectIssues imports issues for every project. It never aborts the

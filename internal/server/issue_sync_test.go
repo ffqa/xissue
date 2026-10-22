@@ -181,3 +181,60 @@ printf '%s' '[{"number":7,"title":"auto sync","body":"","labels":[],"url":"https
 	b, _ := json.Marshal(issues)
 	t.Fatalf("background sync did not import issue: %s", b)
 }
+
+func TestSyncBackfillsTriageForExistingIssues(t *testing.T) {
+	srv, st, tmpDir := newTestServer(t)
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+printf '%s' '[{"number":11,"title":"Please add plugin config","body":"support editing config.json","labels":[],"url":"https://example.test/issues/11","author":{"login":"dave"}}]'
+`
+	if err := os.WriteFile(filepath.Join(binDir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	proj, err := st.CreateProject(context.Background(), "Backfill", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := st.CreateRepo(context.Background(), domain.Repo{
+		ProjectID:     proj.ID,
+		Name:          "backfill",
+		Provider:      domain.ProviderGitHub,
+		OwnerRepo:     "acme/backfill",
+		DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	num := int64(11)
+	if _, err := st.UpsertRemoteIssue(context.Background(), domain.Issue{
+		ProjectID:    proj.ID,
+		Key:          "acme/backfill#11",
+		RepoID:       &repo.ID,
+		RemoteNumber: &num,
+		Title:        "Please add plugin config",
+		Body:         "support editing config.json",
+		Status:       domain.IssueTodo,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	proj, err = st.GetProject(context.Background(), proj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.syncProjectIssues(context.Background(), proj); err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.FindIssueByKey(context.Background(), proj.ID, "acme/backfill#11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(issue.Labels) != 1 || issue.Labels[0] != "enhancement" {
+		t.Fatalf("expected backfilled enhancement label, got %+v", issue.Labels)
+	}
+}

@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.17` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.18` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.17`
+- **最新发布版本**: `v0.2.18`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -153,6 +153,7 @@
 - **自动升级**：`autoUpdate`（默认开启）每小时检查官方 GitHub Release；发现新版本先发应用内/外部通知，再调用 `xissue update`（SHA256SUMS fail-closed 校验）并重启服务；有执行中的 Run 时顺延到下一轮，同一版本失败 6 小时内不重复尝试；
 - **底部实时状态栏**：`GET /api/status` 每 2 秒采样，展示版本、运行时长、Go 堆内存、进程 CPU、磁盘可用/占用、GC 次数与下次 GC 估算、Goroutine 数、自动更新状态。
 - **性能**：提交列表/分支/Commit 详情默认读本地镜像（`EnsureMirrorCached`），首次进入不再等待远端 fetch；「同步远端」按钮显式 `refresh=1`，Commit 详情在缓存缺失时自动 fetch 一次。
+- **历史 Issue 补标**：同步时会为升级前已导入、尚无 `bug`/`enhancement`/`suggestion` 标签的未完成 Issue 补做分类与远端打标，但不会为历史 Issue 启动 Agent。
 
 ---
 

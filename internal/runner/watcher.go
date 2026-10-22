@@ -21,8 +21,10 @@ import (
 
 // FormatChangeRecord formats the standardized change record requested by the user:
 // 本次改动：
-//  a. ...
-//  b. ...
+//
+//	a. ...
+//	b. ...
+//
 // 分支：xxx : xxxx
 // PR：
 // 备注：
@@ -196,7 +198,14 @@ func (r *Runner) sendExternalNotification(kind, title, body, link string) {
 }
 
 func escapeTelegramMarkdown(s string) string {
-	return strings.ReplaceAll(s, "_", "\\_")
+	replacer := strings.NewReplacer(
+		`\`, `\\`,
+		`_`, `\_`,
+		`*`, `\*`,
+		"`", "\\`",
+		`[`, `\[`,
+	)
+	return replacer.Replace(s)
 }
 
 func IsWithinActiveHours(activeHours string, t time.Time) bool {
@@ -867,7 +876,7 @@ func (r *Runner) GetMonitorStatus(ctx context.Context) (*MonitorStatus, error) {
 
 	mon := r.cfg.MonitorSnapshot()
 	res := &MonitorStatus{
-		Running:              true,
+		Running:              mon.Enabled && IsWithinActiveHours(mon.ActiveHours, time.Now()),
 		Enabled:              mon.Enabled,
 		ActiveHours:          mon.ActiveHours,
 		TelegramConfigured:   strings.TrimSpace(mon.TelegramBotToken) != "" && strings.TrimSpace(mon.TelegramChatID) != "",
@@ -1307,10 +1316,7 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 			if act.Type == "trigger_run" {
 				agentName := act.Agent
 				if agentName == "" {
-					for name := range r.cfg.AgentsSnapshot() {
-						agentName = name
-						break
-					}
+					agentName = r.DefaultAgentName()
 				}
 				if agentName != "" {
 					prompt := act.Prompt
@@ -1381,7 +1387,3 @@ func (r *Runner) processPRMergedAutomation(ctx context.Context, issue *domain.Is
 	r.LogMonitor("EVENT", "automation", fmt.Sprintf("PR #%d 合并事件已成功派发至生命周期 Hooks 与插件 (pr_merged)", prDetail.Number))
 	return nil
 }
-
-
-
-

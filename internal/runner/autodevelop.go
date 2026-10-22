@@ -13,11 +13,9 @@ import (
 )
 
 // IsDevelopableIssue reports whether a synced remote issue looks like an
-// actionable bug or feature request based on its labels/title/body.
-func IsDevelopableIssue(issue domain.Issue, keywords []string) bool {
-	if len(keywords) == 0 {
-		keywords = domain.DefaultAutoDevelopLabels()
-	}
+// actionable bug or feature request. Labels are always checked; title/body
+// keywords only when useText is enabled (safer for public repositories).
+func IsDevelopableIssue(issue domain.Issue, keywords []string, useText bool) bool {
 	haystack := issue.Title + "\n" + issue.Body
 	for _, raw := range keywords {
 		keyword := strings.TrimSpace(raw)
@@ -29,7 +27,7 @@ func IsDevelopableIssue(issue domain.Issue, keywords []string) bool {
 				return true
 			}
 		}
-		if keywordInText(haystack, keyword) {
+		if useText && keywordInText(haystack, keyword) {
 			return true
 		}
 	}

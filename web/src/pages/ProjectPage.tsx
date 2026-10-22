@@ -10,6 +10,7 @@ import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
 import { WatchCommitDetailModal, getCommitWebUrl, getBranchWebUrl } from '../components/WatchCommitDetailModal';
 import { toast } from '../toast';
+import { copyText } from '../clipboard';
 import {
   type AutomationRule,
   type BranchWatch,
@@ -156,6 +157,9 @@ export default function ProjectPage() {
   const [cfgAutoDevelop, setCfgAutoDevelop] = useState(false);
   const [cfgAutoDevelopAgent, setCfgAutoDevelopAgent] = useState('');
   const [cfgAutoDevelopLabels, setCfgAutoDevelopLabels] = useState('bug, fix, error, crash, regression, enhancement, feature, 需求, 缺陷, 优化, 功能, 报错, 崩溃');
+  const [cfgAutoDevelopText, setCfgAutoDevelopText] = useState(false);
+  const [cfgAutoDevelopAuthors, setCfgAutoDevelopAuthors] = useState('');
+  const [cfgAutoDevelopDailyLimit, setCfgAutoDevelopDailyLimit] = useState(5);
   const [cfgAutomationRules, setCfgAutomationRules] = useState<AutomationRule[]>([]);
 
   // 规则配置表单状态
@@ -183,6 +187,9 @@ export default function ProjectPage() {
       autoDevelop?: boolean;
       autoDevelopAgent?: string;
       autoDevelopLabels?: string[];
+      autoDevelopText?: boolean;
+      autoDevelopAuthors?: string[];
+      autoDevelopDailyLimit?: number;
       automationRules?: AutomationRule[];
     }) => api.updateProject(id, b),
     onSuccess: (updated) => {
@@ -194,6 +201,7 @@ export default function ProjectPage() {
   });
 
   const saveRulesMut = useMutation({
+    scope: { id: 'project-automation-rules' },
     mutationFn: (rules: AutomationRule[]) => api.updateProject(id, { automationRules: rules }),
     onSuccess: (updated) => {
       qc.setQueryData(qk.project(id), updated);
@@ -584,7 +592,10 @@ export default function ProjectPage() {
             setCfgAutoPR(p?.autoPrOnConfirm ?? true);
             setCfgAutoDevelop(p?.autoDevelop ?? false);
             setCfgAutoDevelopAgent(p?.autoDevelopAgent ?? '');
-            setCfgAutoDevelopLabels((p?.autoDevelopLabels?.length ? p.autoDevelopLabels : ['bug', 'fix', 'error', 'crash', 'regression', 'enhancement', 'feature', '需求', '缺陷', '优化', '功能', '报错', '崩溃']).join(', '));
+            setCfgAutoDevelopLabels((Array.isArray(p?.autoDevelopLabels) ? p.autoDevelopLabels : ['bug', 'fix', 'error', 'crash', 'regression', 'enhancement', 'feature', '需求', '缺陷', '优化', '功能', '报错', '崩溃']).join(', '));
+            setCfgAutoDevelopText(p?.autoDevelopText ?? false);
+            setCfgAutoDevelopAuthors((p?.autoDevelopAuthors ?? []).join(', '));
+            setCfgAutoDevelopDailyLimit(p?.autoDevelopDailyLimit || 5);
             setCfgAutomationRules(p?.automationRules ?? []);
             setSettingsTab('mode');
             setSettingsOpen(true);
@@ -1264,6 +1275,9 @@ export default function ProjectPage() {
                     autoDevelop: cfgAutoDevelop,
                     autoDevelopAgent: cfgAutoDevelopAgent,
                     autoDevelopLabels: cfgAutoDevelopLabels.split(',').map((s) => s.trim()).filter(Boolean),
+                    autoDevelopText: cfgAutoDevelopText,
+                    autoDevelopAuthors: cfgAutoDevelopAuthors.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean),
+                    autoDevelopDailyLimit: cfgAutoDevelopDailyLimit,
                     automationRules: cfgAutomationRules,
                   })
                 }
@@ -1497,7 +1511,43 @@ export default function ProjectPage() {
                         placeholder="bug, feature, 需求, 优化"
                       />
                       <span className="small dim" style={{ fontSize: 11, marginTop: 2 }}>
-                        匹配 Issue 标签或标题/正文中的关键字；留空则使用默认集合。
+                        匹配 Issue 标签；留空表示不按标签触发。公开仓库建议只按标签匹配。
+                      </span>
+                    </label>
+                    <label className="field" style={{ margin: 0 }}>
+                      仅这些作者（逗号分隔，留空不限）
+                      <input
+                        className="sm mono"
+                        value={cfgAutoDevelopAuthors}
+                        onChange={(e) => setCfgAutoDevelopAuthors(e.target.value)}
+                        placeholder="alice, bob"
+                      />
+                      <span className="small dim" style={{ fontSize: 11, marginTop: 2 }}>
+                        GitHub Issue 作者 login；非空时其他作者创建的 Issue 不会触发。
+                      </span>
+                    </label>
+                    <label className="field" style={{ margin: 0 }}>
+                      每日自动预开发上限
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        className="sm mono"
+                        value={cfgAutoDevelopDailyLimit}
+                        onChange={(e) => setCfgAutoDevelopDailyLimit(Number(e.target.value) || 5)}
+                      />
+                      <span className="small dim" style={{ fontSize: 11, marginTop: 2 }}>
+                        每项目每天最多启动的自动预开发 Run 数，防止批量 Issue 耗尽 Token。
+                      </span>
+                    </label>
+                    <label className="row" style={{ gap: 8, cursor: 'pointer', gridColumn: '1 / -1' }}>
+                      <input
+                        type="checkbox"
+                        checked={cfgAutoDevelopText}
+                        onChange={(e) => setCfgAutoDevelopText(e.target.checked)}
+                      />
+                      <span className="small">
+                        同时匹配标题/正文关键字（<b>公开仓库慎用</b>：正文可由任意人编写，可能触发提示注入与无效开发）
                       </span>
                     </label>
                   </div>
@@ -1770,7 +1820,15 @@ export default function ProjectPage() {
                       )}
                     </div>
 
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4, alignItems: 'center' }}>
+                      {newRuleTrigger === 'branch_push' &&
+                        !newRuleBranch.trim() &&
+                        !newRuleAuthor.trim() &&
+                        !newRulePattern.trim() && (
+                          <span className="small" style={{ color: 'var(--yellow)' }}>
+                            为防止全量触发，branch_push 规则至少填写分支/作者/正则之一
+                          </span>
+                        )}
                       <button
                         type="button"
                         className="sm ghost"
@@ -1781,7 +1839,13 @@ export default function ProjectPage() {
                       <button
                         type="button"
                         className="sm primary"
-                        disabled={!newRuleName.trim()}
+                        disabled={
+                          !newRuleName.trim() ||
+                          (newRuleTrigger === 'branch_push' &&
+                            !newRuleBranch.trim() &&
+                            !newRuleAuthor.trim() &&
+                            !newRulePattern.trim())
+                        }
                         onClick={() => {
                           const acts: RuleAction[] = [];
                           if (newRuleTrigger === 'branch_push') {
@@ -1799,7 +1863,7 @@ export default function ProjectPage() {
                           const newRule: AutomationRule = {
                             id: 'rule_' + Date.now(),
                             name: newRuleName.trim(),
-                            enabled: true,
+                            enabled: false,
                             trigger: newRuleTrigger,
                             conditions: {
                               branch: newRuleTrigger === 'branch_push' ? (newRuleBranch.trim() || undefined) : undefined,
@@ -1811,7 +1875,7 @@ export default function ProjectPage() {
 
                           persistRules([...cfgAutomationRules, newRule]);
                           setNewRuleOpen(false);
-                          toast.success(`已添加规则「${newRule.name}」并自动保存`);
+                          toast.success(`已添加规则「${newRule.name}」，默认停用，请在列表中确认后启用`);
                         }}
                       >
                         加入规则列表
@@ -2019,9 +2083,14 @@ export default function ProjectPage() {
                         className="sm ghost"
                         onClick={() => {
                           const script = `#!/usr/bin/env bash\n# xIssue Project Hook: on-pr-comment\npayload=$(cat)\nauthor=$(echo "$payload" | jq -r '.comment.author // empty')\nbody=$(echo "$payload" | jq -r '.comment.body // empty')\n\nif [[ "$author" == "qa-team" ]] && [[ "$body" =~ "PASSED" ]]; then\n  echo '{"actions": [{"type": "merge_pr", "strategy": "squash"}, {"type": "set_issue_status", "status": "done"}, {"type": "pull_local"}]}'\nfi`;
-                          navigator.clipboard.writeText(script);
-                          setCopySuccess(true);
-                          setTimeout(() => setCopySuccess(false), 2000);
+                          void copyText(script).then((ok) => {
+                            if (ok) {
+                              setCopySuccess(true);
+                              setTimeout(() => setCopySuccess(false), 2000);
+                            } else {
+                              toast.error('复制失败，请手动选择脚本');
+                            }
+                          });
                         }}
                       >
                         {copySuccess ? '✓ 已复制模板' : '📋 复制脚本模板'}

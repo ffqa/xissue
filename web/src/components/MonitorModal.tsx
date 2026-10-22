@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import type { BranchWatch, MonitorConfig } from '../types';
 import { toast } from '../toast';
+import { copyText } from '../clipboard';
 
 interface MonitorModalProps {
   onClose: () => void;
@@ -36,7 +37,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
   });
 
   const [cfgEnabled, setCfgEnabled] = useState(true);
-  const [cfgActiveHours, setCfgActiveHours] = useState('08:00-20:00');
+  const [cfgActiveHours, setCfgActiveHours] = useState('');
   const [cfgPublicUrl, setCfgPublicUrl] = useState('');
   const [cfgTgToken, setCfgTgToken] = useState('');
   const [cfgTgChatId, setCfgTgChatId] = useState('');
@@ -45,13 +46,23 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
   useEffect(() => {
     if (configQ.data) {
       setCfgEnabled(configQ.data.enabled ?? true);
-      setCfgActiveHours(configQ.data.activeHours || '08:00-20:00');
+      setCfgActiveHours(configQ.data.activeHours || '');
       setCfgPublicUrl(configQ.data.publicUrl || '');
       setCfgTgToken(configQ.data.telegramBotToken || '');
       setCfgTgChatId(configQ.data.telegramChatId || '');
       setCfgWebhookUrl(configQ.data.webhookUrl || '');
     }
   }, [configQ.data]);
+
+  const toggleMonitorMut = useMutation({
+    mutationFn: (enabled: boolean) => api.patchMonitorConfig({ enabled }),
+    onSuccess: (updated) => {
+      qc.setQueryData(qk.monitorConfig, updated);
+      qc.invalidateQueries({ queryKey: qk.monitorStatus });
+      toast.success(updated.enabled ? '监控已恢复运行' : '监控已暂停');
+    },
+    onError: (err: Error) => toast.error(`切换监控状态失败: ${err.message}`),
+  });
 
   const updateConfigMut = useMutation({
     mutationFn: (newCfg: MonitorConfig) => api.updateMonitorConfig(newCfg),
@@ -108,22 +119,21 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
     const text = logs
       .map((l) => `[${new Date(l.timestamp).toLocaleTimeString()}] [${l.level}] [${l.source}] ${l.message}`)
       .join('\n');
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    void copyText(text).then((ok) => {
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } else {
+        toast.error('复制失败，请手动选择文本');
+      }
+    });
   };
 
   const handleTogglePause = () => {
+    if (!configQ.data) return;
     const nextEnabled = !cfgEnabled;
     setCfgEnabled(nextEnabled);
-    updateConfigMut.mutate({
-      enabled: nextEnabled,
-      activeHours: cfgActiveHours,
-      publicUrl: cfgPublicUrl,
-      telegramBotToken: cfgTgToken,
-      telegramChatId: cfgTgChatId,
-      webhookUrl: cfgWebhookUrl,
-    });
+    toggleMonitorMut.mutate(nextEnabled);
   };
 
   const handleSaveConfig = () => {
@@ -207,7 +217,9 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
               />
               {!status?.enabled
                 ? '已暂停'
-                : `运行中 (${status?.activeHours || '08:00-20:00'})`}
+                : status?.running === false
+                  ? `休眠中 (${status?.activeHours || '全天'})`
+                  : `运行中 (${status?.activeHours || '全天'})`}
             </span>
           </div>
 
@@ -215,6 +227,8 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
             <button
               className="sm"
               onClick={handleTogglePause}
+              disabled={!configQ.data || configQ.isLoading || toggleMonitorMut.isPending}
+              title={!configQ.data ? '正在加载监控配置…' : cfgEnabled ? '暂停后台监控' : '恢复后台监控'}
               style={{
                 borderColor: cfgEnabled ? 'rgba(234, 179, 8, 0.4)' : 'rgba(76, 183, 130, 0.4)',
                 color: cfgEnabled ? '#eab308' : 'var(--green)',
@@ -322,7 +336,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
                   onChange={(e) => setCfgTgToken(e.target.value)}
                 />
                 <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
-                  创建 Bot 获得的 Token，用于推送分支推送与 PR 变动。
+                  创建 Bot 获得的 Token；保存后以 ****** 回显，保持 ****** 不变即沿用已存值。
                 </span>
               </label>
 
@@ -350,7 +364,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
                   onChange={(e) => setCfgWebhookUrl(e.target.value)}
                 />
                 <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
-                  POST JSON 格式载荷，支持各类企业 IM 机器人。
+                  POST JSON 格式载荷；保存后以 ****** 回显，保持 ****** 不变即沿用已存值。
                 </span>
               </label>
             </div>

@@ -23,9 +23,30 @@ export function Markdown({ children }: { children: string }) {
   );
 }
 
+const escapeStack: Array<() => void> = [];
+let escapeListenerBound = false;
+
+function ensureEscapeListener() {
+  if (escapeListenerBound) return;
+  escapeListenerBound = true;
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key !== 'Escape') return;
+      const top = escapeStack[escapeStack.length - 1];
+      if (!top) return;
+      e.stopImmediatePropagation();
+      e.preventDefault();
+      top();
+    },
+    true
+  );
+}
+
 export function Modal({
   title,
   onClose,
+  onEscape,
   children,
   footer,
   size = 'md',
@@ -34,6 +55,7 @@ export function Modal({
 }: {
   title: ReactNode;
   onClose: () => void;
+  onEscape?: () => void;
   children: ReactNode;
   footer?: ReactNode;
   size?: 'md' | 'lg' | 'xl';
@@ -41,15 +63,14 @@ export function Modal({
   style?: React.CSSProperties;
 }) {
   useEffect(() => {
-    const h = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
+    ensureEscapeListener();
+    const handler = onEscape ?? onClose;
+    escapeStack.push(handler);
+    return () => {
+      const idx = escapeStack.lastIndexOf(handler);
+      if (idx >= 0) escapeStack.splice(idx, 1);
     };
-    window.addEventListener('keydown', h, true);
-    return () => window.removeEventListener('keydown', h, true);
-  }, [onClose]);
+  }, [onEscape, onClose]);
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`modal modal-${size}`} role="dialog" style={style}>

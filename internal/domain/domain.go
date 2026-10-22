@@ -34,19 +34,22 @@ const (
 )
 
 type Project struct {
-	ID                int64            `json:"id"`
-	Name              string           `json:"name"`
-	Description       string           `json:"description"`
-	DevMode           DevMode          `json:"devMode"`
-	TargetBranch      string           `json:"targetBranch"`
-	AutoPROnConfirm   bool             `json:"autoPrOnConfirm"`
-	AutoDevelop       bool             `json:"autoDevelop"`       // 同步到新 issue 后自动预开发，产物仅开 PR 不合并
-	AutoDevelopAgent  string           `json:"autoDevelopAgent"`  // 预开发使用的 agent，空则取默认
-	AutoDevelopLabels []string         `json:"autoDevelopLabels"` // 视为需求/Bug 的标签或关键字
-	AutomationRules   []AutomationRule `json:"automationRules"`
-	Repos             []Repo           `json:"repos"`
-	CreatedAt         time.Time        `json:"createdAt"`
-	UpdatedAt         time.Time        `json:"updatedAt"`
+	ID                    int64            `json:"id"`
+	Name                  string           `json:"name"`
+	Description           string           `json:"description"`
+	DevMode               DevMode          `json:"devMode"`
+	TargetBranch          string           `json:"targetBranch"`
+	AutoPROnConfirm       bool             `json:"autoPrOnConfirm"`
+	AutoDevelop           bool             `json:"autoDevelop"`           // 同步到新 issue 后自动预开发，产物仅开 PR 不合并
+	AutoDevelopAgent      string           `json:"autoDevelopAgent"`      // 预开发使用的 agent，空则取默认
+	AutoDevelopLabels     []string         `json:"autoDevelopLabels"`     // 视为需求/Bug 的标签（useText 时也作为正文关键字）
+	AutoDevelopText       bool             `json:"autoDevelopText"`       // 是否同时匹配标题/正文关键字（公开仓库应关闭）
+	AutoDevelopAuthors    []string         `json:"autoDevelopAuthors"`    // 仅响应这些作者创建的 issue，空=不限
+	AutoDevelopDailyLimit int              `json:"autoDevelopDailyLimit"` // 每项目每日自动预开发 run 上限，0=使用默认 5
+	AutomationRules       []AutomationRule `json:"automationRules"`
+	Repos                 []Repo           `json:"repos"`
+	CreatedAt             time.Time        `json:"createdAt"`
+	UpdatedAt             time.Time        `json:"updatedAt"`
 }
 
 // DefaultAutoDevelopLabels lists labels/keywords that mark an issue as an

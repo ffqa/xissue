@@ -8,7 +8,10 @@ CREATE TABLE IF NOT EXISTS projects (
     automation_rules   TEXT NOT NULL DEFAULT '[]',
     auto_develop       INTEGER NOT NULL DEFAULT 0,
     auto_develop_agent TEXT NOT NULL DEFAULT '',
-    auto_develop_labels TEXT NOT NULL DEFAULT '[]',
+    auto_develop_labels TEXT NOT NULL DEFAULT '["bug","fix","error","crash","regression","enhancement","feature","需求","缺陷","优化","功能","报错","崩溃"]',
+    auto_develop_text  INTEGER NOT NULL DEFAULT 0,
+    auto_develop_authors TEXT NOT NULL DEFAULT '[]',
+    auto_develop_daily_limit INTEGER NOT NULL DEFAULT 5,
     local_seq          INTEGER NOT NULL DEFAULT 0,
     created_at         TEXT NOT NULL,
     updated_at         TEXT NOT NULL

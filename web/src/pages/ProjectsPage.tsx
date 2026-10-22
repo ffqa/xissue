@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { Crumbs, Modal, fmtTime } from '../components/common';
@@ -118,7 +118,20 @@ export default function ProjectsPage() {
       )}
       <div className="project-grid">
         {projects.data?.map((p) => (
-          <Link key={p.id} to={`/projects/${p.id}`} className="panel project-card">
+          <div
+            key={p.id}
+            className="panel project-card"
+            role="link"
+            tabIndex={0}
+            style={{ cursor: 'pointer' }}
+            onClick={() => nav(`/projects/${p.id}`)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                nav(`/projects/${p.id}`);
+              }
+            }}
+          >
             <div className="row" style={{ alignItems: 'center' }}>
               <h2 className="grow ellipsis">{p.name}</h2>
               <button
@@ -146,7 +159,7 @@ export default function ProjectsPage() {
               ))}
               {(p.repos ?? []).length === 0 && <span className="dim small">未添加仓库</span>}
             </div>
-          </Link>
+          </div>
         ))}
       </div>
 

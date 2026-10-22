@@ -181,7 +181,7 @@ func (c *Client) parseConfigOptions(opts []rawConfigOption) {
 	for _, o := range opts {
 		lowID := strings.ToLower(o.ID)
 		lowCat := strings.ToLower(o.Category)
-		if lowID == "model" || strings.Contains(lowID, "model") || lowCat == "model" || strings.Contains(lowCat, "model") {
+		if lowID == "model" || lowCat == "model" {
 			if o.CurrentValue != "" {
 				c.CurrentModel = o.CurrentValue
 			}

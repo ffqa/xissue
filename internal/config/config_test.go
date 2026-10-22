@@ -83,6 +83,51 @@ func TestPublicBaseURLAndAbsoluteURL(t *testing.T) {
 	}
 }
 
+func TestMonitorSecretsAreMaskedAndPreserved(t *testing.T) {
+	cfg := Default()
+	dir := t.TempDir()
+	cfg.DataDir = dir
+	cfg.Path = filepath.Join(dir, "config.yaml")
+	cfg.Monitor.TelegramBotToken = "BOT-SECRET"
+	cfg.Monitor.TelegramChatID = "123"
+	cfg.Monitor.WebhookURL = "https://hooks.example/secret"
+
+	masked := cfg.MaskedMonitorSnapshot()
+	if masked.TelegramBotToken != MaskedSecret || masked.WebhookURL != MaskedSecret {
+		t.Fatalf("secrets not masked: %+v", masked)
+	}
+	if masked.TelegramChatID != "123" {
+		t.Fatalf("non-secret chat id should stay visible: %+v", masked)
+	}
+
+	// A masked round-trip must not overwrite the stored credentials.
+	if err := cfg.UpdateMonitor(masked); err != nil {
+		t.Fatalf("UpdateMonitor: %v", err)
+	}
+	if cfg.MonitorSnapshot().TelegramBotToken != "BOT-SECRET" || cfg.MonitorSnapshot().WebhookURL != "https://hooks.example/secret" {
+		t.Fatalf("masked values overwrote secrets: %+v", cfg.MonitorSnapshot())
+	}
+
+	// Partial pause must leave credentials untouched.
+	disabled := false
+	if err := cfg.PatchMonitor(MonitorPatch{Enabled: &disabled}); err != nil {
+		t.Fatalf("PatchMonitor: %v", err)
+	}
+	got := cfg.MonitorSnapshot()
+	if got.Enabled || got.TelegramBotToken != "BOT-SECRET" || got.WebhookURL != "https://hooks.example/secret" {
+		t.Fatalf("partial patch clobbered config: %+v", got)
+	}
+
+	// A real replacement still works.
+	replacement := "NEW-TOKEN"
+	if err := cfg.PatchMonitor(MonitorPatch{TelegramBotToken: &replacement}); err != nil {
+		t.Fatalf("PatchMonitor token: %v", err)
+	}
+	if cfg.MonitorSnapshot().TelegramBotToken != "NEW-TOKEN" {
+		t.Fatalf("token not replaced: %+v", cfg.MonitorSnapshot())
+	}
+}
+
 func TestAgentSnapshotsAreDefensiveCopies(t *testing.T) {
 	cfg := Default()
 	cfg.Agents = map[string]AgentConfig{

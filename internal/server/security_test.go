@@ -32,6 +32,103 @@ func newTestServer(t *testing.T) (*Server, *store.Store, string) {
 	return srv, st, tmpDir
 }
 
+func TestMonitorConfigSecretsMaskedAndPatchPreserves(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	if err := srv.cfg.UpdateMonitor(config.MonitorConfig{
+		Enabled:          true,
+		TelegramBotToken: "BOT-SECRET-123",
+		TelegramChatID:   "42",
+		WebhookURL:       "https://hooks.example/secret",
+	}); err != nil {
+		t.Fatalf("seed monitor config: %v", err)
+	}
+
+	do := func(method, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, "/api/monitor/config", strings.NewReader(body))
+		req.Host = "127.0.0.1:7789"
+		req.Header.Set("X-XIssue", "1")
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, req)
+		return w
+	}
+
+	w := do("GET", "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET monitor config: %d %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "BOT-SECRET-123") || strings.Contains(w.Body.String(), "hooks.example/secret") {
+		t.Fatalf("GET leaked secrets: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), config.MaskedSecret) {
+		t.Fatalf("GET did not mask secrets: %s", w.Body.String())
+	}
+
+	w = do("PATCH", `{"enabled":false}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH monitor config: %d %s", w.Code, w.Body.String())
+	}
+	mon := srv.cfg.MonitorSnapshot()
+	if mon.Enabled || mon.TelegramBotToken != "BOT-SECRET-123" || mon.WebhookURL != "https://hooks.example/secret" {
+		t.Fatalf("partial patch clobbered secrets: %+v", mon)
+	}
+
+	w = do("PUT", `{"enabled":true,"activeHours":"","publicUrl":"","telegramBotToken":"`+config.MaskedSecret+`","telegramChatId":"42","webhookUrl":"`+config.MaskedSecret+`"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT masked config: %d %s", w.Code, w.Body.String())
+	}
+	mon = srv.cfg.MonitorSnapshot()
+	if mon.TelegramBotToken != "BOT-SECRET-123" || mon.WebhookURL != "https://hooks.example/secret" {
+		t.Fatalf("masked PUT overwrote secrets: %+v", mon)
+	}
+}
+
+func TestDeleteProjectRequiresNameAndScopesNotifications(t *testing.T) {
+	srv, st, _ := newTestServer(t)
+	ctx := context.Background()
+	p1, err := st.CreateProject(ctx, "Delete Me", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p12, err := st.CreateProject(ctx, "Keep Me", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, link := range []string{"/projects/1", "/projects/12", "/projects/1?watch=3"} {
+		if _, err := st.CreateNotification(ctx, "test", "n", "b", link, "{}"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	del := func(method, target, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, target, strings.NewReader(body))
+		req.Host = "127.0.0.1:7789"
+		req.Header.Set("X-XIssue", "1")
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, req)
+		return w
+	}
+
+	if w := del("DELETE", "/api/projects/"+itoa(p1.ID), ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("delete without name must be rejected, got %d %s", w.Code, w.Body.String())
+	}
+	if w := del("DELETE", "/api/projects/"+itoa(p1.ID), `{"name":"Delete Me"}`); w.Code != http.StatusOK {
+		t.Fatalf("delete with name failed: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := st.GetProject(ctx, p1.ID); err == nil {
+		t.Fatal("project should be deleted")
+	}
+	if _, err := st.GetProject(ctx, p12.ID); err != nil {
+		t.Fatalf("other project should remain: %v", err)
+	}
+	notes, err := st.ListNotifications(ctx, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 || notes[0].Link != "/projects/12" {
+		t.Fatalf("notification scoping wrong: %+v", notes)
+	}
+}
+
 func TestAuthMiddlewareBlocksCrossSiteRequests(t *testing.T) {
 	srv, _, _ := newTestServer(t)
 

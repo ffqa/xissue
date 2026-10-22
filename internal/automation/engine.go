@@ -129,11 +129,11 @@ func MatchBranchPushRule(rule domain.AutomationRule, branch string, author strin
 		}
 	}
 
-	// 2. Author check
+	// 2. Author check (exact identity, not substring: bob must not match bobby)
 	if cond.Author != "" {
 		expectedAuthor := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(cond.Author)), "@")
-		actualAuthor := strings.ToLower(strings.TrimSpace(author))
-		if actualAuthor != expectedAuthor && !strings.Contains(actualAuthor, expectedAuthor) {
+		actualAuthor := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(author)), "@")
+		if actualAuthor != expectedAuthor {
 			return false
 		}
 	}

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import type { BranchWatch, Repo, CommitInfo } from '../types';
 import { toast } from '../toast';
+import { copyText } from '../clipboard';
 
 interface WatchCommitDetailModalProps {
   watch: BranchWatch;
@@ -11,19 +12,27 @@ interface WatchCommitDetailModalProps {
   onCreateIssue?: (title: string, body: string) => void;
 }
 
+function repoPath(ownerRepo: string): string {
+  return ownerRepo
+    .split('/')
+    .filter(Boolean)
+    .map((seg) => encodeURIComponent(seg))
+    .join('/');
+}
+
 export function getCommitWebUrl(repo?: Repo, sha?: string): string | null {
   if (!repo || !sha) return null;
   const ownerRepo = repo.ownerRepo?.trim();
   const remote = repo.remoteUrl?.trim() || '';
 
   if (repo.provider === 'github' && ownerRepo) {
-    return `https://github.com/${ownerRepo}/commit/${sha}`;
+    return `https://github.com/${repoPath(ownerRepo)}/commit/${encodeURIComponent(sha)}`;
   }
   if (repo.provider === 'gitlab' && ownerRepo) {
-    return `https://gitlab.com/${ownerRepo}/-/commit/${sha}`;
+    return `https://gitlab.com/${repoPath(ownerRepo)}/-/commit/${encodeURIComponent(sha)}`;
   }
   if (repo.provider === 'gitea' && ownerRepo) {
-    return `https://gitea.com/${ownerRepo}/commit/${sha}`;
+    return `https://gitea.com/${repoPath(ownerRepo)}/commit/${encodeURIComponent(sha)}`;
   }
 
   // 尝试从 remoteUrl 正则解析 (如 git@github.com:owner/repo.git 或 https://github.com/owner/repo)
@@ -32,7 +41,7 @@ export function getCommitWebUrl(repo?: Repo, sha?: string): string | null {
     const host = match[1];
     const owner = match[2];
     const name = match[3];
-    return `https://${host}/${owner}/${name}/commit/${sha}`;
+    return `https://${encodeURIComponent(host)}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commit/${encodeURIComponent(sha)}`;
   }
   return null;
 }
@@ -43,13 +52,13 @@ export function getBranchWebUrl(repo?: Repo, branch?: string): string | null {
   const remote = repo.remoteUrl?.trim() || '';
 
   if (repo.provider === 'github' && ownerRepo) {
-    return `https://github.com/${ownerRepo}/tree/${encodeURIComponent(branch)}`;
+    return `https://github.com/${repoPath(ownerRepo)}/tree/${encodeURIComponent(branch)}`;
   }
   if (repo.provider === 'gitlab' && ownerRepo) {
-    return `https://gitlab.com/${ownerRepo}/-/tree/${encodeURIComponent(branch)}`;
+    return `https://gitlab.com/${repoPath(ownerRepo)}/-/tree/${encodeURIComponent(branch)}`;
   }
   if (repo.provider === 'gitea' && ownerRepo) {
-    return `https://gitea.com/${ownerRepo}/src/branch/${encodeURIComponent(branch)}`;
+    return `https://gitea.com/${repoPath(ownerRepo)}/src/branch/${encodeURIComponent(branch)}`;
   }
 
   const match = remote.match(/(?:https?:\/\/|git@)([^/:]+)[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
@@ -57,7 +66,7 @@ export function getBranchWebUrl(repo?: Repo, branch?: string): string | null {
     const host = match[1];
     const owner = match[2];
     const name = match[3];
-    return `https://${host}/${owner}/${name}/tree/${encodeURIComponent(branch)}`;
+    return `https://${encodeURIComponent(host)}/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/tree/${encodeURIComponent(branch)}`;
   }
   return null;
 }
@@ -93,8 +102,9 @@ export const WatchCommitDetailModal: React.FC<WatchCommitDetailModalProps> = ({
   const commitUrl = getCommitWebUrl(repo, activeCommit?.sha || watch.lastSha);
 
   const handleCopySha = (sha: string) => {
-    navigator.clipboard.writeText(sha);
-    toast.success('已复制 Commit SHA');
+    void copyText(sha).then((ok) =>
+      ok ? toast.success('已复制 Commit SHA') : toast.error('复制失败，请手动选择 SHA')
+    );
   };
 
   const handleCreateIssueFromCommit = (c: CommitInfo) => {

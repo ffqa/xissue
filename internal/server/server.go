@@ -237,6 +237,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/monitor/status", s.handleMonitorStatus)
 	m.HandleFunc("GET /api/monitor/config", s.handleGetMonitorConfig)
 	m.HandleFunc("PUT /api/monitor/config", s.handleUpdateMonitorConfig)
+	m.HandleFunc("PATCH /api/monitor/config", s.handlePatchMonitorConfig)
 	m.HandleFunc("POST /api/monitor/test-notify", s.handleTestNotify)
 	m.HandleFunc("GET /api/monitor/logs", s.handleMonitorLogs)
 	m.HandleFunc("POST /api/monitor/trigger", s.handleMonitorTrigger)
@@ -453,29 +454,40 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Double-check project name if provided in query or JSON body
+	// The destructive confirmation is enforced server-side, not just in the UI.
 	var reqBody struct {
 		Name string `json:"name"`
 	}
-	if r.Body != nil && r.ContentLength != 0 {
-		_ = readJSON(r, &reqBody)
+	if r.ContentLength != 0 {
+		if err := readJSON(r, &reqBody); err != nil && !errors.Is(err, io.EOF) {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
 	}
 	confirmName := strings.TrimSpace(reqBody.Name)
 	if confirmName == "" {
 		confirmName = strings.TrimSpace(r.URL.Query().Get("name"))
 	}
-	if confirmName != "" && confirmName != proj.Name {
+	if confirmName != proj.Name {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("项目名称不匹配：请输入 %q 以确认删除", proj.Name))
 		return
 	}
 
-	// 1. Terminate agent processes, clear warm pool, remove worktrees and git mirrors on disk
-	_ = s.runner.CleanupProject(r.Context(), id)
-
-	// 2. Cascade delete all project entities from SQLite database
+	// Snapshot runs while rows still exist, then delete DB before touching disk.
+	issues, _ := s.st.ListIssues(r.Context(), id)
+	runsByIssue := make(map[int64][]domain.Run, len(issues))
+	for _, issue := range issues {
+		rs, _ := s.st.ListRuns(r.Context(), issue.ID)
+		runsByIssue[issue.ID] = rs
+	}
 	if err := s.st.DeleteProject(r.Context(), id); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
+	}
+
+	// 2. Terminate agent processes, clear warm pool, remove worktrees/mirrors.
+	if err := s.runner.CleanupProjectData(r.Context(), proj, issues, runsByIssue); err != nil {
+		s.runner.LogMonitor("WARN", "cleanup", fmt.Sprintf("项目 %s 数据库已删除，但磁盘清理不完整: %v", proj.Name, err))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": proj.Name})
 }
@@ -563,22 +575,48 @@ func (s *Server) handleSyncProject(w http.ResponseWriter, r *http.Request) {
 			}
 			if created {
 				imported++
-				s.maybeAutoDevelop(r.Context(), proj, provider.IssueKey(repo, ri.Number))
+				s.maybeAutoDevelop(r.Context(), proj, provider.IssueKey(repo, ri.Number), ri.Author)
 			}
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"imported": imported})
 }
 
-func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key string) {
+func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key, author string) {
 	if !p.AutoDevelop {
 		return
+	}
+	if len(p.AutoDevelopAuthors) > 0 {
+		allowed := false
+		for _, name := range p.AutoDevelopAuthors {
+			if strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(name), "@"), strings.TrimSpace(author)) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return
+		}
 	}
 	issue, err := s.st.FindIssueByKey(ctx, p.ID, key)
 	if err != nil {
 		return
 	}
-	if !runner.IsDevelopableIssue(*issue, p.AutoDevelopLabels) {
+	if !runner.IsDevelopableIssue(*issue, p.AutoDevelopLabels, p.AutoDevelopText) {
+		return
+	}
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	count, err := s.st.CountAutoDevelopRunsSince(ctx, p.ID, startOfDay)
+	if err != nil {
+		return
+	}
+	limit := p.AutoDevelopDailyLimit
+	if limit <= 0 {
+		limit = 5
+	}
+	if count >= limit {
+		_, _ = s.st.AddComment(ctx, issue.ID, "system", fmt.Sprintf("🤖 自动预开发已达到今日上限 (%d)，未启动新的开发任务。", limit))
 		return
 	}
 	agent := strings.TrimSpace(p.AutoDevelopAgent)
@@ -1339,7 +1377,7 @@ func (s *Server) handleMonitorStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetMonitorConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.cfg.MonitorSnapshot())
+	writeJSON(w, http.StatusOK, s.cfg.MaskedMonitorSnapshot())
 }
 
 func (s *Server) handleUpdateMonitorConfig(w http.ResponseWriter, r *http.Request) {
@@ -1357,7 +1395,27 @@ func (s *Server) handleUpdateMonitorConfig(w http.ResponseWriter, r *http.Reques
 		status = "已暂停"
 	}
 	s.runner.LogMonitor("EVENT", "watcher", fmt.Sprintf("监控配置已更新: 状态=%s, 活跃时段=%s", status, body.ActiveHours))
-	writeJSON(w, http.StatusOK, s.cfg.MonitorSnapshot())
+	writeJSON(w, http.StatusOK, s.cfg.MaskedMonitorSnapshot())
+}
+
+func (s *Server) handlePatchMonitorConfig(w http.ResponseWriter, r *http.Request) {
+	var body config.MonitorPatch
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := s.cfg.PatchMonitor(body); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if body.Enabled != nil {
+		status := "运行中"
+		if !*body.Enabled {
+			status = "已暂停"
+		}
+		s.runner.LogMonitor("EVENT", "watcher", fmt.Sprintf("监控状态切换: %s", status))
+	}
+	writeJSON(w, http.StatusOK, s.cfg.MaskedMonitorSnapshot())
 }
 
 func (s *Server) handleTestNotify(w http.ResponseWriter, r *http.Request) {
@@ -1554,8 +1612,12 @@ func (s *Server) handleSaveProjectDoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, err)
 		return
 	}
+	if !knowledge.IsWritableDoc(req.DocID) {
+		writeErr(w, http.StatusBadRequest, errors.New("GitHub Wiki 与镜像文档为只读，请在原始仓库中修改"))
+		return
+	}
 	if err := knowledge.SaveDoc(r.Context(), s.cfg.DataDir, p, req.DocID, req.Content); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
+		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

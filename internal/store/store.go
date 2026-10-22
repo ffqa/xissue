@@ -48,6 +48,9 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_agent TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_labels TEXT NOT NULL DEFAULT '[]'`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_text INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_authors TEXT NOT NULL DEFAULT '[]'`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_daily_limit INTEGER NOT NULL DEFAULT 5`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN auto_pr INTEGER NOT NULL DEFAULT 0`)
 	return &Store{db: db}, nil
 }
@@ -79,27 +82,35 @@ func nullInt(ns sql.NullInt64) *int64 {
 
 // ---------- Projects ----------
 
-const projectCols = `id, name, description, dev_mode, target_branch, auto_pr_on_confirm, automation_rules, auto_develop, auto_develop_agent, auto_develop_labels, created_at, updated_at`
+const projectCols = `id, name, description, dev_mode, target_branch, auto_pr_on_confirm, automation_rules, auto_develop, auto_develop_agent, auto_develop_labels, auto_develop_text, auto_develop_authors, auto_develop_daily_limit, created_at, updated_at`
 
 func scanProject(s interface{ Scan(...any) error }) (domain.Project, error) {
 	var p domain.Project
 	var c, u string
-	var autoPR, autoDevelop int
+	var autoPR, autoDevelop, autoDevelopText, autoDevelopDailyLimit int
 	var devMode string
-	var autoRulesRaw, autoLabelsRaw string
-	err := s.Scan(&p.ID, &p.Name, &p.Description, &devMode, &p.TargetBranch, &autoPR, &autoRulesRaw, &autoDevelop, &p.AutoDevelopAgent, &autoLabelsRaw, &c, &u)
+	var autoRulesRaw, autoLabelsRaw, autoAuthorsRaw string
+	err := s.Scan(&p.ID, &p.Name, &p.Description, &devMode, &p.TargetBranch, &autoPR, &autoRulesRaw, &autoDevelop, &p.AutoDevelopAgent, &autoLabelsRaw, &autoDevelopText, &autoAuthorsRaw, &autoDevelopDailyLimit, &c, &u)
 	if err != nil {
 		return p, err
 	}
 	p.CreatedAt, p.UpdatedAt = parseTime(c), parseTime(u)
 	p.AutoPROnConfirm = autoPR != 0
 	p.AutoDevelop = autoDevelop != 0
-	if autoLabelsRaw != "" {
+	p.AutoDevelopText = autoDevelopText != 0
+	if autoLabelsRaw != "" && autoLabelsRaw != "null" {
 		_ = json.Unmarshal([]byte(autoLabelsRaw), &p.AutoDevelopLabels)
 	}
-	if len(p.AutoDevelopLabels) == 0 {
+	if autoLabelsRaw == "" || autoLabelsRaw == "null" {
 		p.AutoDevelopLabels = domain.DefaultAutoDevelopLabels()
 	}
+	if autoAuthorsRaw != "" && autoAuthorsRaw != "null" {
+		_ = json.Unmarshal([]byte(autoAuthorsRaw), &p.AutoDevelopAuthors)
+	}
+	if autoDevelopDailyLimit <= 0 {
+		autoDevelopDailyLimit = 5
+	}
+	p.AutoDevelopDailyLimit = autoDevelopDailyLimit
 	p.DevMode = domain.DevMode(devMode)
 	if p.DevMode != domain.DevModeMainDev && p.DevMode != domain.DevModeSingleMain {
 		p.DevMode = domain.DevModeSingleMain
@@ -169,8 +180,9 @@ func (s *Store) CreateProject(ctx context.Context, name, desc string, devMode ..
 	if dm == domain.DevModeMainDev {
 		targetBranch = "dev"
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO projects(name, description, dev_mode, target_branch, auto_pr_on_confirm, created_at, updated_at) VALUES(?,?,?,?,?,?,?)`,
-		name, desc, string(dm), targetBranch, 1, t, t)
+	labelsJSON, _ := json.Marshal(domain.DefaultAutoDevelopLabels())
+	res, err := s.db.ExecContext(ctx, `INSERT INTO projects(name, description, dev_mode, target_branch, auto_pr_on_confirm, auto_develop_labels, auto_develop_daily_limit, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)`,
+		name, desc, string(dm), targetBranch, 1, string(labelsJSON), 5, t, t)
 	if err != nil {
 		return nil, err
 	}
@@ -179,15 +191,18 @@ func (s *Store) CreateProject(ctx context.Context, name, desc string, devMode ..
 }
 
 type ProjectPatch struct {
-	Name              *string                  `json:"name"`
-	Description       *string                  `json:"description"`
-	DevMode           *domain.DevMode          `json:"devMode"`
-	TargetBranch      *string                  `json:"targetBranch"`
-	AutoPROnConfirm   *bool                    `json:"autoPrOnConfirm"`
-	AutoDevelop       *bool                    `json:"autoDevelop"`
-	AutoDevelopAgent  *string                  `json:"autoDevelopAgent"`
-	AutoDevelopLabels *[]string                `json:"autoDevelopLabels"`
-	AutomationRules   *[]domain.AutomationRule `json:"automationRules"`
+	Name                  *string                  `json:"name"`
+	Description           *string                  `json:"description"`
+	DevMode               *domain.DevMode          `json:"devMode"`
+	TargetBranch          *string                  `json:"targetBranch"`
+	AutoPROnConfirm       *bool                    `json:"autoPrOnConfirm"`
+	AutoDevelop           *bool                    `json:"autoDevelop"`
+	AutoDevelopAgent      *string                  `json:"autoDevelopAgent"`
+	AutoDevelopLabels     *[]string                `json:"autoDevelopLabels"`
+	AutoDevelopText       *bool                    `json:"autoDevelopText"`
+	AutoDevelopAuthors    *[]string                `json:"autoDevelopAuthors"`
+	AutoDevelopDailyLimit *int                     `json:"autoDevelopDailyLimit"`
+	AutomationRules       *[]domain.AutomationRule `json:"automationRules"`
 }
 
 func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch) (*domain.Project, error) {
@@ -237,8 +252,30 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 		}
 		p.AutoDevelopLabels = labels
 	}
-	if len(p.AutoDevelopLabels) == 0 {
-		p.AutoDevelopLabels = domain.DefaultAutoDevelopLabels()
+	if patch.AutoDevelopText != nil {
+		p.AutoDevelopText = *patch.AutoDevelopText
+	}
+	if patch.AutoDevelopAuthors != nil {
+		authors := make([]string, 0, len(*patch.AutoDevelopAuthors))
+		for _, author := range *patch.AutoDevelopAuthors {
+			if author = strings.TrimSpace(strings.TrimPrefix(author, "@")); author != "" {
+				authors = append(authors, author)
+			}
+		}
+		p.AutoDevelopAuthors = authors
+	}
+	if patch.AutoDevelopDailyLimit != nil {
+		limit := *patch.AutoDevelopDailyLimit
+		if limit <= 0 {
+			limit = 5
+		}
+		if limit > 100 {
+			limit = 100
+		}
+		p.AutoDevelopDailyLimit = limit
+	}
+	if p.AutoDevelopDailyLimit <= 0 {
+		p.AutoDevelopDailyLimit = 5
 	}
 	if patch.AutomationRules != nil {
 		p.AutomationRules = *patch.AutomationRules
@@ -251,10 +288,15 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 	if p.AutoDevelop {
 		autoDevInt = 1
 	}
+	autoDevTextInt := 0
+	if p.AutoDevelopText {
+		autoDevTextInt = 1
+	}
 	rulesJSON, _ := json.Marshal(p.AutomationRules)
 	labelsJSON, _ := json.Marshal(p.AutoDevelopLabels)
-	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, dev_mode=?, target_branch=?, auto_pr_on_confirm=?, automation_rules=?, auto_develop=?, auto_develop_agent=?, auto_develop_labels=?, updated_at=? WHERE id=?`,
-		p.Name, p.Description, string(p.DevMode), p.TargetBranch, autoInt, string(rulesJSON), autoDevInt, p.AutoDevelopAgent, string(labelsJSON), now(), id); err != nil {
+	authorsJSON, _ := json.Marshal(p.AutoDevelopAuthors)
+	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, dev_mode=?, target_branch=?, auto_pr_on_confirm=?, automation_rules=?, auto_develop=?, auto_develop_agent=?, auto_develop_labels=?, auto_develop_text=?, auto_develop_authors=?, auto_develop_daily_limit=?, updated_at=? WHERE id=?`,
+		p.Name, p.Description, string(p.DevMode), p.TargetBranch, autoInt, string(rulesJSON), autoDevInt, p.AutoDevelopAgent, string(labelsJSON), autoDevTextInt, string(authorsJSON), p.AutoDevelopDailyLimit, now(), id); err != nil {
 		return nil, err
 	}
 	return s.GetProject(ctx, id)
@@ -291,10 +333,14 @@ func (s *Store) DeleteProject(ctx context.Context, id int64) error {
 	// 6. Delete all repos
 	_, _ = tx.ExecContext(ctx, `DELETE FROM repos WHERE project_id = ?`, id)
 
-	// 7. Delete related notifications
-	projIDStr := fmt.Sprintf("%d", id)
-	_, _ = tx.ExecContext(ctx, `DELETE FROM notifications WHERE link LIKE ? OR meta LIKE ?`,
-		"%/projects/"+projIDStr+"%", `%"projectId":`+projIDStr+`%`)
+	// 7. Delete related notifications (exact project boundary; avoid /projects/1
+	// matching /projects/12 or /projects/100).
+	relPrefix := "/projects/" + fmt.Sprintf("%d", id)
+	absSuffix := "%/projects/" + fmt.Sprintf("%d", id)
+	metaA := `%"projectId":` + fmt.Sprintf("%d", id) + `,%`
+	metaB := `%"projectId":` + fmt.Sprintf("%d", id) + `}%`
+	_, _ = tx.ExecContext(ctx, `DELETE FROM notifications WHERE link = ? OR link LIKE ? OR link LIKE ? OR link LIKE ? OR link LIKE ? OR link LIKE ? OR meta LIKE ? OR meta LIKE ?`,
+		relPrefix, relPrefix+"/%", relPrefix+"?%", absSuffix, absSuffix+"/%", absSuffix+"?%", metaA, metaB)
 
 	// 8. Delete project record
 	if _, err := tx.ExecContext(ctx, `DELETE FROM projects WHERE id = ?`, id); err != nil {
@@ -595,6 +641,15 @@ func (s *Store) CreateRun(ctx context.Context, issueID int64, agent, model strin
 	}
 	id, _ := res.LastInsertId()
 	return s.GetRun(ctx, id)
+}
+
+// CountAutoDevelopRunsSince counts automatic pre-development runs for a project
+// created at or after the given time.
+func (s *Store) CountAutoDevelopRunsSince(ctx context.Context, projectID int64, since time.Time) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs r JOIN issues i ON i.id = r.issue_id WHERE i.project_id = ? AND r.auto_pr = 1 AND r.created_at >= ?`,
+		projectID, since.UTC().Format(time.RFC3339Nano)).Scan(&count)
+	return count, err
 }
 
 func (s *Store) GetRun(ctx context.Context, id int64) (*domain.Run, error) {

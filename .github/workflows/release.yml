@@ -55,11 +55,9 @@ jobs:
       - name: Cross-Compile Release Archives
         env:
           CGO_ENABLED: '0'
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
         run: |
-          VERSION="${GITHUB_REF_NAME}"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.tag }}"
-          fi
+          VERSION="${RELEASE_TAG}"
           mkdir -p dist/release
 
           build_archive() {

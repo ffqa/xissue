@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/xpier/xissue/internal/store"
 )
@@ -30,10 +31,16 @@ func TestProjectAutoDevelopRoundTrip(t *testing.T) {
 	enabled := true
 	agent := "opencode"
 	labels := []string{"bug", " 需求 ", ""}
+	useText := true
+	authors := []string{"@alice", " bob "}
+	limit := 3
 	updated, err := st.UpdateProject(ctx, p.ID, store.ProjectPatch{
-		AutoDevelop:       &enabled,
-		AutoDevelopAgent:  &agent,
-		AutoDevelopLabels: &labels,
+		AutoDevelop:           &enabled,
+		AutoDevelopAgent:      &agent,
+		AutoDevelopLabels:     &labels,
+		AutoDevelopText:       &useText,
+		AutoDevelopAuthors:    &authors,
+		AutoDevelopDailyLimit: &limit,
 	})
 	if err != nil {
 		t.Fatalf("UpdateProject: %v", err)
@@ -44,6 +51,12 @@ func TestProjectAutoDevelopRoundTrip(t *testing.T) {
 	if len(updated.AutoDevelopLabels) != 2 || updated.AutoDevelopLabels[1] != "需求" {
 		t.Fatalf("labels not normalized: %#v", updated.AutoDevelopLabels)
 	}
+	if !updated.AutoDevelopText || updated.AutoDevelopDailyLimit != 3 {
+		t.Fatalf("safety fields not saved: %+v", updated)
+	}
+	if len(updated.AutoDevelopAuthors) != 2 || updated.AutoDevelopAuthors[0] != "alice" {
+		t.Fatalf("authors not normalized: %#v", updated.AutoDevelopAuthors)
+	}
 
 	got, err := st.GetProject(ctx, p.ID)
 	if err != nil {
@@ -51,6 +64,19 @@ func TestProjectAutoDevelopRoundTrip(t *testing.T) {
 	}
 	if !got.AutoDevelop || got.AutoDevelopAgent != agent || len(got.AutoDevelopLabels) != 2 {
 		t.Fatalf("round trip mismatch: %+v", got)
+	}
+	if !got.AutoDevelopText || len(got.AutoDevelopAuthors) != 2 || got.AutoDevelopDailyLimit != 3 {
+		t.Fatalf("safety fields round trip mismatch: %+v", got)
+	}
+
+	// An explicitly empty list must stay empty (label-only mode), not fall back.
+	empty := []string{}
+	cleared, err := st.UpdateProject(ctx, p.ID, store.ProjectPatch{AutoDevelopLabels: &empty})
+	if err != nil {
+		t.Fatalf("clear labels: %v", err)
+	}
+	if len(cleared.AutoDevelopLabels) != 0 {
+		t.Fatalf("empty labels should persist, got %#v", cleared.AutoDevelopLabels)
 	}
 }
 
@@ -91,5 +117,12 @@ func TestRunAutoPRFlag(t *testing.T) {
 	}
 	if !got.AutoPR {
 		t.Fatal("auto PR flag not read back")
+	}
+	count, err := st.CountAutoDevelopRunsSince(ctx, p.ID, time.Now().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("CountAutoDevelopRunsSince: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("auto develop count = %d, want 1", count)
 	}
 }

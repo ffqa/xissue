@@ -135,6 +135,32 @@ func (c *Config) PermissionsSnapshot() PermissionPolicy {
 	return p
 }
 
+// MaskedSecret is returned instead of stored credentials. Clients send it back
+// unchanged to mean "keep the existing value".
+const MaskedSecret = "******"
+
+// MonitorPatch updates only the supplied monitor fields.
+type MonitorPatch struct {
+	Enabled          *bool   `json:"enabled"`
+	ActiveHours      *string `json:"activeHours"`
+	PublicURL        *string `json:"publicUrl"`
+	TelegramBotToken *string `json:"telegramBotToken"`
+	TelegramChatID   *string `json:"telegramChatId"`
+	WebhookURL       *string `json:"webhookUrl"`
+}
+
+// MaskedMonitorSnapshot returns monitor settings with credentials masked.
+func (c *Config) MaskedMonitorSnapshot() MonitorConfig {
+	mon := c.MonitorSnapshot()
+	if strings.TrimSpace(mon.TelegramBotToken) != "" {
+		mon.TelegramBotToken = MaskedSecret
+	}
+	if strings.TrimSpace(mon.WebhookURL) != "" {
+		mon.WebhookURL = MaskedSecret
+	}
+	return mon
+}
+
 // MonitorSnapshot returns a copy of the monitor settings.
 func (c *Config) MonitorSnapshot() MonitorConfig {
 	c.mu.RLock()
@@ -259,7 +285,7 @@ func Default() *Config {
 		},
 		Monitor: MonitorConfig{
 			Enabled:     true,
-			ActiveHours: "08:00-20:00",
+			ActiveHours: "", // empty = all day; avoids silently pausing overnight after upgrades
 		},
 	}
 }
@@ -365,6 +391,48 @@ func (c *Config) Reload() error {
 func (c *Config) UpdateMonitor(m MonitorConfig) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if m.TelegramBotToken == MaskedSecret {
+		m.TelegramBotToken = c.Monitor.TelegramBotToken
+	}
+	if m.WebhookURL == MaskedSecret {
+		m.WebhookURL = c.Monitor.WebhookURL
+	}
+	m.TelegramBotToken = strings.TrimSpace(m.TelegramBotToken)
+	m.TelegramChatID = strings.TrimSpace(m.TelegramChatID)
+	m.WebhookURL = strings.TrimSpace(m.WebhookURL)
+	m.ActiveHours = strings.TrimSpace(m.ActiveHours)
+	m.PublicURL = strings.TrimSpace(m.PublicURL)
+	c.Monitor = m
+	return c.saveLocked()
+}
+
+// PatchMonitor applies a partial update without clobbering other settings.
+func (c *Config) PatchMonitor(p MonitorPatch) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m := c.Monitor
+	if p.Enabled != nil {
+		m.Enabled = *p.Enabled
+	}
+	if p.ActiveHours != nil {
+		m.ActiveHours = strings.TrimSpace(*p.ActiveHours)
+	}
+	if p.PublicURL != nil {
+		m.PublicURL = strings.TrimSpace(*p.PublicURL)
+	}
+	if p.TelegramBotToken != nil {
+		if v := strings.TrimSpace(*p.TelegramBotToken); v != MaskedSecret {
+			m.TelegramBotToken = v
+		}
+	}
+	if p.TelegramChatID != nil {
+		m.TelegramChatID = strings.TrimSpace(*p.TelegramChatID)
+	}
+	if p.WebhookURL != nil {
+		if v := strings.TrimSpace(*p.WebhookURL); v != MaskedSecret {
+			m.WebhookURL = v
+		}
+	}
 	c.Monitor = m
 	return c.saveLocked()
 }

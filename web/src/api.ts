@@ -167,6 +167,9 @@ export const api = {
       autoDevelop?: boolean;
       autoDevelopAgent?: string;
       autoDevelopLabels?: string[];
+      autoDevelopText?: boolean;
+      autoDevelopAuthors?: string[];
+      autoDevelopDailyLimit?: number;
       automationRules?: AutomationRule[];
     },
   ) => patch<Project>(`/api/projects/${id}`, b),
@@ -248,6 +251,7 @@ export const api = {
   monitorStatus: () => get<MonitorStatus>('/api/monitor/status'),
   monitorConfig: () => get<MonitorConfig>('/api/monitor/config'),
   updateMonitorConfig: (b: MonitorConfig) => put<MonitorConfig>('/api/monitor/config', b),
+  patchMonitorConfig: (b: Partial<MonitorConfig>) => patch<MonitorConfig>('/api/monitor/config', b),
   testNotify: () => post<{ ok: boolean; message: string }>('/api/monitor/test-notify'),
   monitorLogs: (hours = 8) => get<MonitorLogEntry[]>(`/api/monitor/logs?hours=${hours}`),
   triggerMonitor: () => post<{ ok: boolean; watchesTriggered: number; prsUpdated: number; message: string }>('/api/monitor/trigger'),

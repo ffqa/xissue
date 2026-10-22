@@ -205,6 +205,35 @@ func checkAndMigrateCellarService() bool {
 	return false
 }
 
+// terminateProcessesByPath stops other processes whose command line contains
+// path. It excludes the current process: pkill -f matches its own invocation
+// when the binary lives under ~/.local/bin, which aborted service install.
+func terminateProcessesByPath(path string) {
+	out, err := exec.Command("pgrep", "-f", path).Output()
+	if err != nil {
+		return
+	}
+	self := os.Getpid()
+	var procs []*os.Process
+	for _, field := range strings.Fields(string(out)) {
+		pid, perr := strconv.Atoi(field)
+		if perr != nil || pid == self {
+			continue
+		}
+		if proc, ferr := os.FindProcess(pid); ferr == nil {
+			_ = proc.Signal(os.Interrupt)
+			procs = append(procs, proc)
+		}
+	}
+	if len(procs) == 0 {
+		return
+	}
+	time.Sleep(400 * time.Millisecond)
+	for _, proc := range procs {
+		_ = proc.Kill()
+	}
+}
+
 func copyExecutableFile(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -283,7 +312,7 @@ func installService() {
 		}
 
 		uid := os.Getuid()
-		_ = exec.Command("pkill", "-f", persistentBin).Run()
+		terminateProcessesByPath(persistentBin)
 		_ = exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d/%s", uid, serviceLabel)).Run()
 		if out, err := exec.Command("launchctl", "bootstrap", fmt.Sprintf("gui/%d", uid), targetPlist).CombinedOutput(); err != nil {
 			// 如果 bootstrap 报错已存在，尝试 kickstart

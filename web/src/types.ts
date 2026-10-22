@@ -24,6 +24,9 @@ export interface Project {
   autoDevelop: boolean;
   autoDevelopAgent: string;
   autoDevelopLabels: string[];
+  autoDevelopText: boolean;
+  autoDevelopAuthors: string[];
+  autoDevelopDailyLimit: number;
   automationRules: AutomationRule[];
   repos: Repo[];
   createdAt: string;

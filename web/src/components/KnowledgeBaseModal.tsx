@@ -66,6 +66,7 @@ function buildDirTree(docs: DocItem[]): DirNode {
 export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
   const qc = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
@@ -76,11 +77,17 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
     queryFn: () => api.projectDocs(projectId),
   });
 
-  // 2. 搜索查询
+  // 2. 搜索查询（250ms 防抖，避免每键一次全库扫描）
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   const searchQ = useQuery({
-    queryKey: ['docsSearch', projectId, searchQuery],
-    queryFn: () => api.searchDocs(projectId, searchQuery, 20),
-    enabled: searchQuery.trim().length > 0,
+    queryKey: ['docsSearch', projectId, debouncedSearch],
+    queryFn: () => api.searchDocs(projectId, debouncedSearch, 20),
+    enabled: debouncedSearch.length > 0,
+    placeholderData: (previousData) => previousData,
   });
 
   const docs = docsQ.data ?? [];
@@ -147,7 +154,8 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
     onError: (err: Error) => toast.error(`保存失败: ${err.message}`),
   });
 
-  // 快捷键 Ctrl+S / Cmd+S 保存，以及 Esc 键优先退出编辑或关闭
+  // 快捷键 Ctrl+S / Cmd+S 保存；Esc 交由 Modal 的 onEscape 统一分发，
+  // 避免编辑态退出与关闭弹窗同时触发导致未保存内容丢失。
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 's') {
@@ -155,20 +163,11 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
         if (isEditing && !saveDocMut.isPending) {
           saveDocMut.mutate();
         }
-        return;
-      }
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        if (isEditing) {
-          setIsEditing(false);
-        } else {
-          onClose();
-        }
       }
     };
     window.addEventListener('keydown', handleKeyDown, true);
     return () => window.removeEventListener('keydown', handleKeyDown, true);
-  }, [isEditing, saveDocMut, onClose]);
+  }, [isEditing, saveDocMut]);
 
   return (
     <Modal
@@ -180,6 +179,13 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
       }
       size="xl"
       onClose={onClose}
+      onEscape={() => {
+        if (isEditing) {
+          setIsEditing(false);
+        } else {
+          onClose();
+        }
+      }}
       bodyStyle={{
         padding: 0,
         overflow: 'hidden',
@@ -402,7 +408,11 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                 </div>
 
                 <div className="row" style={{ gap: 8, flexShrink: 0 }}>
-                  {isEditing ? (
+                  {curDoc.source !== 'local_doc' ? (
+                    <span className="small dim" title="Wiki 会在同步时 reset，镜像文档来自 git 对象">
+                      🔒 只读（请在原始仓库修改）
+                    </span>
+                  ) : isEditing ? (
                     <>
                       <button className="ghost sm" onClick={() => setIsEditing(false)}>
                         取消

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { Modal } from './common';
 import { toast } from '../toast';
+import { copyText } from '../clipboard';
 import type { CherryPickResult, Repo } from '../types';
 
 export function formatChangeRecord(
@@ -160,8 +161,9 @@ export function CherryPickModal({
             <button
               type="button"
               onClick={() => {
-                navigator.clipboard.writeText(result.changeRecord);
-                toast.success('已复制改动记录到剪贴板');
+                void copyText(result.changeRecord).then((ok) =>
+                  ok ? toast.success('已复制改动记录到剪贴板') : toast.error('复制失败，请手动选择文本')
+                );
               }}
             >
               📋 复制改动记录
@@ -420,8 +422,9 @@ export function CherryPickModal({
                   type="button"
                   className="sm ghost"
                   onClick={() => {
-                    navigator.clipboard.writeText(previewRecord);
-                    toast.success('已复制预览记录');
+                    void copyText(previewRecord).then((ok) =>
+                      ok ? toast.success('已复制预览记录') : toast.error('复制失败，请手动选择文本')
+                    );
                   }}
                 >
                   📋 复制

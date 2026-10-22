@@ -59,6 +59,22 @@ func TestMatchBranchPushRule(t *testing.T) {
 	if MatchBranchPushRule(ruleRegex, "feature/v1.2", "bob", "any message") {
 		t.Errorf("expected regex branch to not match, got true")
 	}
+
+	// 6. 作者必须是精确身份，bob 不应命中 bobby
+	authorRule := domain.AutomationRule{
+		ID:      "r3",
+		Enabled: true,
+		Trigger: "branch_push",
+		Conditions: domain.RuleConditions{
+			Author: "bob",
+		},
+	}
+	if !MatchBranchPushRule(authorRule, "main", "@Bob", "msg") {
+		t.Errorf("expected case-insensitive author match")
+	}
+	if MatchBranchPushRule(authorRule, "main", "bobby", "msg") {
+		t.Errorf("substring author must not match")
+	}
 }
 
 func TestListPluginsDisablesMalformedManifest(t *testing.T) {

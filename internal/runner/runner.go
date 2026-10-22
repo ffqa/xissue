@@ -316,7 +316,7 @@ func (r *Runner) ListAgentModels(ctx context.Context, agentName string, refresh 
 		}
 	}
 
-	pctx, cancel := context.WithTimeout(ctx, 35*time.Second)
+	pctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 
 	var currentModel string
@@ -1071,6 +1071,26 @@ func (r *Runner) handlePermission(ctx context.Context, act *activeRun, req acp.P
 		return opt
 	}
 
+	// Auto pre-development runs must never occupy a concurrency slot waiting for
+	// an administrator. Deny non-allowlisted tools and let the agent wrap up.
+	if run, rerr := r.st.GetRun(ctx, act.runID); rerr == nil && run.AutoPR {
+		chosen := ""
+		for _, o := range req.Options {
+			if strings.Contains(strings.ToLower(o.Kind), "reject") || strings.Contains(strings.ToLower(o.OptionID), "reject") {
+				chosen = o.OptionID
+				break
+			}
+		}
+		r.LogMonitor("WARN", "automation", fmt.Sprintf("自动预开发 Run #%d 请求权限 %q，已自动拒绝以避免占用槽位", act.runID, title))
+		r.emitEvent(act.runID, act.issueID, "permission_request", map[string]any{
+			"requestId": reqID, "title": title, "toolCall": req.ToolCall, "options": req.Options,
+		})
+		r.emitEvent(act.runID, act.issueID, "permission_resolved", map[string]any{
+			"requestId": reqID, "optionId": chosen, "auto": true, "denied": true,
+		})
+		return chosen
+	}
+
 	ch := make(chan string, 1)
 	act.permMu.Lock()
 	act.perms[reqID] = ch
@@ -1645,12 +1665,34 @@ func (r *Runner) CleanupProject(ctx context.Context, projectID int64) error {
 	if err != nil {
 		return nil
 	}
+	return r.CleanupProjectResources(ctx, proj)
+}
 
+// CleanupProjectResources removes on-disk resources for an already-loaded
+// project.
+func (r *Runner) CleanupProjectResources(ctx context.Context, proj *domain.Project) error {
+	if proj == nil {
+		return nil
+	}
+	issues, _ := r.st.ListIssues(ctx, proj.ID)
+	runs := make(map[int64][]domain.Run, len(issues))
+	for _, issue := range issues {
+		rs, _ := r.st.ListRuns(ctx, issue.ID)
+		runs[issue.ID] = rs
+	}
+	return r.CleanupProjectData(ctx, proj, issues, runs)
+}
+
+// CleanupProjectData removes on-disk resources using an in-memory snapshot.
+// Callers deleting the project row first must snapshot issues/runs beforehand.
+func (r *Runner) CleanupProjectData(ctx context.Context, proj *domain.Project, issues []domain.Issue, runsByIssue map[int64][]domain.Run) error {
+	if proj == nil {
+		return nil
+	}
+	projectID := proj.ID
 	// 1. Find all issues and runs for this project
-	issues, _ := r.st.ListIssues(ctx, projectID)
 	for _, iss := range issues {
-		runs, _ := r.st.ListRuns(ctx, iss.ID)
-		for _, run := range runs {
+		for _, run := range runsByIssue[iss.ID] {
 			// Stop active agent processes
 			_ = r.Cancel(run.ID)
 			// Close warm session
@@ -1683,11 +1725,13 @@ func (r *Runner) CleanupProject(ctx context.Context, projectID int64) error {
 	issuesDir := filepath.Join(r.cfg.IssuesDir(), fmt.Sprintf("project-%d", projectID))
 	_ = os.RemoveAll(issuesDir)
 
-	// 4. Remove archive directory: ~/.xissue/issue/<projectName>
-	if proj.Name != "" {
-		archiveDir := filepath.Join(r.cfg.DataDir, "issue", proj.Name)
-		_ = os.RemoveAll(archiveDir)
+	// 4. Remove archive directory: ~/.xissue/issue/<sanitized projectName>
+	workspace := sanitizeFileName(proj.Name)
+	if workspace == "" {
+		workspace = fmt.Sprintf("project-%d", projectID)
 	}
+	archiveDir := filepath.Join(r.cfg.DataDir, "issue", workspace)
+	_ = os.RemoveAll(archiveDir)
 
 	return nil
 }

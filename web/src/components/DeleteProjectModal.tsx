@@ -22,9 +22,10 @@ export function DeleteProjectModal({ project, onClose, onDeleted }: Props) {
   const deleteMut = useMutation({
     mutationFn: () => api.deleteProject(project.id, { name: confirmName.trim() }),
     onSuccess: (res) => {
+      qc.removeQueries({ queryKey: qk.project(project.id) });
+      qc.removeQueries({ queryKey: qk.issues(project.id) });
+      qc.removeQueries({ queryKey: qk.watches(project.id) });
       qc.invalidateQueries({ queryKey: qk.projects });
-      qc.invalidateQueries({ queryKey: qk.issues(project.id) });
-      qc.invalidateQueries({ queryKey: qk.watches(project.id) });
       qc.invalidateQueries({ queryKey: qk.notifications });
       toast.success(`项目「${res.deleted || project.name}」及其所有关联数据已彻底删除`);
       onClose();

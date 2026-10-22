@@ -11,10 +11,11 @@ import (
 func TestIsDevelopableIssue(t *testing.T) {
 	defaults := domain.DefaultAutoDevelopLabels()
 	tests := []struct {
-		name   string
-		issue  domain.Issue
-		labels []string
-		want   bool
+		name    string
+		issue   domain.Issue
+		labels  []string
+		useText bool
+		want    bool
 	}{
 		{
 			name:  "label match is case insensitive",
@@ -22,19 +23,22 @@ func TestIsDevelopableIssue(t *testing.T) {
 			want:  true,
 		},
 		{
-			name:  "chinese requirement keyword in title",
-			issue: domain.Issue{Title: "希望增加导出报表功能"},
-			want:  true,
+			name:    "chinese requirement keyword in title",
+			issue:   domain.Issue{Title: "希望增加导出报表功能"},
+			useText: true,
+			want:    true,
 		},
 		{
-			name:  "english keyword in body with word boundary",
-			issue: domain.Issue{Title: "Export", Body: "This is a feature request for CSV export."},
-			want:  true,
+			name:    "english keyword in body with word boundary",
+			issue:   domain.Issue{Title: "Export", Body: "This is a feature request for CSV export."},
+			useText: true,
+			want:    true,
 		},
 		{
-			name:  "debug must not count as bug",
-			issue: domain.Issue{Title: "Improve debug logging", Body: "Add more debug output."},
-			want:  false,
+			name:    "debug must not count as bug",
+			issue:   domain.Issue{Title: "Improve debug logging", Body: "Add more debug output."},
+			useText: true,
+			want:    false,
 		},
 		{
 			name:  "plain question is ignored",
@@ -42,10 +46,10 @@ func TestIsDevelopableIssue(t *testing.T) {
 			want:  false,
 		},
 		{
-			name:   "empty configured list falls back to defaults",
+			name:   "empty configured list does not match anything",
 			issue:  domain.Issue{Title: "Crash on startup"},
-			labels: nil,
-			want:   true,
+			labels: []string{},
+			want:   false,
 		},
 		{
 			name:   "custom keyword",
@@ -59,16 +63,21 @@ func TestIsDevelopableIssue(t *testing.T) {
 			labels: []string{"panic"},
 			want:   false,
 		},
+		{
+			name:    "keyword is ignored when text matching is off",
+			issue:   domain.Issue{Title: "Crash on startup"},
+			labels:  defaults,
+			useText: false,
+			want:    false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			labels := tt.labels
-			if tt.name == "empty configured list falls back to defaults" {
-				labels = nil
-			} else if labels == nil {
+			if tt.labels == nil {
 				labels = defaults
 			}
-			if got := IsDevelopableIssue(tt.issue, labels); got != tt.want {
+			if got := IsDevelopableIssue(tt.issue, labels, tt.useText); got != tt.want {
 				t.Fatalf("IsDevelopableIssue(%q) = %v, want %v", tt.issue.Title, got, tt.want)
 			}
 		})

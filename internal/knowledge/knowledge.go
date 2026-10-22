@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/gitx"
@@ -632,8 +633,18 @@ func GetDocDetail(ctx context.Context, dataDir string, project *domain.Project, 
 	}, nil
 }
 
+// IsWritableDoc reports whether a docID can be edited in place. Wiki clones are
+// read-only (a later sync hard-resets them) and mirror docs are git objects.
+func IsWritableDoc(docID string) bool {
+	kind, _, _, err := splitDocID(docID)
+	return err == nil && kind == "local"
+}
+
 // SaveDoc updates or creates a markdown document.
 func SaveDoc(ctx context.Context, dataDir string, project *domain.Project, docID, content string) error {
+	if !IsWritableDoc(docID) {
+		return fmt.Errorf("该文档来源为只读，请在原始仓库中修改")
+	}
 	fullPath, _, err := ResolveDocFilePath(dataDir, project, docID)
 	if err != nil {
 		return err
@@ -646,6 +657,12 @@ func SaveDoc(ctx context.Context, dataDir string, project *domain.Project, docID
 	return os.WriteFile(fullPath, []byte(content), 0o644)
 }
 
+const (
+	maxSearchDocBytes  = 2 << 20  // skip individual documents larger than 2 MiB
+	maxSearchDocs      = 2000     // hard cap on documents inspected per query
+	maxSearchTotalRead = 64 << 20 // hard cap on bytes read per query
+)
+
 // SearchDocs performs full-text search across all docs in the project.
 func SearchDocs(ctx context.Context, dataDir string, project *domain.Project, query string, limit int) ([]domain.DocSearchResult, error) {
 	q := strings.TrimSpace(query)
@@ -656,20 +673,31 @@ func SearchDocs(ctx context.Context, dataDir string, project *domain.Project, qu
 	if limit <= 0 {
 		limit = 20
 	}
+	if limit > 100 {
+		limit = 100
+	}
 
 	docs, err := ScanProjectDocs(ctx, dataDir, project)
 	if err != nil {
 		return nil, err
 	}
+	if len(docs) > maxSearchDocs {
+		docs = docs[:maxSearchDocs]
+	}
 
 	terms := strings.Fields(strings.ToLower(q))
 	var results []domain.DocSearchResult
+	totalRead := 0
 
 	for _, doc := range docs {
-		detail, derr := GetDocDetail(ctx, dataDir, project, doc.ID)
-		if derr != nil {
+		if doc.Size > maxSearchDocBytes || totalRead >= maxSearchTotalRead {
 			continue
 		}
+		detail, derr := GetDocDetail(ctx, dataDir, project, doc.ID)
+		if derr != nil || len(detail.Content) > maxSearchDocBytes {
+			continue
+		}
+		totalRead += len(detail.Content)
 
 		content := detail.Content
 		lowContent := strings.ToLower(content)
@@ -713,38 +741,38 @@ func SearchDocs(ctx context.Context, dataDir string, project *domain.Project, qu
 
 func extractSnippet(content string, terms []string) string {
 	low := strings.ToLower(content)
-	bestIdx := -1
+	bestByte := -1
 	for _, t := range terms {
 		if idx := strings.Index(low, t); idx >= 0 {
-			if bestIdx == -1 || idx < bestIdx {
-				bestIdx = idx
+			if bestByte == -1 || idx < bestByte {
+				bestByte = idx
 			}
 		}
 	}
 
-	if bestIdx == -1 {
-		runes := []rune(content)
+	runes := []rune(content)
+	if bestByte == -1 {
 		if len(runes) > 150 {
 			return string(runes[:150]) + "…"
 		}
 		return content
 	}
 
-	start := bestIdx - 60
+	bestRune := utf8.RuneCountInString(content[:bestByte])
+	start, end := bestRune-60, bestRune+120
 	if start < 0 {
 		start = 0
 	}
-	end := bestIdx + 120
-	if end > len(content) {
-		end = len(content)
+	if end > len(runes) {
+		end = len(runes)
 	}
 
-	snippet := strings.TrimSpace(content[start:end])
+	snippet := strings.TrimSpace(string(runes[start:end]))
 	snippet = strings.ReplaceAll(snippet, "\n", " ")
 	if start > 0 {
 		snippet = "…" + snippet
 	}
-	if end < len(content) {
+	if end < len(runes) {
 		snippet = snippet + "…"
 	}
 	return snippet

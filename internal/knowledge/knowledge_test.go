@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/xpier/xissue/internal/domain"
@@ -104,14 +105,45 @@ func TestKnowledgeScanAndSearch(t *testing.T) {
 		t.Errorf("expected non-empty doc content")
 	}
 
-	// 4. Save doc
-	newContent := detail.Content + "\n\n## Updates\nAdded some extra info.\n"
-	if err := SaveDoc(ctx, dataDir, proj, docs[0].ID, newContent); err != nil {
-		t.Fatalf("SaveDoc failed: %v", err)
+	// 4. Save a local doc; wiki docs are read-only.
+	var localDoc domain.DocItem
+	var wikiDoc domain.DocItem
+	for _, d := range docs {
+		if d.Source == domain.DocSourceLocalDoc && localDoc.ID == "" {
+			localDoc = d
+		}
+		if d.Source == domain.DocSourceGitHubWiki && wikiDoc.ID == "" {
+			wikiDoc = d
+		}
 	}
-	detail2, _ := GetDocDetail(ctx, dataDir, proj, docs[0].ID)
+	if localDoc.ID == "" || wikiDoc.ID == "" {
+		t.Fatalf("expected both local and wiki docs, got %+v", docs)
+	}
+	localDetail, err := GetDocDetail(ctx, dataDir, proj, localDoc.ID)
+	if err != nil {
+		t.Fatalf("GetDocDetail local failed: %v", err)
+	}
+	newContent := localDetail.Content + "\n\n## Updates\nAdded some extra info.\n"
+	if err := SaveDoc(ctx, dataDir, proj, localDoc.ID, newContent); err != nil {
+		t.Fatalf("SaveDoc local failed: %v", err)
+	}
+	detail2, _ := GetDocDetail(ctx, dataDir, proj, localDoc.ID)
 	if detail2.Content != newContent {
 		t.Errorf("saved content mismatch")
+	}
+	if err := SaveDoc(ctx, dataDir, proj, wikiDoc.ID, "overwrite"); err == nil {
+		t.Errorf("expected wiki doc save to be rejected")
+	}
+}
+
+func TestExtractSnippetKeepsUTF8(t *testing.T) {
+	content := strings.Repeat("中文内容", 80) + "关键字" + strings.Repeat("后续文字", 80)
+	snippet := extractSnippet(content, []string{"关键字"})
+	if !strings.Contains(snippet, "关键字") {
+		t.Fatalf("snippet missing keyword: %q", snippet)
+	}
+	if strings.Contains(snippet, "\uFFFD") {
+		t.Fatalf("snippet contains replacement character: %q", snippet)
 	}
 }
 

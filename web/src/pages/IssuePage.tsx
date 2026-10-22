@@ -18,6 +18,7 @@ import { formatChangeRecord } from '../components/CherryPickModal';
 import { languageOf } from '../monaco';
 import { fetchRunEvents } from '../realtime';
 import { useTheme } from '../theme';
+import { copyText } from '../clipboard';
 import { toast } from '../toast';
 import {
   ACTIVE_RUN_STATUSES,
@@ -414,8 +415,9 @@ export default function IssuePage() {
                     className="sm ghost"
                     title="复制标准改动记录到剪贴板"
                     onClick={() => {
-                      navigator.clipboard.writeText(currentRun.changeRecord);
-                      toast.success('已复制标准改动记录到剪贴板');
+                      void copyText(currentRun.changeRecord).then((ok) =>
+                        ok ? toast.success('已复制标准改动记录到剪贴板') : toast.error('复制失败，请手动选择文本')
+                      );
                     }}
                   >
                     📋 复制改动记录
@@ -626,12 +628,16 @@ export default function IssuePage() {
               title="重新从 Agent 探测可用 Provider 和模型列表"
               disabled={modelsQ.isFetching || !agent}
               onClick={async () => {
-                const fresh = await api.agentModels(agent, true);
-                qc.setQueryData(qk.agentModels(agent), fresh);
-                if (fresh.probeError && fresh.models.length === 0) {
-                  toast.info(fresh.probeError);
-                } else {
-                  toast.info(`已刷新 ${agent} 模型列表（共 ${fresh.models.length} 个）`);
+                try {
+                  const fresh = await api.agentModels(agent, true);
+                  qc.setQueryData(qk.agentModels(agent), fresh);
+                  if (fresh.probeError && fresh.models.length === 0) {
+                    toast.info(fresh.probeError);
+                  } else {
+                    toast.info(`已刷新 ${agent} 模型列表（共 ${fresh.models.length} 个）`);
+                  }
+                } catch (e) {
+                  toast.error(`刷新模型失败: ${(e as Error).message}`);
                 }
               }}
             >
@@ -749,8 +755,9 @@ export default function IssuePage() {
               <button
                 type="button"
                 onClick={() => {
-                  navigator.clipboard.writeText(archiveModalData.dir);
-                  toast.success('已复制归档目录路径到剪贴板');
+                  void copyText(archiveModalData.dir).then((ok) =>
+                    ok ? toast.success('已复制归档目录路径到剪贴板') : toast.error('复制失败，请手动选择路径')
+                  );
                 }}
               >
                 📋 复制归档路径
@@ -759,8 +766,9 @@ export default function IssuePage() {
                 type="button"
                 onClick={() => {
                   const text = archiveTab === 'analysis' ? archiveModalData.analysis : archiveModalData.events;
-                  navigator.clipboard.writeText(text);
-                  toast.success('已复制文本内容到剪贴板');
+                  void copyText(text).then((ok) =>
+                    ok ? toast.success('已复制文本内容到剪贴板') : toast.error('复制失败，请手动选择文本')
+                  );
                 }}
               >
                 📋 复制当前文本
@@ -1113,8 +1121,9 @@ function ReviewPane({
                   type="button"
                   className="sm ghost"
                   onClick={() => {
-                    navigator.clipboard.writeText(results?.[0]?.changeRecord || run.changeRecord);
-                    toast.success('已复制标准改动记录');
+                    void copyText(results?.[0]?.changeRecord || run.changeRecord).then((ok) =>
+                      ok ? toast.success('已复制标准改动记录') : toast.error('复制失败，请手动选择文本')
+                    );
                   }}
                 >
                   📋 复制
@@ -1341,8 +1350,9 @@ function ReviewPane({
                   type="button"
                   className="sm ghost"
                   onClick={() => {
-                    navigator.clipboard.writeText(previewRecord);
-                    toast.success('已复制预览记录');
+                    void copyText(previewRecord).then((ok) =>
+                      ok ? toast.success('已复制预览记录') : toast.error('复制失败，请手动选择文本')
+                    );
                   }}
                 >
                   📋 复制

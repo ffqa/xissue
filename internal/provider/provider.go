@@ -19,6 +19,7 @@ type RemoteIssue struct {
 	Body   string
 	Labels []string
 	URL    string
+	Author string
 }
 
 // RemotePR is a pull request fetched from a platform.

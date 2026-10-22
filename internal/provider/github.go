@@ -40,7 +40,7 @@ func (github) ListOpenIssues(ctx context.Context, repo domain.Repo) ([]RemoteIss
 		return nil, err
 	}
 	b, err := gh(ctx, "issue", "list", "-R", repo.OwnerRepo, "--state", "open", "--limit", "200",
-		"--json", "number,title,body,labels,url")
+		"--json", "number,title,body,labels,url,author")
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +49,9 @@ func (github) ListOpenIssues(ctx context.Context, repo domain.Repo) ([]RemoteIss
 		Title  string `json:"title"`
 		Body   string `json:"body"`
 		URL    string `json:"url"`
+		Author struct {
+			Login string `json:"login"`
+		} `json:"author"`
 		Labels []struct {
 			Name string `json:"name"`
 		} `json:"labels"`
@@ -62,7 +65,7 @@ func (github) ListOpenIssues(ctx context.Context, repo domain.Repo) ([]RemoteIss
 		for _, l := range r.Labels {
 			labels = append(labels, l.Name)
 		}
-		out = append(out, RemoteIssue{Number: r.Number, Title: r.Title, Body: r.Body, URL: r.URL, Labels: labels})
+		out = append(out, RemoteIssue{Number: r.Number, Title: r.Title, Body: r.Body, URL: r.URL, Labels: labels, Author: r.Author.Login})
 	}
 	return out, nil
 }
@@ -186,14 +189,14 @@ func GetPRDetails(ctx context.Context, prURL string) (*PRDetailInfo, error) {
 	}
 
 	detail := &PRDetailInfo{
-		Number:      raw.Number,
-		Title:       raw.Title,
-		State:       stateStr,
-		URL:         raw.URL,
-		HeadRefName: raw.HeadRefName,
-		BaseRefName: raw.BaseRefName,
-		Author:      raw.Author.Login,
-		Comments:    []PRComment{},
+		Number:        raw.Number,
+		Title:         raw.Title,
+		State:         stateStr,
+		URL:           raw.URL,
+		HeadRefName:   raw.HeadRefName,
+		BaseRefName:   raw.BaseRefName,
+		Author:        raw.Author.Login,
+		Comments:      []PRComment{},
 		LatestReviews: []PRReview{},
 	}
 
@@ -314,5 +317,3 @@ func (github) ClosePR(ctx context.Context, repo domain.Repo, number int64) error
 	_, err := gh(ctx, "pr", "close", strconv.FormatInt(number, 10), "-R", repo.OwnerRepo)
 	return err
 }
-
-

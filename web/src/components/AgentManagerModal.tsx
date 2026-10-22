@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { Modal } from './common';
 import { toast } from '../toast';
+import { copyText } from '../clipboard';
 import type { AgentInfo } from '../types';
 
 export function AgentManagerModal({ onClose }: { onClose: () => void }) {
@@ -282,8 +283,9 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
                 null,
                 2,
               );
-              navigator.clipboard.writeText(snippet);
-              toast.success('已复制通用 MCP JSON 配置到剪贴板');
+              void copyText(snippet).then((ok) =>
+                ok ? toast.success('已复制通用 MCP JSON 配置到剪贴板') : toast.error('复制失败，请手动选择文本')
+              );
             }}
           >
             📋 复制通用 MCP JSON

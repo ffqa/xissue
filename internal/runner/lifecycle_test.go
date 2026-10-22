@@ -10,6 +10,7 @@ import (
 	"github.com/xpier/xissue/internal/automation"
 	"github.com/xpier/xissue/internal/config"
 	"github.com/xpier/xissue/internal/domain"
+	"github.com/xpier/xissue/internal/provider"
 	"github.com/xpier/xissue/internal/store"
 )
 
@@ -76,4 +77,58 @@ func TestRunLifecyclePluginReceivesRunFinished(t *testing.T) {
 	}
 	data, _ := os.ReadFile(marker)
 	t.Fatalf("run_finished payload missing: %q", string(data))
+}
+
+func TestPRCreatedPluginReceivesPayload(t *testing.T) {
+	tmp := t.TempDir()
+	st, err := store.Open(filepath.Join(tmp, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	proj, err := st.CreateProject(t.Context(), "P", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(t.Context(), proj.ID, "title", "body", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := domain.Repo{ID: 9, Name: "web", Provider: domain.ProviderGitHub, RemoteURL: filepath.Join(tmp, "repo")}
+	proj.Repos = []domain.Repo{repo}
+
+	marker := filepath.Join(tmp, "pr-events.log")
+	pluginDir := filepath.Join(tmp, "plugins", "pr-recorder")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "apiVersion: 1\nname: pr-recorder\nversion: 1.0.0\nentrypoint: run.sh\nevents: [pr_created]\n"
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.yaml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "run.sh"), []byte("#!/bin/sh\ncat > "+marker+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &Runner{
+		cfg:        &config.Config{DataDir: tmp},
+		st:         st,
+		notify:     nopNotifier{},
+		automation: automation.NewEngine(filepath.Join(tmp, "plugins")),
+	}
+	r.dispatchPRCreated(proj, &repo, issue, &provider.PRDetailInfo{
+		Number: 12, Title: "PR title", State: "open",
+		URL: "https://github.com/example/web/pull/12", HeadRefName: "agent/x", BaseRefName: "main",
+	})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if data, err := os.ReadFile(marker); err == nil {
+			if strings.Contains(string(data), `"event":"pr_created"`) && strings.Contains(string(data), `"number":12`) {
+				return
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	data, _ := os.ReadFile(marker)
+	t.Fatalf("pr_created payload missing: %q", string(data))
 }

@@ -157,3 +157,22 @@ func TestAgentSnapshotsAreDefensiveCopies(t *testing.T) {
 		t.Fatal("map mutation leaked into config")
 	}
 }
+
+func TestAutoUpdateDefaultsOn(t *testing.T) {
+	if !Default().AutoUpdate {
+		t.Fatal("auto update should default to enabled")
+	}
+	// Loading a legacy file without the key must keep the default (true).
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("listen: 127.0.0.1:7789\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.AutoUpdate {
+		t.Fatal("legacy config without autoUpdate should keep default true")
+	}
+}

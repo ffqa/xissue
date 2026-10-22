@@ -28,7 +28,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.15"
+const Version = "0.2.16"
 
 type Server struct {
 	cfg    *config.Config
@@ -43,21 +43,36 @@ type Server struct {
 	lastSyncError    string
 	stopCh           chan struct{}
 	stopOnce         sync.Once
+	startedAt        time.Time
+
+	updateMu          sync.Mutex
+	updateRunning     bool
+	lastUpdateVersion string
+	lastUpdateAt      time.Time
+	latestUpdate      string
+
+	statusMu       sync.Mutex
+	lastCPUSeconds float64
+	lastCPUAt      time.Time
+	lastHeapAlloc  uint64
+	lastHeapAt     time.Time
 }
 
 func New(cfg *config.Config, st *store.Store) *Server {
 	hub := newHub()
 	r := runner.New(cfg, st, hub)
 	s := &Server{
-		cfg:    cfg,
-		st:     st,
-		runner: r,
-		hub:    hub,
-		mux:    http.NewServeMux(),
-		stopCh: make(chan struct{}),
+		cfg:       cfg,
+		st:        st,
+		runner:    r,
+		hub:       hub,
+		mux:       http.NewServeMux(),
+		stopCh:    make(chan struct{}),
+		startedAt: time.Now(),
 	}
 	s.routes()
 	go s.issueSyncLoop()
+	go s.autoUpdateLoop()
 	return s
 }
 
@@ -176,6 +191,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /api/health", s.handleHealth)
+	m.HandleFunc("GET /api/status", s.handleSystemStatus)
 	m.HandleFunc("POST /api/restart", s.handleRestart)
 	m.HandleFunc("GET /api/agents", s.handleAgents)
 	m.HandleFunc("POST /api/agents/reload", s.handleReloadAgents)
@@ -267,6 +283,7 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /api/repos/{repoId}/branches", s.handleRepoBranches)
 	m.HandleFunc("GET /api/repos/{repoId}/commits", s.handleRepoCommits)
+	m.HandleFunc("GET /api/repos/{repoId}/commits/{sha}", s.handleRepoCommitDetail)
 
 	m.Handle("/", spaHandler())
 }
@@ -1365,6 +1382,24 @@ func (s *Server) handleRepoCommits(w http.ResponseWriter, r *http.Request) {
 		commits = []gitx.CommitInfo{}
 	}
 	writeJSON(w, http.StatusOK, commits)
+}
+
+func (s *Server) handleRepoCommitDetail(w http.ResponseWriter, r *http.Request) {
+	repoID, ok := pathID(w, r, "repoId")
+	if !ok {
+		return
+	}
+	sha := strings.TrimSpace(r.PathValue("sha"))
+	if sha == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("commit sha is required"))
+		return
+	}
+	detail, err := s.runner.GetRepoCommitDetail(r.Context(), repoID, sha)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
 }
 
 func (s *Server) handleCherryPick(w http.ResponseWriter, r *http.Request) {

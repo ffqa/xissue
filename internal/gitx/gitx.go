@@ -307,6 +307,122 @@ type CommitInfo struct {
 	Date     string `json:"date"`
 }
 
+// CommitFile is one changed path in a commit.
+type CommitFile struct {
+	Status    string `json:"status"`
+	Path      string `json:"path"`
+	OldPath   string `json:"oldPath,omitempty"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
+// CommitDetail is the commit page payload: metadata, file stats and unified diff.
+type CommitDetail struct {
+	CommitInfo
+	AuthorEmail string       `json:"authorEmail"`
+	Body        string       `json:"body"`
+	Parents     []string     `json:"parents"`
+	Files       []CommitFile `json:"files"`
+	Patch       string       `json:"patch"`
+	Truncated   bool         `json:"truncated"`
+}
+
+const maxCommitPatchBytes = 512 * 1024
+
+// GetCommitDetail resolves sha in mirror and returns metadata, changed files and
+// a unified patch (~GitHub commit view). Patch output is capped.
+func GetCommitDetail(ctx context.Context, mirror, sha string) (CommitDetail, error) {
+	if err := ValidateSHA(sha); err != nil {
+		return CommitDetail{}, err
+	}
+	full, err := Run(ctx, mirror, "rev-parse", "--verify", sha+"^{commit}")
+	if err != nil {
+		return CommitDetail{}, err
+	}
+	meta, err := Run(ctx, mirror, "show", "-s", "--format=%H%x00%h%x00%an%x00%ae%x00%cI%x00%P%x00%B", full)
+	if err != nil {
+		return CommitDetail{}, err
+	}
+	parts := strings.SplitN(meta, "\x00", 7)
+	if len(parts) < 7 {
+		return CommitDetail{}, fmt.Errorf("unexpected git show output for %s", sha)
+	}
+	detail := CommitDetail{
+		CommitInfo: CommitInfo{
+			SHA:      parts[0],
+			ShortSHA: parts[1],
+			Subject:  strings.SplitN(strings.TrimSpace(parts[6]), "\n", 2)[0],
+			Author:   parts[2],
+			Date:     parts[4],
+		},
+		AuthorEmail: parts[3],
+		Body:        strings.TrimSpace(parts[6]),
+		Parents:     strings.Fields(parts[5]),
+		Files:       []CommitFile{},
+	}
+	if detail.Parents == nil {
+		detail.Parents = []string{}
+	}
+
+	diffArgs := func(extra ...string) []string {
+		base := []string{"diff-tree", "--no-commit-id", "--root", "-r", "-M", "-C"}
+		if len(detail.Parents) > 0 {
+			base = []string{"diff", "-M", "-C"}
+			extra = append(extra, detail.Parents[0], full)
+		} else {
+			extra = append(extra, full)
+		}
+		return append(base, extra...)
+	}
+
+	nameStatus, err := Run(ctx, mirror, diffArgs("--name-status")...)
+	if err != nil {
+		return CommitDetail{}, err
+	}
+	stats := map[string][2]int{}
+	numstat, err := Run(ctx, mirror, diffArgs("--numstat")...)
+	if err != nil {
+		return CommitDetail{}, err
+	}
+	for _, line := range splitLines(numstat) {
+		fields := strings.SplitN(line, "\t", 3)
+		if len(fields) != 3 {
+			continue
+		}
+		add, _ := strconv.Atoi(fields[0])
+		del, _ := strconv.Atoi(fields[1])
+		stats[fields[2]] = [2]int{add, del}
+	}
+	for _, line := range splitLines(nameStatus) {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 {
+			continue
+		}
+		file := CommitFile{Status: fields[0]}
+		if (strings.HasPrefix(file.Status, "R") || strings.HasPrefix(file.Status, "C")) && len(fields) >= 3 {
+			file.OldPath, file.Path = fields[1], fields[2]
+		} else {
+			file.Path = fields[1]
+		}
+		if s, ok := stats[file.Path]; ok {
+			file.Additions, file.Deletions = s[0], s[1]
+		}
+		detail.Files = append(detail.Files, file)
+	}
+
+	patch, err := Run(ctx, mirror, diffArgs("--patch", "--no-color", "--no-ext-diff", "--unified=3")...)
+	if err != nil {
+		return CommitDetail{}, err
+	}
+	if len(patch) > maxCommitPatchBytes {
+		patch = strings.ToValidUTF8(patch[:maxCommitPatchBytes], "")
+		patch += "\n\n... diff 已截断 (超过 512 KB)"
+		detail.Truncated = true
+	}
+	detail.Patch = patch
+	return detail, nil
+}
+
 // ListBranches lists branch names available in mirror (both origin/* and local heads).
 func ListBranches(ctx context.Context, mirror string) ([]string, error) {
 	out, err := Run(ctx, mirror, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin", "refs/heads")
@@ -537,4 +653,3 @@ func MergeBranchToTarget(ctx context.Context, wtDir, mirrorPath, remoteURL, sour
 	}
 	return headSHA, nil
 }
-

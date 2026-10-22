@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.15` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.16` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.15`
+- **最新发布版本**: `v0.2.16`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -146,6 +146,12 @@
 - 顶栏「🧩 插件」：全局列出 `plugins/` 下所有插件，支持即时启用/停用、manifest 错误展示、README 预览与 `config.json` 生成/编辑/保存；
 - 停用写入 `.disabled`，事件派发前即时检查，停用后不会再触发；配置原子写入 `0600`，插件以自身目录为 cwd 读取 `config.json`；
 - 修复 `-data-dir` 测试实例把配置写回真实 `~/.xissue/config.yaml` 的隔离缺陷；现在未显式传 `-config` 时默认读取/写入 data-dir 下的 `config.yaml`。
+
+### 2.11 提交记录页、自动升级与实时状态栏
+- **独立提交记录页**：新增 `/projects/:id/commits?repo=&branch=&sha=`，左侧提交列表、右侧 GitHub 风格详情（元信息、文件增删统计、统一 diff）；支持从通知/监控卡片直达并高亮目标 Commit；
+- **通知深链**：`branch_push` 与分支推送自动化通知改为提交页链接（仓库、分支、tip SHA 全部 URL 编码），旧 `?watch=<id>` 链接会在项目页自动重定向到对应提交页；
+- **自动升级**：`autoUpdate`（默认开启）每小时检查官方 GitHub Release；发现新版本先发应用内/外部通知，再调用 `xissue update`（SHA256SUMS fail-closed 校验）并重启服务；有执行中的 Run 时顺延到下一轮，同一版本失败 6 小时内不重复尝试；
+- **底部实时状态栏**：`GET /api/status` 每 2 秒采样，展示版本、运行时长、Go 堆内存、进程 CPU、磁盘可用/占用、GC 次数与下次 GC 估算、Goroutine 数、自动更新状态。
 
 ---
 

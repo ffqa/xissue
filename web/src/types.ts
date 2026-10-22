@@ -336,6 +336,23 @@ export interface CommitInfo {
   date: string;
 }
 
+export interface CommitFile {
+  status: string;
+  path: string;
+  oldPath?: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface CommitDetail extends CommitInfo {
+  authorEmail: string;
+  body: string;
+  parents: string[];
+  files: CommitFile[];
+  patch: string;
+  truncated: boolean;
+}
+
 export interface Notification {
   id: number;
   kind: 'pr_status' | 'branch_push' | 'run_done' | 'permission' | string;
@@ -477,3 +494,40 @@ export interface DocSearchResult extends DocItem {
 }
 
 
+
+export interface SystemStatus {
+  version: string;
+  goVersion: string;
+  os: string;
+  arch: string;
+  pid: number;
+  uptimeSeconds: number;
+  goroutines: number;
+  autoUpdate: boolean;
+  latestUpdate?: string;
+  memory: {
+    heapAlloc: number;
+    heapInuse: number;
+    heapObjects: number;
+    sys: number;
+    nextGC: number;
+  };
+  cpu: {
+    processPercent: number;
+    cores: number;
+  };
+  disk: {
+    path: string;
+    total: number;
+    free: number;
+    usedPercent: number;
+    error?: string;
+  };
+  gc: {
+    lastGC: string;
+    numGC: number;
+    nextGCBytes: number;
+    estimatedSec: number;
+    pauseTotalMs: number;
+  };
+}

@@ -8,10 +8,12 @@ import { useTheme } from './theme';
 import { AgentManagerModal } from './components/AgentManagerModal';
 import { MonitorModal } from './components/MonitorModal';
 import { PluginManagerModal } from './components/PluginManagerModal';
+import { StatusBar } from './components/StatusBar';
 import { fmtTime } from './components/common';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectPage from './pages/ProjectPage';
 import IssuePage from './pages/IssuePage';
+import CommitsPage from './pages/CommitsPage';
 
 function WsIndicator() {
   const s = useWsState();
@@ -272,10 +274,12 @@ export default function App() {
         <Routes>
           <Route path="/" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectPage />} />
+          <Route path="/projects/:id/commits" element={<CommitsPage />} />
           <Route path="/issues/:id" element={<IssuePage />} />
           <Route path="*" element={<div className="page empty">页面不存在</div>} />
         </Routes>
       </main>
+      <StatusBar />
       {agentMgrOpen && <AgentManagerModal onClose={() => setAgentMgrOpen(false)} />}
       {monitorOpen && <MonitorModal onClose={() => setMonitorOpen(false)} />}
       {pluginsOpen && <PluginManagerModal onClose={() => setPluginsOpen(false)} />}

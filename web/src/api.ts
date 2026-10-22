@@ -8,6 +8,7 @@ import type {
   CherryPickRequest,
   CherryPickResult,
   Comment,
+  CommitDetail,
   CommitInfo,
   DevMode,
   Health,
@@ -32,6 +33,7 @@ import type {
   RunEvent,
   SubmitRequest,
   SubmitResult,
+  SystemStatus,
   DocItem,
   DocDetail,
   DocSearchResult,
@@ -138,6 +140,7 @@ const q = (params: Record<string, string | number>) =>
 export const api = {
   health: () => get<Health>('/api/health'),
   restartServer: () => post<{ restarting: boolean }>('/api/restart'),
+  status: () => get<SystemStatus>('/api/status'),
   agents: () => get<AgentInfo[]>('/api/agents'),
   reloadAgents: () => post<AgentInfo[]>('/api/agents/reload'),
   upsertAgent: (name: string, b: AgentConfigInput) => put<AgentInfo>(`/api/agents/${encodeURIComponent(name)}`, b),
@@ -223,6 +226,8 @@ export const api = {
   repoBranches: (repoId: number) => get<string[]>(`/api/repos/${repoId}/branches`),
   repoCommits: (repoId: number, branch?: string, limit = 30) =>
     get<CommitInfo[]>(`/api/repos/${repoId}/commits?${q({ branch: branch ?? '', limit })}`),
+  repoCommitDetail: (repoId: number, sha: string) =>
+    get<CommitDetail>(`/api/repos/${repoId}/commits/${encodeURIComponent(sha)}`),
 
   issues: (projectId: number) => get<Issue[]>(`/api/projects/${projectId}/issues`),
   createIssue: (projectId: number, b: { title: string; body: string; labels?: string[] }) =>
@@ -285,6 +290,7 @@ export const api = {
 /** react-query keys */
 export const qk = {
   health: ['health'] as const,
+  status: ['status'] as const,
   monitorStatus: ['monitorStatus'] as const,
   monitorConfig: ['monitorConfig'] as const,
   monitorLogs: (hours?: number) => ['monitorLogs', hours ?? 8] as const,
@@ -304,6 +310,7 @@ export const qk = {
   watches: (projectId: number) => ['watches', projectId] as const,
   repoBranches: (repoId: number) => ['repoBranches', repoId] as const,
   repoCommits: (repoId: number, branch: string) => ['repoCommits', repoId, branch] as const,
+  repoCommitDetail: (repoId: number, sha: string) => ['repoCommitDetail', repoId, sha] as const,
   issues: (projectId: number) => ['issues', projectId] as const,
   issue: (id: number) => ['issue', id] as const,
   comments: (issueId: number) => ['comments', issueId] as const,

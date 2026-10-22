@@ -106,3 +106,11 @@ func TestShouldRunProjectHooks(t *testing.T) {
 		t.Fatal("nil repo must not run hooks")
 	}
 }
+
+func TestBranchPushLink(t *testing.T) {
+	got := branchPushLink(2, 7, "feature/a b", "abc123")
+	want := "/projects/2/commits?repo=7&branch=feature%2Fa+b&sha=abc123"
+	if got != want {
+		t.Fatalf("branchPushLink = %q, want %q", got, want)
+	}
+}

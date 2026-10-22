@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -17,21 +16,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/xpier/xissue/internal/server"
+	"github.com/xpier/xissue/internal/updater"
 )
-
-type githubRelease struct {
-	TagName string `json:"tag_name"`
-	Name    string `json:"name"`
-	Assets  []struct {
-		Name               string `json:"name"`
-		BrowserDownloadURL string `json:"browser_download_url"`
-	} `json:"assets"`
-}
 
 func runUpdate(args []string) {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
@@ -123,14 +113,16 @@ func handleBrewUpdate(checkOnly bool) {
 
 func handleBinaryUpdate(currentVer, exePath string, checkOnly, force bool) {
 	fmt.Println("正在检查 GitHub Releases 最新版本...")
-	rel, err := fetchLatestRelease()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	rel, err := updater.FetchLatest(ctx)
 	if err != nil {
 		fmt.Printf("获取最新版本失败: %v\n", err)
 		return
 	}
 
 	latestVer := strings.TrimPrefix(rel.TagName, "v")
-	if !isNewerVersion(currentVer, latestVer) {
+	if !updater.IsNewer(currentVer, latestVer) {
 		fmt.Printf("已经是最新版本 (v%s)，无需更新。\n", currentVer)
 		return
 	}
@@ -141,7 +133,7 @@ func handleBinaryUpdate(currentVer, exePath string, checkOnly, force bool) {
 		return
 	}
 
-	assetName, assetURL := findMatchingAsset(rel, runtime.GOOS, runtime.GOARCH)
+	assetName, assetURL := updater.FindMatchingAsset(rel, runtime.GOOS, runtime.GOARCH)
 	if assetURL == "" {
 		fmt.Printf("未找到适配 %s-%s 的发布包，请访问 %s 手动下载。\n",
 			runtime.GOOS, runtime.GOARCH, "https://github.com/ffqa/xissue/releases/latest")
@@ -157,7 +149,7 @@ func handleBinaryUpdate(currentVer, exePath string, checkOnly, force bool) {
 	defer os.Remove(tmpArchive)
 
 	// 完整性校验：下载 SHA256SUMS.txt 并校验包哈希 (默认严格 fail-closed，杜绝供应链投毒)
-	sumsURL := findSumsURL(rel)
+	sumsURL := updater.FindSumsURL(rel)
 	if sumsURL == "" {
 		if !force {
 			fmt.Println("❌ 安全拦截: 未在发布包中找到 SHA256SUMS.txt 校验和文件。\n   为防范供应链风险已终止升级（可使用 'xissue update --force' 强制升级）。")
@@ -236,97 +228,6 @@ func handleBinaryUpdate(currentVer, exePath string, checkOnly, force bool) {
 
 	fmt.Printf("🎉 成功升级至 %s！已安装到: %s\n", rel.TagName, targetBin)
 	restartServiceIfRunning()
-}
-
-func isNewerVersion(current, latest string) bool {
-	cParts := parseVersion(current)
-	lParts := parseVersion(latest)
-	maxLen := len(cParts)
-	if len(lParts) > maxLen {
-		maxLen = len(lParts)
-	}
-	for len(cParts) < maxLen {
-		cParts = append(cParts, 0)
-	}
-	for len(lParts) < maxLen {
-		lParts = append(lParts, 0)
-	}
-	for i := 0; i < maxLen; i++ {
-		if lParts[i] > cParts[i] {
-			return true
-		}
-		if lParts[i] < cParts[i] {
-			return false
-		}
-	}
-	return false
-}
-
-func parseVersion(v string) []int {
-	v = strings.TrimPrefix(v, "v")
-	parts := strings.Split(v, ".")
-	var res []int
-	for _, p := range parts {
-		var numStr string
-		for _, r := range p {
-			if r >= '0' && r <= '9' {
-				numStr += string(r)
-			} else {
-				break
-			}
-		}
-		n, _ := strconv.Atoi(numStr)
-		res = append(res, n)
-	}
-	return res
-}
-
-func fetchLatestRelease() (*githubRelease, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.github.com/repos/ffqa/xissue/releases/latest", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "xissue-updater")
-	req.Header.Set("Accept", "application/vnd.github.v3+json")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API 返回状态码 %d", resp.StatusCode)
-	}
-
-	var rel githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		return nil, err
-	}
-	return &rel, nil
-}
-
-func findMatchingAsset(rel *githubRelease, goos, goarch string) (string, string) {
-	pattern := fmt.Sprintf("%s-%s", goos, goarch)
-	for _, asset := range rel.Assets {
-		name := strings.ToLower(asset.Name)
-		if strings.Contains(name, pattern) && (strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".zip")) {
-			return asset.Name, asset.BrowserDownloadURL
-		}
-	}
-	return "", ""
-}
-
-func findSumsURL(rel *githubRelease) string {
-	for _, asset := range rel.Assets {
-		if asset.Name == "SHA256SUMS.txt" {
-			return asset.BrowserDownloadURL
-		}
-	}
-	return ""
 }
 
 func parseChecksum(sumsContent, fileName string) string {

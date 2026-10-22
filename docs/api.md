@@ -105,6 +105,7 @@ interface RunEvent {
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/health` | `{ ok, version, editorUrlTemplate }`。`editorUrlTemplate` 如 `vscode://file{path}`，前端替换 `{path}` 为绝对路径 |
+| GET | `/api/status` | 实时运行状态：版本、PID、uptime、堆内存、进程 CPU、磁盘、GC、goroutine、自动更新状态 |
 | GET | `/api/plugins` | 已安装插件 → `PluginInfo[]`（`apiVersion`、`events`、`permissions`、`enabled`、`hasReadme`、`hasConfig`、`error`）；CLI 为 `xissue plugin list` |
 | PATCH | `/api/plugins/{id}` | `{ enabled }` 即时启用/停用（写/删 `.disabled`）→ `PluginInfo[]`；manifest 无效时不能启用 |
 | GET | `/api/plugins/{id}/readme` | `{ name, path, content }`，预览插件 README |
@@ -121,6 +122,7 @@ interface RunEvent {
 | GET | `/api/projects/{id}/prs` | 查询项目 PR 列表（`?state=open\|merged\|closed\|all`）→ `RemotePR[]` |
 | POST | `/api/projects/{id}/prs/{number}/merge` | 在项目中直接合并 PR 并自动 pull 同步本地代码 → `{ ok, merged, message }` |
 | POST | `/api/projects/{id}/prs/{number}/close` | 在项目中直接关闭 PR → `{ ok, closed }` |
+| GET | `/api/repos/{repoId}/commits/{sha}` | 单个 Commit 详情：元信息、文件增删统计、统一 diff（超过 512KB 截断） |
 | GET | `/api/monitor/status` | 获取监控服务状态、上次检查耗时、监控分支与 PR 数 → `MonitorStatus` |
 | GET | `/api/monitor/logs` | 查询监控与执行日志（`?hours=8` 默认最近8小时）→ `MonitorLogEntry[]` |
 | POST | `/api/monitor/trigger` | 立即触发一次全分支与 PR 状态检查 → `{ ok, watchesTriggered, prsUpdated, message }` |

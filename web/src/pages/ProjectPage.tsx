@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { Crumbs, fmtTime, Modal } from '../components/common';
@@ -8,12 +8,11 @@ import { CherryPickModal } from '../components/CherryPickModal';
 import { PRListModal } from '../components/PRListModal';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
-import { WatchCommitDetailModal, getCommitWebUrl, getBranchWebUrl } from '../components/WatchCommitDetailModal';
+import { getCommitWebUrl, getBranchWebUrl, commitPagePath } from '../gitUrls';
 import { toast } from '../toast';
 import { copyText } from '../clipboard';
 import {
   type AutomationRule,
-  type BranchWatch,
   type DevMode,
   type HookStatus,
   type InspectResult,
@@ -107,7 +106,7 @@ export default function ProjectPage() {
 
   const [watchRepoId, setWatchRepoId] = useState<number>(0);
   const [watchBranch, setWatchBranch] = useState('');
-  const [viewWatch, setViewWatch] = useState<BranchWatch | null>(null);
+  const [search] = useSearchParams();
 
   const [cpOpen, setCpOpen] = useState(false);
   const [cpInitRepoId, setCpInitRepoId] = useState<number | undefined>();
@@ -402,6 +401,15 @@ export default function ProjectPage() {
   const p = project.data;
   const allIssues = issues.data ?? [];
   const watches = watchesQ.data ?? [];
+
+  // Older notifications linked to /projects/:id?watch=<id>. Route them to the
+  // dedicated commit page and highlight the watched tip instead of a modal.
+  useEffect(() => {
+    const watchID = Number(search.get('watch'));
+    if (!watchID || watches.length === 0) return;
+    const watch = watches.find((w) => w.id === watchID);
+    if (watch) nav(commitPagePath(id, watch.repoId, watch.branch, watch.lastSha), { replace: true });
+  }, [search, watches, id, nav]);
 
   const doneIssues = allIssues.filter((it) => it.status === 'done');
   const filteredDoneIssues = doneIssues.filter((it) => {
@@ -816,7 +824,7 @@ export default function ProjectPage() {
                             cursor: 'pointer',
                           }}
                           title={w.lastSha}
-                          onClick={() => setViewWatch(w)}
+                          onClick={() => nav(commitPagePath(id, w.repoId, w.branch, w.lastSha))}
                         >
                           {w.lastSha.slice(0, 7)}
                         </code>
@@ -829,7 +837,7 @@ export default function ProjectPage() {
                       className="small muted ellipsis grow"
                       style={{ cursor: 'pointer' }}
                       title={`点击查看详情: ${w.lastMessage || '无提交信息'}`}
-                      onClick={() => setViewWatch(w)}
+                      onClick={() => nav(commitPagePath(id, w.repoId, w.branch, w.lastSha))}
                     >
                       {w.lastMessage || '无提交信息'}{' '}
                       {w.lastAuthor && <span className="dim">({w.lastAuthor})</span>}
@@ -840,7 +848,7 @@ export default function ProjectPage() {
                     <button
                       className="sm ghost"
                       title="查看该分支的历史提交记录与详细信息"
-                      onClick={() => setViewWatch(w)}
+                      onClick={() => nav(commitPagePath(id, w.repoId, w.branch, w.lastSha))}
                     >
                       📜 提交记录
                     </button>
@@ -1041,19 +1049,6 @@ export default function ProjectPage() {
           initialRepoId={cpInitRepoId}
           initialSourceBranch={cpInitBranch}
           onClose={() => setCpOpen(false)}
-        />
-      )}
-
-      {viewWatch && (
-        <WatchCommitDetailModal
-          watch={viewWatch}
-          repo={p?.repos?.find((r) => r.id === viewWatch.repoId)}
-          onClose={() => setViewWatch(null)}
-          onCreateIssue={(newTitle, newBody) => {
-            setTitle(newTitle);
-            setBody(newBody);
-            setIssueOpen(true);
-          }}
         />
       )}
 

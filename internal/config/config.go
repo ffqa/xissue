@@ -61,6 +61,7 @@ type Config struct {
 	DataDir           string                 `yaml:"dataDir"`
 	EditorURLTemplate string                 `yaml:"editorUrlTemplate"`
 	ExportMarkdown    bool                   `yaml:"exportMarkdown"`
+	AutoUpdate        bool                   `yaml:"autoUpdate" json:"autoUpdate"`
 	Agents            map[string]AgentConfig `yaml:"agents"`
 	Permissions       PermissionPolicy       `yaml:"permissions"`
 	Runner            RunnerConfig           `yaml:"runner"`
@@ -274,6 +275,7 @@ func Default() *Config {
 		DataDir:           DefaultDataDir(),
 		EditorURLTemplate: "vscode://file{path}",
 		ExportMarkdown:    true,
+		AutoUpdate:        true,
 		Agents: map[string]AgentConfig{
 			"opencode": {Command: "opencode", Args: []string{"acp"}, MemoryMB: 500},
 			"omp":      {Command: "omp", Args: []string{"acp"}, MemoryMB: 500},
@@ -472,3 +474,17 @@ func (c *Config) MirrorsDir() string { return filepath.Join(c.DataDir, "mirrors"
 func (c *Config) RunsDir() string    { return filepath.Join(c.DataDir, "runs") }
 func (c *Config) IssuesDir() string  { return filepath.Join(c.DataDir, "issues") }
 func (c *Config) PluginsDir() string { return filepath.Join(c.DataDir, "plugins") }
+
+// AutoUpdateEnabled reports whether the hourly self-update check is enabled.
+func (c *Config) AutoUpdateEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.AutoUpdate
+}
+
+// SetAutoUpdate toggles the hourly self-update check.
+func (c *Config) SetAutoUpdate(v bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.AutoUpdate = v
+}

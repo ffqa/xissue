@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -100,6 +101,11 @@ func deriveChangeItems(issueTitle string, files []gitx.FileChange) []string {
 		out = append(out, fmt.Sprintf("其余 %d 个文件变更", len(files)-limit))
 	}
 	return out
+}
+
+// PushNotification persists and broadcasts a user-visible notification.
+func (r *Runner) PushNotification(kind, title, body, link, meta string) {
+	r.pushNotification(kind, title, body, link, meta)
 }
 
 func (r *Runner) pushNotification(kind, title, body, link, meta string) {
@@ -279,6 +285,19 @@ func (r *Runner) ListRepoCommits(ctx context.Context, repoID int64, branch strin
 	return gitx.ListCommits(ctx, mirror, branch, limit)
 }
 
+// GetRepoCommitDetail fetches the repo mirror and returns one commit with files and patch.
+func (r *Runner) GetRepoCommitDetail(ctx context.Context, repoID int64, sha string) (gitx.CommitDetail, error) {
+	repo, err := r.st.GetRepo(ctx, repoID)
+	if err != nil {
+		return gitx.CommitDetail{}, err
+	}
+	mirror, err := r.ensureRepoMirror(ctx, *repo)
+	if err != nil {
+		return gitx.CommitDetail{}, err
+	}
+	return gitx.GetCommitDetail(ctx, mirror, sha)
+}
+
 // AddBranchWatch registers a branch to be monitored for new pushes.
 func (r *Runner) AddBranchWatch(ctx context.Context, projectID, repoID int64, branch string) (*domain.BranchWatch, error) {
 	repo, err := r.st.GetRepo(ctx, repoID)
@@ -416,7 +435,7 @@ func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watch
 				"shas":      shas,
 			})
 			title := fmt.Sprintf("分支推送：%s:%s (%d 个新提交)", w.RepoName, w.Branch, len(commits))
-			r.pushNotification("branch_push", title, strings.Join(lines, "\n"), fmt.Sprintf("/projects/%d?watch=%d", w.ProjectID, w.ID), string(metaBytes))
+			r.pushNotification("branch_push", title, strings.Join(lines, "\n"), branchPushLink(w.ProjectID, w.RepoID, w.Branch, tip.SHA), string(metaBytes))
 
 			// 触发自动化引擎 (Layer 1 规则、Layer 2 on-branch-push Hook、Layer 3 插件)
 			repo, _ := r.st.GetRepo(ctx, w.RepoID)
@@ -1238,6 +1257,13 @@ func (r *Runner) ListPlugins() []domain.PluginInfo {
 	return r.automation.ListPlugins()
 }
 
+// branchPushLink deep-links a branch-push notification to the commit page and
+// highlights the branch tip (or the newest commit in the push).
+func branchPushLink(projectID, repoID int64, branch, sha string) string {
+	return fmt.Sprintf("/projects/%d/commits?repo=%d&branch=%s&sha=%s",
+		projectID, repoID, url.QueryEscape(branch), url.QueryEscape(sha))
+}
+
 func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.BranchWatch, repo *domain.Repo, commits []gitx.CommitInfo, tip gitx.CommitInfo) error {
 	if r.automation == nil {
 		return nil
@@ -1348,7 +1374,7 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 			if msg == "" {
 				msg = fmt.Sprintf("分支 %s:%s 收到 %d 个新提交", w.RepoName, w.Branch, len(commits))
 			}
-			r.pushNotification("automation", fmt.Sprintf("⚡ [%s] 分支推送自动化", w.RepoName), msg, fmt.Sprintf("/projects/%d?watch=%d", w.ProjectID, w.ID), "")
+			r.pushNotification("automation", fmt.Sprintf("⚡ [%s] 分支推送自动化", w.RepoName), msg, branchPushLink(w.ProjectID, w.RepoID, w.Branch, tip.SHA), "")
 		}
 	}
 

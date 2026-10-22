@@ -7,6 +7,7 @@ import { Toaster, toast } from './toast';
 import { useTheme } from './theme';
 import { AgentManagerModal } from './components/AgentManagerModal';
 import { MonitorModal } from './components/MonitorModal';
+import { PluginManagerModal } from './components/PluginManagerModal';
 import { fmtTime } from './components/common';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectPage from './pages/ProjectPage';
@@ -207,6 +208,7 @@ export default function App() {
   const [theme, toggleTheme] = useTheme();
   const [agentMgrOpen, setAgentMgrOpen] = useState(false);
   const [monitorOpen, setMonitorOpen] = useState(false);
+  const [pluginsOpen, setPluginsOpen] = useState(false);
   const health = useQuery({ queryKey: qk.health, queryFn: api.health, staleTime: Infinity });
   const restart = useMutation({
     mutationFn: api.restartServer,
@@ -233,6 +235,13 @@ export default function App() {
           style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
         >
           📡 监控
+        </button>
+        <button
+          className="ghost sm"
+          title="全局插件管理：启停、README 预览、config.json 编辑"
+          onClick={() => setPluginsOpen(true)}
+        >
+          🧩 插件
         </button>
         <button
           className="ghost sm"
@@ -269,6 +278,7 @@ export default function App() {
       </main>
       {agentMgrOpen && <AgentManagerModal onClose={() => setAgentMgrOpen(false)} />}
       {monitorOpen && <MonitorModal onClose={() => setMonitorOpen(false)} />}
+      {pluginsOpen && <PluginManagerModal onClose={() => setPluginsOpen(false)} />}
       <Toaster />
     </div>
   );

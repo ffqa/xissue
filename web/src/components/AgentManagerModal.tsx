@@ -138,10 +138,12 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
 
   const mcpQ = useQuery({ queryKey: qk.mcpStatus, queryFn: api.mcpStatus });
   const mcpInstallMut = useMutation({
-    mutationFn: (targets?: string[]) => api.mcpInstall(targets),
+    mutationFn: (v: { targets?: string[]; transport?: 'stdio' | 'http' }) =>
+      api.mcpInstall(v.targets, v.transport),
     onSuccess: (res) => {
       qc.setQueryData(qk.mcpStatus, res);
-      toast.success(`已将 xIssue MCP 安装到：${res.installed.join(', ') || '目标配置'}`);
+      const mode = res.transport === 'http' ? 'HTTP 复用' : 'Stdio';
+      toast.success(`${mode} 模式已写入：${res.installed.join(', ') || '目标配置'}`);
     },
     onError: (e) => toast.error((e as Error).message),
   });
@@ -206,10 +208,20 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
           <button
             type="button"
             className="primary sm"
+            title="每个客户端会话会启动一个 xissue mcp stdio 桥接进程"
             disabled={mcpInstallMut.isPending}
-            onClick={() => mcpInstallMut.mutate(undefined)}
+            onClick={() => mcpInstallMut.mutate({ transport: 'stdio' })}
           >
-            {mcpInstallMut.isPending ? '正在写入配置…' : '⚡ 一键安装到本机所有 Agent / IDE'}
+            {mcpInstallMut.isPending ? '正在写入配置…' : '⚡ Stdio 安装到所有 Agent / IDE'}
+          </button>
+          <button
+            type="button"
+            className="sm"
+            title="所有支持 Streamable HTTP 的客户端共用同一个 xIssue 服务，不再为每个会话启动子进程"
+            disabled={mcpInstallMut.isPending}
+            onClick={() => mcpInstallMut.mutate({ transport: 'http' })}
+          >
+            🔗 HTTP 复用安装（省内存）
           </button>
         </div>
 
@@ -236,7 +248,9 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
                 <div className="row" style={{ gap: 6 }}>
                   <b className="small">{t.name.split(' (')[0]}</b>
                   {t.installed ? (
-                    <span className="badge ok">已安装</span>
+                    <span className="badge ok">
+                      已安装{t.transport ? ` · ${t.transport === 'http' ? 'HTTP' : 'Stdio'}` : ''}
+                    </span>
                   ) : t.detected ? (
                     <span className="badge">已检测到</span>
                   ) : (
@@ -251,9 +265,9 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
                 type="button"
                 className="sm"
                 disabled={mcpInstallMut.isPending}
-                onClick={() => mcpInstallMut.mutate([t.id])}
+                onClick={() => mcpInstallMut.mutate({ targets: [t.id], transport: 'stdio' })}
               >
-                {t.installed ? '重装' : '安装'}
+                {t.installed ? '重装 Stdio' : '安装 Stdio'}
               </button>
             </div>
           ))}
@@ -288,8 +302,37 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
               );
             }}
           >
-            📋 复制通用 MCP JSON
+            📋 复制 Stdio JSON
           </button>
+          <button
+            type="button"
+            className="sm ghost"
+            onClick={() => {
+              const snippet = JSON.stringify(
+                {
+                  mcpServers: {
+                    xissue: {
+                      type: 'http',
+                      url: mcpQ.data?.httpUrl || 'http://127.0.0.1:7789/api/mcp',
+                      headers: { 'X-XIssue': '1' },
+                    },
+                  },
+                },
+                null,
+                2,
+              );
+              void copyText(snippet).then((ok) =>
+                ok ? toast.success('已复制 HTTP 复用配置（Claude/Cursor）') : toast.error('复制失败，请手动选择文本')
+              );
+            }}
+          >
+            🔗 复制 HTTP JSON
+          </button>
+        </div>
+        <div className="small dim" style={{ marginTop: 6, lineHeight: 1.5 }}>
+          HTTP 模式下所有 IDE/Agent 共用 <code>{mcpQ.data?.httpUrl || 'http://127.0.0.1:7789/api/mcp'}</code>{' '}
+          这一个服务，不再为每个客户端会话启动 <code>xissue mcp</code> 子进程；OpenCode / Claude Code / Cursor /
+          Windsurf 支持一键写入。若开启了访问 token，请把请求头改为 <code>Authorization: Bearer &lt;token&gt;</code>。
         </div>
       </div>
 

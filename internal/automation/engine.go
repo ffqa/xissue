@@ -394,6 +394,10 @@ func (e *Engine) ListPlugins() []domain.PluginInfo {
 		if _, statErr := os.Stat(filepath.Join(pluginDir, PluginDisabledFile)); statErr == nil {
 			info.Enabled = false
 		}
+		info.HasReadme = pluginFileExists(pluginDir, "README.md") ||
+			pluginFileExists(pluginDir, "readme.md") ||
+			pluginFileExists(pluginDir, "README.markdown")
+		info.HasConfig = pluginFileExists(pluginDir, PluginConfigFile)
 		out = append(out, info)
 	}
 	return out

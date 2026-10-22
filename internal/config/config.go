@@ -41,12 +41,15 @@ type RunnerConfig struct {
 
 // MonitorConfig controls branch and PR background monitoring and external notifications.
 type MonitorConfig struct {
-	Enabled          bool   `yaml:"enabled" json:"enabled"`                                       // 监控总开关 (true=运行, false=暂停)
-	ActiveHours      string `yaml:"activeHours" json:"activeHours"`                               // 活跃时间段，如 "08:00-20:00" 或 "8-20"，留空全天
-	PublicURL        string `yaml:"publicUrl,omitempty" json:"publicUrl,omitempty"`               // 外部通知里链接使用的访问地址，如 http://100.64.0.2:7789；留空自动推导
-	TelegramBotToken string `yaml:"telegramBotToken,omitempty" json:"telegramBotToken,omitempty"` // Telegram Bot Token
-	TelegramChatID   string `yaml:"telegramChatId,omitempty" json:"telegramChatId,omitempty"`     // Telegram Chat ID
-	WebhookURL       string `yaml:"webhookUrl,omitempty" json:"webhookUrl,omitempty"`             // 通用 Webhook (飞书/企微/钉钉/Slack)
+	Enabled           bool   `yaml:"enabled" json:"enabled"`                                       // 监控总开关 (true=运行, false=暂停)
+	ActiveHours       string `yaml:"activeHours" json:"activeHours"`                               // 活跃时间段，如 "08:00-20:00" 或 "8-20"，留空全天
+	PublicURL         string `yaml:"publicUrl,omitempty" json:"publicUrl,omitempty"`               // 外部通知里链接使用的访问地址，如 http://100.64.0.2:7789；留空自动推导
+	TelegramBotToken  string `yaml:"telegramBotToken,omitempty" json:"telegramBotToken,omitempty"` // Telegram Bot Token
+	TelegramChatID    string `yaml:"telegramChatId,omitempty" json:"telegramChatId,omitempty"`     // Telegram Chat ID
+	WebhookURL        string `yaml:"webhookUrl,omitempty" json:"webhookUrl,omitempty"`             // 通用 Webhook (飞书/企微/钉钉/Slack)
+	SyncIssues        bool   `yaml:"syncIssues" json:"syncIssues"`                                 // 全局自动同步各项目的远程 Issue
+	SyncIntervalMin   int    `yaml:"syncIntervalMin" json:"syncIntervalMin"`                       // 自动同步间隔（分钟），默认 10
+	AutoDevelopIssues bool   `yaml:"autoDevelopIssues" json:"autoDevelopIssues"`                   // 全局自动开发判定为 Bug/需求的 Issue
 }
 
 // Config is the root configuration.
@@ -141,12 +144,15 @@ const MaskedSecret = "******"
 
 // MonitorPatch updates only the supplied monitor fields.
 type MonitorPatch struct {
-	Enabled          *bool   `json:"enabled"`
-	ActiveHours      *string `json:"activeHours"`
-	PublicURL        *string `json:"publicUrl"`
-	TelegramBotToken *string `json:"telegramBotToken"`
-	TelegramChatID   *string `json:"telegramChatId"`
-	WebhookURL       *string `json:"webhookUrl"`
+	Enabled           *bool   `json:"enabled"`
+	ActiveHours       *string `json:"activeHours"`
+	PublicURL         *string `json:"publicUrl"`
+	TelegramBotToken  *string `json:"telegramBotToken"`
+	TelegramChatID    *string `json:"telegramChatId"`
+	WebhookURL        *string `json:"webhookUrl"`
+	SyncIssues        *bool   `json:"syncIssues"`
+	SyncIntervalMin   *int    `json:"syncIntervalMin"`
+	AutoDevelopIssues *bool   `json:"autoDevelopIssues"`
 }
 
 // MaskedMonitorSnapshot returns monitor settings with credentials masked.
@@ -284,8 +290,9 @@ func Default() *Config {
 			IdleTimeoutSec: 600,
 		},
 		Monitor: MonitorConfig{
-			Enabled:     true,
-			ActiveHours: "", // empty = all day; avoids silently pausing overnight after upgrades
+			Enabled:         true,
+			ActiveHours:     "", // empty = all day; avoids silently pausing overnight after upgrades
+			SyncIntervalMin: 10,
 		},
 	}
 }
@@ -323,7 +330,18 @@ func Load(path string) (*Config, error) {
 	if cfg.Runner.MaxConcurrent <= 0 {
 		cfg.Runner.MaxConcurrent = 1
 	}
+	cfg.Monitor.SyncIntervalMin = normalizeSyncInterval(cfg.Monitor.SyncIntervalMin)
 	return cfg, nil
+}
+
+func normalizeSyncInterval(v int) int {
+	if v <= 0 {
+		return 10
+	}
+	if v > 24*60 {
+		return 24 * 60
+	}
+	return v
 }
 
 // Save writes the current configuration back to disk atomically.
@@ -402,6 +420,7 @@ func (c *Config) UpdateMonitor(m MonitorConfig) error {
 	m.WebhookURL = strings.TrimSpace(m.WebhookURL)
 	m.ActiveHours = strings.TrimSpace(m.ActiveHours)
 	m.PublicURL = strings.TrimSpace(m.PublicURL)
+	m.SyncIntervalMin = normalizeSyncInterval(m.SyncIntervalMin)
 	c.Monitor = m
 	return c.saveLocked()
 }
@@ -433,6 +452,16 @@ func (c *Config) PatchMonitor(p MonitorPatch) error {
 			m.WebhookURL = v
 		}
 	}
+	if p.SyncIssues != nil {
+		m.SyncIssues = *p.SyncIssues
+	}
+	if p.SyncIntervalMin != nil {
+		m.SyncIntervalMin = *p.SyncIntervalMin
+	}
+	if p.AutoDevelopIssues != nil {
+		m.AutoDevelopIssues = *p.AutoDevelopIssues
+	}
+	m.SyncIntervalMin = normalizeSyncInterval(m.SyncIntervalMin)
 	c.Monitor = m
 	return c.saveLocked()
 }

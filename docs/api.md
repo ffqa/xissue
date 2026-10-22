@@ -105,7 +105,11 @@ interface RunEvent {
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/health` | `{ ok, version, editorUrlTemplate }`。`editorUrlTemplate` 如 `vscode://file{path}`，前端替换 `{path}` 为绝对路径 |
-| GET | `/api/plugins` | 已安装插件 → `PluginInfo[]`（`apiVersion`、`events`、`permissions`、`enabled`、`error`）；CLI 为 `xissue plugin list` |
+| GET | `/api/plugins` | 已安装插件 → `PluginInfo[]`（`apiVersion`、`events`、`permissions`、`enabled`、`hasReadme`、`hasConfig`、`error`）；CLI 为 `xissue plugin list` |
+| PATCH | `/api/plugins/{id}` | `{ enabled }` 即时启用/停用（写/删 `.disabled`）→ `PluginInfo[]`；manifest 无效时不能启用 |
+| GET | `/api/plugins/{id}/readme` | `{ name, path, content }`，预览插件 README |
+| GET | `/api/plugins/{id}/config` | `{ exists, template, content, path }`；无 `config.json` 时优先返回 `config.example.json` 内容 |
+| PUT | `/api/plugins/{id}/config` | `{ content }` 原子写入 `config.json`（校验 JSON，权限 `0600`）→ 同 GET |
 | GET | `/api/agents` | `[{ name, command, available }]` |
 | GET | `/api/projects` | `Project[]` |
 | POST | `/api/projects` | `{ name, description }` → `Project` |
@@ -120,7 +124,10 @@ interface RunEvent {
 | GET | `/api/monitor/status` | 获取监控服务状态、上次检查耗时、监控分支与 PR 数 → `MonitorStatus` |
 | GET | `/api/monitor/logs` | 查询监控与执行日志（`?hours=8` 默认最近8小时）→ `MonitorLogEntry[]` |
 | POST | `/api/monitor/trigger` | 立即触发一次全分支与 PR 状态检查 → `{ ok, watchesTriggered, prsUpdated, message }` |
+| POST | `/api/monitor/sync` | 立即同步所有项目的远程 Issue → `{ ok, projects, imported, errors?, message }` |
 | POST | `/api/monitor/prune` | 立即裁剪旧日志（`?hours=8`）保留最近指定时间 → `{ ok, prunedCount, message }` |
+| POST | `/api/mcp` | MCP Streamable HTTP JSON-RPC（`Accept: application/json` 或 `text/event-stream`）；无状态，所有客户端共享一个服务 |
+| DELETE | `/api/mcp` | 无状态 MCP 会话终止，返回 204 |
 | GET | `/api/projects/{id}/issues` | `Issue[]` |
 | POST | `/api/projects/{id}/issues` | `{ title, body, labels? }` → `Issue`（本地 Issue，status=todo） |
 | GET / PATCH | `/api/issues/{id}` | PATCH `{ title?, body?, status? }` |

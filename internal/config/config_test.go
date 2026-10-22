@@ -126,6 +126,14 @@ func TestMonitorSecretsAreMaskedAndPreserved(t *testing.T) {
 	if cfg.MonitorSnapshot().TelegramBotToken != "NEW-TOKEN" {
 		t.Fatalf("token not replaced: %+v", cfg.MonitorSnapshot())
 	}
+
+	autoDevelop := true
+	if err := cfg.PatchMonitor(MonitorPatch{AutoDevelopIssues: &autoDevelop}); err != nil {
+		t.Fatalf("PatchMonitor autoDevelop: %v", err)
+	}
+	if !cfg.MonitorSnapshot().AutoDevelopIssues {
+		t.Fatalf("autoDevelopIssues not patched: %+v", cfg.MonitorSnapshot())
+	}
 }
 
 func TestAgentSnapshotsAreDefensiveCopies(t *testing.T) {

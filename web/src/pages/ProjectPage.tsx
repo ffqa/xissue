@@ -19,7 +19,6 @@ import {
   type InspectResult,
   type Issue,
   type IssueStatus,
-  type PluginInfo,
   type Provider,
   type RepoInput,
   type RuleAction,
@@ -148,7 +147,6 @@ export default function ProjectPage() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const hooksQ = useQuery({ queryKey: qk.projectHooks(id), queryFn: () => api.detectHooks(id), enabled: settingsOpen });
-  const pluginsQ = useQuery({ queryKey: qk.plugins, queryFn: api.plugins, enabled: settingsOpen });
 
   const [settingsTab, setSettingsTab] = useState<'mode' | 'automation'>('mode');
   const [cfgDevMode, setCfgDevMode] = useState<DevMode>('single_main');
@@ -1474,8 +1472,8 @@ export default function ProjectPage() {
                   </span>
                 </label>
                 <div className="small dim" style={{ marginTop: 6, lineHeight: 1.5 }}>
-                  同步到新的远程 Issue 且命中下方标签/关键字时，自动启动 Agent 预开发；完成后自动创建 PR，由管理员审核后决定合并或关闭。
-                  Agent 会先判断是否为真实可实施的需求/Bug，信息不足时不改代码。
+                  新 Issue 同步后先自动判定 Bug / 需求 / 建议：Bug 与需求会打上对应标签并按下方条件启动 Agent
+                  预开发，完成后自动创建 PR；建议只打标不启动，等待作者或维护者补充。Agent 仍会先判断是否真实可实施，信息不足时不改代码。
                 </div>
                 {cfgAutoDevelop && (
                   <div
@@ -2100,69 +2098,24 @@ export default function ProjectPage() {
                 </div>
               </div>
 
-              {/* Layer 3: C 规范化生态插件 */}
+              {/* Layer 3: 全局生态插件入口 */}
               <div>
                 <div style={{ marginBottom: 8 }}>
                   <b style={{ fontSize: 14 }}>🅲️ 规范化生态插件 (Plugin System)</b>
-                  <span className="small dim" style={{ marginLeft: 8 }}>
-                    全局插件目录 <code>~/.xissue/plugins/</code>，通过 <code>plugin.yaml</code> 清单声明复用与分发
-                  </span>
                 </div>
-
                 <div
                   style={{
                     background: 'var(--bg-2)',
                     border: '1px solid var(--border)',
                     borderRadius: 8,
                     padding: 12,
+                    fontSize: 12,
+                    color: 'var(--text-3)',
+                    lineHeight: 1.7,
                   }}
                 >
-                  {(pluginsQ.data ?? []).length === 0 ? (
-                    <div style={{ color: 'var(--text-3)', fontSize: 12, lineHeight: 1.6 }}>
-                      暂未检测到生态插件。使用 <code>xissue plugin install &lt;name&gt;</code> 从官方目录安装，或把插件放入{' '}
-                      <code>~/.xissue/plugins/&lt;plugin-id&gt;/</code> 后刷新。插件需声明 <code>apiVersion: 1</code>。
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                      {(pluginsQ.data ?? []).map((p: PluginInfo) => (
-                        <div
-                          key={p.id}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'flex-start',
-                            justifyContent: 'space-between',
-                            padding: '8px 10px',
-                            background: 'var(--bg-1)',
-                            border: '1px solid var(--border)',
-                            borderRadius: 6,
-                            gap: 12,
-                          }}
-                        >
-                          <div style={{ minWidth: 0 }}>
-                            <b>{p.name}</b> <span className="dim small">v{p.version}</span>{' '}
-                            <span className="badge mono" style={{ fontSize: 10 }}>api v{p.apiVersion}</span>
-                            <div className="dim small" style={{ marginTop: 2 }}>{p.description || '生态插件'}</div>
-                            <div className="dim mono" style={{ fontSize: 10, marginTop: 4 }}>
-                              {p.events.join(', ')}
-                              {p.permissions.length > 0 && ` · ${p.permissions.join(', ')}`}
-                            </div>
-                            {p.error && (
-                              <div style={{ fontSize: 11, color: 'var(--red)', marginTop: 4 }}>{p.error}</div>
-                            )}
-                          </div>
-                          <span
-                            style={{
-                              fontSize: 11,
-                              whiteSpace: 'nowrap',
-                              color: p.enabled ? 'var(--green)' : p.error ? 'var(--red)' : 'var(--text-3)',
-                            }}
-                          >
-                            {p.enabled ? '✓ 已启用' : p.error ? '✕ 清单无效' : '○ 已禁用'}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  插件是全局能力，已统一移至顶部 <b>🧩 插件</b> 管理：启停、README 预览、config.json
+                  查看与编辑。插件目录仍为 <code>~/.xissue/plugins/</code>。
                 </div>
               </div>
             </div>

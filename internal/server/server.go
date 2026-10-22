@@ -15,8 +15,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/xpier/xissue/internal/automation"
 	"github.com/xpier/xissue/internal/config"
 	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/gitx"
@@ -34,6 +36,13 @@ type Server struct {
 	runner *runner.Runner
 	hub    *Hub
 	mux    *http.ServeMux
+
+	syncMu           sync.Mutex
+	lastIssueSync    time.Time
+	lastSyncImported int
+	lastSyncError    string
+	stopCh           chan struct{}
+	stopOnce         sync.Once
 }
 
 func New(cfg *config.Config, st *store.Store) *Server {
@@ -45,12 +54,19 @@ func New(cfg *config.Config, st *store.Store) *Server {
 		runner: r,
 		hub:    hub,
 		mux:    http.NewServeMux(),
+		stopCh: make(chan struct{}),
 	}
 	s.routes()
+	go s.issueSyncLoop()
 	return s
 }
 
 func (s *Server) Shutdown() {
+	s.stopOnce.Do(func() {
+		if s.stopCh != nil {
+			close(s.stopCh)
+		}
+	})
 	if s.runner != nil {
 		s.runner.Shutdown()
 	}
@@ -208,6 +224,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/runs/{id}/discard", s.handleDiscardRun)
 
 	m.HandleFunc("POST /api/mcp", s.handleMCP)
+	m.HandleFunc("DELETE /api/mcp", s.handleMCP)
 	m.HandleFunc("GET /api/mcp/status", s.handleMCPStatus)
 	m.HandleFunc("POST /api/mcp/install", s.handleMCPInstall)
 
@@ -227,6 +244,10 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/projects/{id}/pull", s.handlePullProjectRepos)
 	m.HandleFunc("GET /api/projects/{id}/hooks", s.handleDetectProjectHooks)
 	m.HandleFunc("GET /api/plugins", s.handleListPlugins)
+	m.HandleFunc("PATCH /api/plugins/{id}", s.handlePatchPlugin)
+	m.HandleFunc("GET /api/plugins/{id}/readme", s.handlePluginReadme)
+	m.HandleFunc("GET /api/plugins/{id}/config", s.handlePluginConfig)
+	m.HandleFunc("PUT /api/plugins/{id}/config", s.handlePluginConfig)
 
 	m.HandleFunc("GET /api/projects/{id}/docs", s.handleListProjectDocs)
 	m.HandleFunc("GET /api/projects/{id}/docs/detail", s.handleGetProjectDocDetail)
@@ -241,6 +262,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/monitor/test-notify", s.handleTestNotify)
 	m.HandleFunc("GET /api/monitor/logs", s.handleMonitorLogs)
 	m.HandleFunc("POST /api/monitor/trigger", s.handleMonitorTrigger)
+	m.HandleFunc("POST /api/monitor/sync", s.handleSyncAllIssues)
 	m.HandleFunc("POST /api/monitor/prune", s.handleMonitorPrune)
 
 	m.HandleFunc("GET /api/repos/{repoId}/branches", s.handleRepoBranches)
@@ -544,23 +566,41 @@ func (s *Server) handleSyncProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.refreshProjectRepos(r.Context(), proj)
-	repos := proj.Repos
+	imported, err := s.syncProjectIssues(r.Context(), proj)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"imported": imported})
+}
+
+type issueSyncResult struct {
+	Projects int      `json:"projects"`
+	Imported int      `json:"imported"`
+	Errors   []string `json:"errors,omitempty"`
+}
+
+// syncProjectIssues imports/refreshes remote issues for one project and
+// triggers auto-develop only for newly created issues.
+func (s *Server) syncProjectIssues(ctx context.Context, proj *domain.Project) (int, error) {
+	if proj == nil {
+		return 0, nil
+	}
 	imported := 0
-	for _, repo := range repos {
+	for _, repo := range proj.Repos {
 		p := provider.For(repo.Provider)
 		if !p.Caps().Issues {
 			continue
 		}
-		list, err := p.ListOpenIssues(r.Context(), repo)
+		list, err := p.ListOpenIssues(ctx, repo)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, err)
-			return
+			return imported, fmt.Errorf("%s: %w", repo.Name, err)
 		}
 		repoID := repo.ID
 		for _, ri := range list {
 			num := ri.Number
-			created, err := s.st.UpsertRemoteIssue(r.Context(), domain.Issue{
-				ProjectID:    projectID,
+			created, err := s.st.UpsertRemoteIssue(ctx, domain.Issue{
+				ProjectID:    proj.ID,
 				Key:          provider.IssueKey(repo, ri.Number),
 				RepoID:       &repoID,
 				RemoteNumber: &num,
@@ -570,20 +610,142 @@ func (s *Server) handleSyncProject(w http.ResponseWriter, r *http.Request) {
 				Labels:       ri.Labels,
 			})
 			if err != nil {
-				writeErr(w, http.StatusInternalServerError, err)
-				return
+				return imported, err
 			}
 			if created {
 				imported++
-				s.maybeAutoDevelop(r.Context(), proj, provider.IssueKey(repo, ri.Number), ri.Author)
+				s.handleNewRemoteIssue(ctx, proj, repo, ri)
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"imported": imported})
+	return imported, nil
 }
 
-func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key, author string) {
-	if !p.AutoDevelop {
+// handleNewRemoteIssue classifies a newly synced issue, applies a canonical
+// label locally and remotely, and only then considers auto-development.
+func (s *Server) handleNewRemoteIssue(ctx context.Context, proj *domain.Project, repo domain.Repo, ri provider.RemoteIssue) {
+	issue, err := s.st.FindIssueByKey(ctx, proj.ID, provider.IssueKey(repo, ri.Number))
+	if err != nil {
+		return
+	}
+	triage := runner.ClassifyIssue(*issue)
+	if triage.Kind == runner.IssueKindUnknown {
+		s.runner.LogMonitor("INFO", "triage", fmt.Sprintf("%s 未识别为 Bug/需求/建议，跳过自动处理", issue.Key))
+		return
+	}
+	if updated, err := s.st.AddIssueLabels(ctx, issue.ID, triage.Label); err == nil {
+		issue = updated
+		s.hub.BroadcastIssueUpdated(issue)
+	}
+	if err := provider.For(repo.Provider).AddLabels(ctx, repo, ri.Number, []string{triage.Label}); err != nil {
+		s.runner.LogMonitor("WARN", "triage", fmt.Sprintf("%s 远程打标失败 (%s): %v", issue.Key, triage.Label, err))
+	}
+	s.runner.LogMonitor("EVENT", "triage", fmt.Sprintf("%s 判定为 %s (%s)", issue.Key, triage.Kind, triage.Reason))
+
+	if !triage.Actionable {
+		_, _ = s.st.AddComment(ctx, issue.ID, "system", "💡 已识别为建议，未自动开发；等待作者补充或维护者处理。")
+		return
+	}
+	s.maybeAutoDevelop(ctx, proj, issue.Key, ri.Author, triage)
+}
+
+// syncAllProjectIssues imports issues for every project. It never aborts the
+// whole run because one repository failed.
+func (s *Server) syncAllProjectIssues(ctx context.Context) issueSyncResult {
+	projects, err := s.st.ListProjects(ctx)
+	if err != nil {
+		return issueSyncResult{Errors: []string{err.Error()}}
+	}
+	res := issueSyncResult{Projects: len(projects)}
+	for i := range projects {
+		proj := &projects[i]
+		imported, err := s.syncProjectIssues(ctx, proj)
+		res.Imported += imported
+		if err != nil {
+			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", proj.Name, err))
+		}
+	}
+	return res
+}
+
+// runIssueSync serializes manual and background syncs and records the result
+// for the monitor status API.
+func (s *Server) runIssueSync(ctx context.Context) issueSyncResult {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	res := s.syncAllProjectIssues(ctx)
+	s.lastIssueSync = time.Now()
+	s.lastSyncImported = res.Imported
+	s.lastSyncError = ""
+	if len(res.Errors) > 0 {
+		s.lastSyncError = strings.Join(res.Errors, "; ")
+		s.runner.LogMonitor("WARN", "sync", fmt.Sprintf("Issue 同步完成但部分失败: 新增 %d，错误: %s", res.Imported, s.lastSyncError))
+	} else {
+		s.runner.LogMonitor("INFO", "sync", fmt.Sprintf("Issue 同步完成: %d 个项目，新增 %d 个 Issue", res.Projects, res.Imported))
+	}
+	return res
+}
+
+// triggerIssueSyncNow runs one sync in the background (e.g. right after the
+// user enables automatic sync) without blocking the HTTP request.
+func (s *Server) triggerIssueSyncNow() {
+	mon := s.cfg.MonitorSnapshot()
+	if !mon.Enabled || !mon.SyncIssues {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		s.runIssueSync(ctx)
+	}()
+}
+
+func (s *Server) issueSyncLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.stopCh:
+			return
+		case <-ticker.C:
+		}
+		mon := s.cfg.MonitorSnapshot()
+		if !mon.Enabled || !mon.SyncIssues {
+			continue
+		}
+		interval := mon.SyncIntervalMin
+		if interval <= 0 {
+			interval = 10
+		}
+		s.syncMu.Lock()
+		last := s.lastIssueSync
+		s.syncMu.Unlock()
+		if !last.IsZero() && time.Since(last) < time.Duration(interval)*time.Minute {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		s.runIssueSync(ctx)
+		cancel()
+	}
+}
+
+func (s *Server) handleSyncAllIssues(w http.ResponseWriter, r *http.Request) {
+	res := s.runIssueSync(r.Context())
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":       len(res.Errors) == 0,
+		"projects": res.Projects,
+		"imported": res.Imported,
+		"errors":   res.Errors,
+		"message":  fmt.Sprintf("已同步 %d 个项目，新增 %d 个 Issue", res.Projects, res.Imported),
+	})
+}
+
+func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key, author string, triage runner.TriageResult) {
+	if !triage.Actionable {
+		return
+	}
+	globalAuto := s.cfg.MonitorSnapshot().AutoDevelopIssues
+	if !p.AutoDevelop && !globalAuto {
 		return
 	}
 	if len(p.AutoDevelopAuthors) > 0 {
@@ -602,7 +764,7 @@ func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key, a
 	if err != nil {
 		return
 	}
-	if !runner.IsDevelopableIssue(*issue, p.AutoDevelopLabels, p.AutoDevelopText) {
+	if !globalAuto && !runner.IsDevelopableIssue(*issue, p.AutoDevelopLabels, p.AutoDevelopText) {
 		return
 	}
 	now := time.Now()
@@ -1241,6 +1403,82 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, plugins)
 }
 
+func (s *Server) handlePatchPlugin(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("plugin id is required"))
+		return
+	}
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if body.Enabled == nil {
+		writeErr(w, http.StatusBadRequest, errors.New("enabled is required"))
+		return
+	}
+	if err := automation.SetPluginEnabled(s.cfg.PluginsDir(), id, *body.Enabled); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	plugins := s.runner.ListPlugins()
+	if plugins == nil {
+		plugins = []domain.PluginInfo{}
+	}
+	writeJSON(w, http.StatusOK, plugins)
+}
+
+func (s *Server) handlePluginReadme(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	name, content, path, err := automation.ReadPluginReadme(s.cfg.PluginsDir(), id)
+	if errors.Is(err, os.ErrNotExist) {
+		writeErr(w, http.StatusNotFound, errors.New("plugin README not found"))
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name":    name,
+		"content": content,
+		"path":    path,
+	})
+}
+
+func (s *Server) handlePluginConfig(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	switch r.Method {
+	case http.MethodGet:
+		cfg, err := automation.ReadPluginConfig(s.cfg.PluginsDir(), id)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, cfg)
+	case http.MethodPut:
+		var body struct {
+			Content string `json:"content"`
+		}
+		if err := readJSON(r, &body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		cfg, err := automation.WritePluginConfig(s.cfg.PluginsDir(), id, body.Content)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, cfg)
+	default:
+		w.Header().Set("Allow", "GET, PUT")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 // ---------- helpers ----------
 
 func pathID(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
@@ -1373,6 +1611,17 @@ func (s *Server) handleMonitorStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	mon := s.cfg.MonitorSnapshot()
+	st.IssueSyncEnabled = mon.SyncIssues
+	st.IssueSyncIntervalMin = mon.SyncIntervalMin
+	s.syncMu.Lock()
+	if !s.lastIssueSync.IsZero() {
+		t := s.lastIssueSync
+		st.LastIssueSyncTime = &t
+	}
+	st.LastIssueSyncCount = s.lastSyncImported
+	st.LastIssueSyncError = s.lastSyncError
+	s.syncMu.Unlock()
 	writeJSON(w, http.StatusOK, st)
 }
 
@@ -1395,6 +1644,7 @@ func (s *Server) handleUpdateMonitorConfig(w http.ResponseWriter, r *http.Reques
 		status = "已暂停"
 	}
 	s.runner.LogMonitor("EVENT", "watcher", fmt.Sprintf("监控配置已更新: 状态=%s, 活跃时段=%s", status, body.ActiveHours))
+	s.triggerIssueSyncNow()
 	writeJSON(w, http.StatusOK, s.cfg.MaskedMonitorSnapshot())
 }
 
@@ -1415,6 +1665,7 @@ func (s *Server) handlePatchMonitorConfig(w http.ResponseWriter, r *http.Request
 		}
 		s.runner.LogMonitor("EVENT", "watcher", fmt.Sprintf("监控状态切换: %s", status))
 	}
+	s.triggerIssueSyncNow()
 	writeJSON(w, http.StatusOK, s.cfg.MaskedMonitorSnapshot())
 }
 

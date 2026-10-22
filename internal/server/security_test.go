@@ -72,6 +72,15 @@ func TestMonitorConfigSecretsMaskedAndPatchPreserves(t *testing.T) {
 		t.Fatalf("partial patch clobbered secrets: %+v", mon)
 	}
 
+	w = do("PATCH", `{"syncIssues":true,"syncIntervalMin":5}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH issue sync config: %d %s", w.Code, w.Body.String())
+	}
+	mon = srv.cfg.MonitorSnapshot()
+	if !mon.SyncIssues || mon.SyncIntervalMin != 5 {
+		t.Fatalf("issue sync patch not applied: %+v", mon)
+	}
+
 	w = do("PUT", `{"enabled":true,"activeHours":"","publicUrl":"","telegramBotToken":"`+config.MaskedSecret+`","telegramChatId":"42","webhookUrl":"`+config.MaskedSecret+`"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("PUT masked config: %d %s", w.Code, w.Body.String())

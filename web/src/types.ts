@@ -78,7 +78,22 @@ export interface PluginInfo {
   permissions: string[];
   path: string;
   enabled: boolean;
+  hasReadme: boolean;
+  hasConfig: boolean;
   error?: string;
+}
+
+export interface PluginReadme {
+  name: string;
+  content: string;
+  path: string;
+}
+
+export interface PluginConfigFile {
+  exists: boolean;
+  template: boolean;
+  content: string;
+  path: string;
 }
 
 export type IssueStatus = 'backlog' | 'todo' | 'running' | 'review' | 'pr_open' | 'done' | 'failed';
@@ -338,6 +353,7 @@ export interface MCPTargetStatus {
   configPath: string;
   detected: boolean;
   installed: boolean;
+  transport?: 'stdio' | 'http';
 }
 
 export interface MCPStatus {
@@ -408,6 +424,9 @@ export interface MonitorConfig {
   telegramBotToken?: string;
   telegramChatId?: string;
   webhookUrl?: string;
+  syncIssues: boolean;
+  syncIntervalMin: number;
+  autoDevelopIssues: boolean;
 }
 
 export interface MonitorStatus {
@@ -425,6 +444,11 @@ export interface MonitorStatus {
   watchedBranches: BranchWatch[];
   lastTriggeredWatches: number;
   lastUpdatedPRs: number;
+  issueSyncEnabled: boolean;
+  issueSyncIntervalMin: number;
+  lastIssueSyncTime?: string;
+  lastIssueSyncCount: number;
+  lastIssueSyncError?: string;
 }
 
 export type DocSource = 'github_wiki' | 'local_doc';

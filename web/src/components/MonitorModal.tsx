@@ -42,6 +42,9 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
   const [cfgTgToken, setCfgTgToken] = useState('');
   const [cfgTgChatId, setCfgTgChatId] = useState('');
   const [cfgWebhookUrl, setCfgWebhookUrl] = useState('');
+  const [cfgSyncIssues, setCfgSyncIssues] = useState(false);
+  const [cfgSyncIntervalMin, setCfgSyncIntervalMin] = useState(10);
+  const [cfgAutoDevelopIssues, setCfgAutoDevelopIssues] = useState(false);
 
   useEffect(() => {
     if (configQ.data) {
@@ -51,6 +54,9 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
       setCfgTgToken(configQ.data.telegramBotToken || '');
       setCfgTgChatId(configQ.data.telegramChatId || '');
       setCfgWebhookUrl(configQ.data.webhookUrl || '');
+      setCfgSyncIssues(configQ.data.syncIssues ?? false);
+      setCfgSyncIntervalMin(configQ.data.syncIntervalMin || 10);
+      setCfgAutoDevelopIssues(configQ.data.autoDevelopIssues ?? false);
     }
   }, [configQ.data]);
 
@@ -94,6 +100,22 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.monitorLogs(hours) });
     },
+  });
+
+  const syncAllMut = useMutation({
+    mutationFn: () => api.syncAllIssues(),
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: qk.monitorStatus });
+      qc.invalidateQueries({ queryKey: qk.monitorLogs(hours) });
+      qc.invalidateQueries({ queryKey: qk.projects });
+      qc.invalidateQueries({ queryKey: ['issues'] });
+      if (res.errors?.length) {
+        toast.error(`${res.message}；部分失败: ${res.errors.join('; ')}`);
+      } else {
+        toast.success(res.message || 'Issue 同步完成');
+      }
+    },
+    onError: (err: Error) => toast.error(`同步失败: ${err.message}`),
   });
 
   useEffect(() => {
@@ -144,6 +166,9 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
       telegramBotToken: cfgTgToken,
       telegramChatId: cfgTgChatId,
       webhookUrl: cfgWebhookUrl,
+      syncIssues: cfgSyncIssues,
+      syncIntervalMin: cfgSyncIntervalMin,
+      autoDevelopIssues: cfgAutoDevelopIssues,
     });
   };
 
@@ -281,6 +306,14 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
               <div className="row" style={{ gap: 8 }}>
                 <button
                   className="ghost sm"
+                  disabled={syncAllMut.isPending}
+                  onClick={() => syncAllMut.mutate()}
+                  title="立即拉取所有项目的远程 Issue 并导入待办池"
+                >
+                  {syncAllMut.isPending ? '同步中…' : '🔄 同步全部 Issue'}
+                </button>
+                <button
+                  className="ghost sm"
                   disabled={testNotifyMut.isPending}
                   onClick={() => testNotifyMut.mutate()}
                   title="向已配置的 Telegram 或 Webhook 发送一条测试消息"
@@ -309,6 +342,51 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
                 />
                 <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
                   非工作时间段自动休眠，停止后台轮询以节省资源与电量。
+                </span>
+              </label>
+
+              <label className="field" style={{ margin: 0 }}>
+                <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={cfgSyncIssues}
+                    onChange={(e) => setCfgSyncIssues(e.target.checked)}
+                  />
+                  自动同步远程 Issue
+                </span>
+                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
+                  按间隔拉取所有项目的开放 Issue；新 Issue 若命中项目的自动预开发规则，会按既有配额启动 Run。
+                </span>
+              </label>
+
+              <label className="field" style={{ margin: 0 }}>
+                同步间隔（分钟）
+                <input
+                  type="number"
+                  className="sm mono"
+                  min={1}
+                  max={1440}
+                  value={cfgSyncIntervalMin}
+                  onChange={(e) => setCfgSyncIntervalMin(Math.max(1, Number(e.target.value) || 10))}
+                  disabled={!cfgSyncIssues}
+                />
+                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
+                  默认 10 分钟；仅监控总开关开启时生效。也可随时点上方「同步全部 Issue」立即执行。
+                </span>
+              </label>
+
+              <label className="field" style={{ margin: 0 }}>
+                <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={cfgAutoDevelopIssues}
+                    onChange={(e) => setCfgAutoDevelopIssues(e.target.checked)}
+                  />
+                  自动开发判定的 Bug / 需求
+                </span>
+                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
+                  同步后先判定类型：Bug/需求自动打标并启动 Agent，完成后自动发 PR；建议只打标不开发。
+                  仍需项目配置了可用 Agent，并受项目每日配额限制。
                 </span>
               </label>
 
@@ -444,6 +522,19 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
             </div>
           </div>
         </div>
+
+        {status?.issueSyncEnabled && (
+          <div className="row small muted" style={{ flexWrap: 'wrap', gap: 10, flex: 'none' }}>
+            <span>🔄 Issue 自动同步：每 {status.issueSyncIntervalMin || 10} 分钟</span>
+            <span>
+              上次：{status.lastIssueSyncTime ? new Date(status.lastIssueSyncTime).toLocaleString() : '尚未执行'}
+            </span>
+            {status.lastIssueSyncTime && <span>新增 {status.lastIssueSyncCount} 条</span>}
+            {status.lastIssueSyncError && (
+              <span style={{ color: 'var(--yellow, #eab308)' }}>部分失败: {status.lastIssueSyncError}</span>
+            )}
+          </div>
+        )}
 
         {/* 正在监控的分支徽章栏 */}
         {status?.watchedBranches && status.watchedBranches.length > 0 && (

@@ -97,15 +97,16 @@ chmod +x ~/.local/bin/xissue
   - 支持 Telegram / 飞书 / 企微 / 钉钉 / Slack 等外部通知；可在监控设置里填写「外部访问地址」，让通知里的链接在手机或其他设备上可直接点开。
   - 自动轮询同步 `PR Open` 任务的远端合并/关闭状态，合并后自动流转至 `Done`。
 - **🤖 远程 Issue 自动预开发（只发 PR，不合并）**：
-  - 每次同步拉取到新 Issue 后，按项目配置的标签/关键字判断是否为需求或 Bug，命中后自动安排 Agent 预开发。
-  - Agent 先判断需求是否真实可实施；完成后系统自动创建 PR 并把 Issue 置为待审核，**绝不自动合并**，由管理员在平台上决定合并或关闭。
-  - 项目设置中可单独指定预开发 Agent、触发标签与关键字。
+  - 每次同步拉取到新 Issue 后先自动三分类：Bug / 需求 / 建议；Bug 与需求打上对应标签，建议只打标、等待作者补充。
+  - 开启 `monitor.autoDevelopIssues` 后可全局自动开发判定为 Bug/需求的 Issue；也可按项目开启并配置标签/关键字。完成后自动创建 PR 并把 Issue 置为待审核，**绝不自动合并**。
+  - 项目设置中可单独指定预开发 Agent、触发标签与关键字，并受每日配额限制。
 - **🍒 Cherry-Pick 创建 PR & 标准改动记录生成**：
   - 支持在提交审查或 Cherry-Pick 时自动生成团队规范格式改动记录（`本次改动：a. / b. / 分支 / PR / 备注`），一键复制备查。
 - **⚡ ABC 三层自动化与插件扩展架构**：
   - **🅰️ 声明式规则 (Layer 1)**：在项目设置中直接配置特定审核人员（如 `@qa-team` 或 `@release-bot`）的 Report 格式与正则模式，满足条件自动触发合并 PR (Squash/Merge)、将 Issue 状态流转为 `Done`、自动 Pull 本地代码及桌面通知；
   - **🅱️ 项目级 Hooks 脚本 (Layer 2)**：在代码库根目录放置 `.xissue/hooks/on-pr-comment` 或 `on-pr-review` 脚本，接收 stdin JSON 上下文并自由定制私有流转逻辑（*注：本项目 Hook 仅对以本地目录添加的仓库生效；远程镜像仓库及 `pr_merged` 事件不执行仓库内脚本，避免外部合并触发本地代码执行。`branch_push` 仅本地仓库执行，且受自动化规则作者门控*）；
   - **🅲️ 规范化生态插件 (Layer 3)**：`xissue plugin install <name>` 从官方目录安装，或直接从 GitHub 仓库安装带 `plugin.yaml` v1 清单的插件；支持 `branch_push`、`pr_*`、`issue_*`、`run_*` 等生命周期事件。模板与插件目录见 <https://github.com/ffqa/xissue-plugin-template> 与 <https://github.com/ffqa/xissue-plugins>。
+  - **🧩 全局插件管理**：顶栏「插件」可即时启用/停用、预览 README、生成/编辑 `config.json`；停用后不再接收任何事件。
 - **内置审查与暗色/亮色主题切换**：
   - Web UI 内嵌本地打包的 Monaco DiffEditor，支持行内编辑保存、一键跳回 VSCode/Cursor。
 

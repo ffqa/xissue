@@ -78,6 +78,7 @@ type Provider interface {
 	Caps() Caps
 	ListOpenIssues(ctx context.Context, repo domain.Repo) ([]RemoteIssue, error)
 	CreateIssue(ctx context.Context, repo domain.Repo, title, body string) (*RemoteIssue, error)
+	AddLabels(ctx context.Context, repo domain.Repo, number int64, labels []string) error
 	Comment(ctx context.Context, repo domain.Repo, number int64, body string) error
 	CreatePR(ctx context.Context, repo domain.Repo, head, base, title, body string) (url string, err error)
 	ListPRs(ctx context.Context, repo domain.Repo, state string) ([]RemotePR, error)
@@ -114,7 +115,8 @@ func (plain) ListOpenIssues(context.Context, domain.Repo) ([]RemoteIssue, error)
 func (plain) CreateIssue(context.Context, domain.Repo, string, string) (*RemoteIssue, error) {
 	return nil, ErrUnsupported
 }
-func (plain) Comment(context.Context, domain.Repo, int64, string) error { return ErrUnsupported }
+func (plain) AddLabels(context.Context, domain.Repo, int64, []string) error { return nil }
+func (plain) Comment(context.Context, domain.Repo, int64, string) error     { return ErrUnsupported }
 func (plain) CreatePR(context.Context, domain.Repo, string, string, string, string) (string, error) {
 	return "", ErrUnsupported
 }

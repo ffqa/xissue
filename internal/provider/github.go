@@ -70,6 +70,36 @@ func (github) ListOpenIssues(ctx context.Context, repo domain.Repo) ([]RemoteIss
 	return out, nil
 }
 
+func (github) AddLabels(ctx context.Context, repo domain.Repo, number int64, labels []string) error {
+	if err := requireOwnerRepo(repo); err != nil {
+		return err
+	}
+	clean := make([]string, 0, len(labels))
+	for _, label := range labels {
+		if label = strings.TrimSpace(label); label != "" {
+			clean = append(clean, label)
+		}
+	}
+	if len(clean) == 0 {
+		return nil
+	}
+	for _, label := range clean {
+		color, desc := "ededed", "Managed by xIssue"
+		switch strings.ToLower(label) {
+		case "bug":
+			color, desc = "d73a4a", "Something isn't working"
+		case "enhancement":
+			color, desc = "a2eeef", "New feature or request"
+		case "suggestion":
+			color, desc = "d4c5f9", "Suggestion or idea"
+		}
+		// --force makes this idempotent for existing labels.
+		_, _ = gh(ctx, "label", "create", label, "-R", repo.OwnerRepo, "--color", color, "--description", desc, "--force")
+	}
+	_, err := gh(ctx, "issue", "edit", "-R", repo.OwnerRepo, strconv.FormatInt(number, 10), "--add-label", strings.Join(clean, ","))
+	return err
+}
+
 func (github) CreateIssue(ctx context.Context, repo domain.Repo, title, body string) (*RemoteIssue, error) {
 	if err := requireOwnerRepo(repo); err != nil {
 		return nil, err

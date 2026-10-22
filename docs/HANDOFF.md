@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.14` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.15` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.14`
+- **最新发布版本**: `v0.2.15`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -127,6 +127,25 @@
 - **动作白名单**: 生命周期事件仅执行 `notify`，防止事件递归与 Token 失控；`branch_push`/`pr_comment`/`pr_review` 保留完整动作集；
 - **独立仓库**: 模板 <https://github.com/ffqa/xissue-plugin-template>，目录 <https://github.com/ffqa/xissue-plugins>（`custom-notifier`、`follow-commit-watcher`、`slack-notifier`、`run-audit`）；主仓不再重复维护示例插件；
 - **验证**: 新增 manifest/安装器/生命周期测试；真实从 GitHub 目录安装四个插件；浏览器验证插件 API 版本、权限、启用/禁用与错误状态展示；`go test -race`、`go vet`、`tsc`、`vite build` 通过。
+
+### 2.9 MCP HTTP 复用与全局 Issue 自动同步
+- **MCP 进程模型**:
+  - 原有的 `command: xissue mcp` 是 stdio 传输，MCP 客户端按会话拉起子进程，无法共享；一个 OpenCode serve 开 4 个会话就会常驻 4 个约 11–16 MB 的桥接进程；
+  - `/api/mcp` 升级为 MCP Streamable HTTP：支持 `Accept: application/json` 与 `text/event-stream`、JSON-RPC batch、协议版本协商（`2024-11-05` / `2025-03-26` / `2025-06-18`）、无状态 `DELETE`；所有客户端直接连接同一个 xIssue 服务，不再产生 stdio 桥接进程；
+  - Agent 管理面板新增「🔗 HTTP 复用安装」与「复制 HTTP JSON」，可一键把 OpenCode、Claude Code、Cursor、Windsurf 改写为 `type: remote/http` + `url` 配置；Qoder 因远端 schema 不稳定仍保留 stdio；
+  - CLI：`xissue mcp install --http` 写入 HTTP 配置，`xissue mcp http` 只打印当前 HTTP endpoint。
+- **全局 Issue 自动同步**:
+  - `monitor.syncIssues`（默认关闭）与 `monitor.syncIntervalMin`（默认 10 分钟）加入全局配置与 `~/.xissue/config.yaml`；
+  - 监控总开关开启时，后台每 30 秒检查一次到期时间，按间隔遍历所有项目、拉取支持 Issue 的仓库并 upsert；单个仓库失败只记录错误，不中断其它项目；
+  - 新增 `POST /api/monitor/sync` 手动全量同步；监控弹窗「⚙️ 策略与通知」中可启停、设置间隔、立即同步，并显示上次同步时间/新增数/错误；
+  - 新导入的 Issue 先做三分类：`bug` / 需求（`enhancement`）/ 建议（`suggestion`）。Bug 与需求自动打标，建议只打标并留本地评论、等待作者补充；
+  - `monitor.autoDevelopIssues`（默认关闭）可全局开启自动开发；开启后不再要求项目级 `autoDevelop` 开关，但仍受项目 Agent、作者过滤与每日配额约束。项目级开关单独开启时继续使用项目标签/关键字过滤；
+  - 自动开发完成后沿用既有 `AutoPR` 流程发起只读 PR，不直接合并。
+
+### 2.10 全局插件管理
+- 顶栏「🧩 插件」：全局列出 `plugins/` 下所有插件，支持即时启用/停用、manifest 错误展示、README 预览与 `config.json` 生成/编辑/保存；
+- 停用写入 `.disabled`，事件派发前即时检查，停用后不会再触发；配置原子写入 `0600`，插件以自身目录为 cwd 读取 `config.json`；
+- 修复 `-data-dir` 测试实例把配置写回真实 `~/.xissue/config.yaml` 的隔离缺陷；现在未显式传 `-config` 时默认读取/写入 data-dir 下的 `config.yaml`。
 
 ---
 

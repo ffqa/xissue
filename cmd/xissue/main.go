@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -60,7 +61,13 @@ func main() {
 		return
 	}
 
-	cfg, err := config.Load(*cfgPath)
+	loadPath := *cfgPath
+	if loadPath == "" && *dataDir != "" {
+		// Keep test/dev instances fully isolated; otherwise config.Save would
+		// write a -data-dir override back into the real ~/.xissue/config.yaml.
+		loadPath = filepath.Join(*dataDir, "config.yaml")
+	}
+	cfg, err := config.Load(loadPath)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
@@ -78,15 +85,34 @@ func main() {
 		if flag.NArg() > 1 {
 			sub := strings.ToLower(strings.TrimLeft(flag.Arg(1), "-"))
 			if sub == "install" || sub == "i" {
+				transport := "stdio"
+				for _, arg := range flag.Args()[2:] {
+					if strings.EqualFold(strings.TrimSpace(arg), "--http") || strings.EqualFold(strings.TrimSpace(arg), "http") {
+						transport = "http"
+					}
+				}
 				exe, _ := os.Executable()
 				if exe == "" {
 					exe = "xissue"
 				}
-				installed, err := server.InstallMCPTargets(exe, nil)
+				headers := map[string]string{"X-XIssue": "1"}
+				if strings.TrimSpace(cfg.Token) != "" {
+					headers = map[string]string{"Authorization": "Bearer " + strings.TrimSpace(cfg.Token)}
+				}
+				installed, err := server.InstallMCPTargets(exe, nil, transport, server.MCPHTTPURL(cfg.Listen), headers)
 				if err != nil {
 					log.Fatalf("mcp install: %v", err)
 				}
-				fmt.Printf("Installed xIssue MCP (%s mcp) into: %s\n", exe, strings.Join(installed, ", "))
+				if transport == "http" {
+					fmt.Printf("Installed xIssue MCP over HTTP (%s) into: %s\n", server.MCPHTTPURL(cfg.Listen), strings.Join(installed, ", "))
+				} else {
+					fmt.Printf("Installed xIssue MCP (%s mcp) into: %s\n", exe, strings.Join(installed, ", "))
+				}
+				return
+			}
+			if sub == "http" {
+				fmt.Printf("MCP Streamable HTTP endpoint: %s\n", server.MCPHTTPURL(cfg.Listen))
+				fmt.Println("Clients supporting HTTP MCP can share this endpoint; no `xissue mcp` subprocess is needed per session.")
 				return
 			}
 		}

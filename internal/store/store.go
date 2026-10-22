@@ -510,6 +510,40 @@ func (s *Store) FindIssueByKey(ctx context.Context, projectID int64, key string)
 	return &i, err
 }
 
+// AddIssueLabels merges labels case-insensitively and returns the updated issue.
+func (s *Store) AddIssueLabels(ctx context.Context, id int64, add ...string) (*domain.Issue, error) {
+	issue, err := s.GetIssue(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	seen := map[string]bool{}
+	for _, label := range issue.Labels {
+		seen[strings.ToLower(strings.TrimSpace(label))] = true
+	}
+	changed := false
+	for _, label := range add {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
+		key := strings.ToLower(label)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		issue.Labels = append(issue.Labels, label)
+		changed = true
+	}
+	if !changed {
+		return issue, nil
+	}
+	lb, _ := json.Marshal(issue.Labels)
+	if _, err := s.db.ExecContext(ctx, `UPDATE issues SET labels=?, updated_at=? WHERE id=?`, string(lb), now(), id); err != nil {
+		return nil, err
+	}
+	return s.GetIssue(ctx, id)
+}
+
 // CreateLocalIssue allocates the next LOCAL-n key for the project.
 func (s *Store) CreateLocalIssue(ctx context.Context, projectID int64, title, body string, labels []string) (*domain.Issue, error) {
 	tx, err := s.db.BeginTx(ctx, nil)

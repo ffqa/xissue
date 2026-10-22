@@ -818,6 +818,11 @@ type MonitorStatus struct {
 	WatchedBranches      []domain.BranchWatch `json:"watchedBranches"`
 	LastTriggeredWatches int                  `json:"lastTriggeredWatches"`
 	LastUpdatedPRs       int                  `json:"lastUpdatedPRs"`
+	IssueSyncEnabled     bool                 `json:"issueSyncEnabled"`
+	IssueSyncIntervalMin int                  `json:"issueSyncIntervalMin"`
+	LastIssueSyncTime    *time.Time           `json:"lastIssueSyncTime,omitempty"`
+	LastIssueSyncCount   int                  `json:"lastIssueSyncCount"`
+	LastIssueSyncError   string               `json:"lastIssueSyncError,omitempty"`
 }
 
 // LogMonitor appends an event to the in-memory ring buffer and appends to ~/.xissue/monitor.log.

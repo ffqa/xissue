@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -32,18 +35,105 @@ type mcpError struct {
 	Message string `json:"message"`
 }
 
+// handleMCP implements the MCP Streamable HTTP transport. A single xIssue
+// process can therefore serve every IDE/agent session; clients that support
+// HTTP do not need to spawn one `xissue mcp` stdio bridge per session.
 func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
-	var req mcpRequest
-	if err := readJSON(r, &req); err != nil {
+	if r.Method == http.MethodDelete {
+		// Stateless server: there is no per-client session to tear down.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST, DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	accept := strings.ToLower(r.Header.Get("Accept"))
+	acceptJSON := accept == "" || strings.Contains(accept, "application/json") || strings.Contains(accept, "*/*")
+	acceptSSE := strings.Contains(accept, "text/event-stream")
+	if !acceptJSON && !acceptSSE {
+		http.Error(w, "not acceptable: use application/json or text/event-stream", http.StatusNotAcceptable)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 8<<20))
+	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	resp := s.ProcessMCPRequest(r.Context(), req)
-	if resp == nil {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		http.Error(w, "empty request body", http.StatusBadRequest)
+		return
+	}
+
+	isBatch := body[0] == '['
+	var reqs []mcpRequest
+	if isBatch {
+		if err := json.Unmarshal(body, &reqs); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+	} else {
+		var req mcpRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		reqs = []mcpRequest{req}
+	}
+
+	var resps []*mcpResponse
+	for _, req := range reqs {
+		if resp := s.ProcessMCPRequest(r.Context(), req); resp != nil {
+			resps = append(resps, resp)
+		}
+	}
+	if len(resps) == 0 {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	writeJSON(w, http.StatusOK, resp)
+
+	// Prefer a plain JSON response when the client accepts it; fall back to a
+	// one-shot SSE event for clients that only advertise text/event-stream.
+	if acceptJSON {
+		if isBatch {
+			writeJSON(w, http.StatusOK, resps)
+			return
+		}
+		writeJSON(w, http.StatusOK, resps[0])
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	payload, _ := json.Marshal(resps)
+	if !isBatch {
+		payload, _ = json.Marshal(resps[0])
+	}
+	_, _ = fmt.Fprintf(w, "event: message\ndata: %s\n\n", payload)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func negotiateMCPProtocolVersion(raw json.RawMessage) string {
+	const latest = "2025-06-18"
+	var p struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return latest
+	}
+	switch p.ProtocolVersion {
+	case "2024-11-05", "2025-03-26", "2025-06-18":
+		return p.ProtocolVersion
+	default:
+		return latest
+	}
 }
 
 // ProcessMCPRequest processes a single MCP JSON-RPC 2.0 request against the Server.
@@ -62,7 +152,7 @@ func (s *Server) ProcessMCPRequest(ctx context.Context, req mcpRequest) *mcpResp
 	switch req.Method {
 	case "initialize":
 		return reply(map[string]any{
-			"protocolVersion": "2024-11-05",
+			"protocolVersion": negotiateMCPProtocolVersion(req.Params),
 			"capabilities": map[string]any{
 				"tools": map[string]any{},
 			},
@@ -401,6 +491,7 @@ type MCPTargetStatus struct {
 	ConfigPath string `json:"configPath"`
 	Detected   bool   `json:"detected"`
 	Installed  bool   `json:"installed"`
+	Transport  string `json:"transport,omitempty"` // "stdio" or "http"
 }
 
 func xissueBinaryPath() string {
@@ -410,22 +501,47 @@ func xissueBinaryPath() string {
 	return "xissue"
 }
 
+// MCPHTTPURL returns the local Streamable HTTP endpoint advertised to clients.
+func MCPHTTPURL(listen string) string {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(listen))
+	if err != nil {
+		host, port = strings.TrimSpace(listen), "7789"
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "127.0.0.1"
+	}
+	return "http://" + net.JoinHostPort(host, port) + "/api/mcp"
+}
+
+func (s *Server) mcpHeaders() map[string]string {
+	if strings.TrimSpace(s.cfg.Token) != "" {
+		return map[string]string{"Authorization": "Bearer " + strings.TrimSpace(s.cfg.Token)}
+	}
+	return map[string]string{"X-XIssue": "1"}
+}
+
 func (s *Server) handleMCPStatus(w http.ResponseWriter, r *http.Request) {
 	bin := xissueBinaryPath()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"binaryPath": bin,
-		"httpUrl":    fmt.Sprintf("http://%s/api/mcp", s.cfg.Listen),
+		"httpUrl":    MCPHTTPURL(s.cfg.Listen),
 		"targets":    inspectMCPTargets(bin),
 	})
 }
 
 func (s *Server) handleMCPInstall(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Targets []string `json:"targets"` // optional; if empty, installs to all detected/supported JSON targets
+		Targets   []string `json:"targets"`   // optional; if empty, installs to all detected/supported JSON targets
+		Transport string   `json:"transport"` // "stdio" (default) or "http"
 	}
 	_ = readJSON(r, &body)
 	bin := xissueBinaryPath()
-	installed, err := InstallMCPTargets(bin, body.Targets)
+	transport := strings.ToLower(strings.TrimSpace(body.Transport))
+	if transport == "" {
+		transport = "stdio"
+	}
+	installed, err := InstallMCPTargets(bin, body.Targets, transport, MCPHTTPURL(s.cfg.Listen), s.mcpHeaders())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -433,6 +549,8 @@ func (s *Server) handleMCPInstall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"installed":  installed,
 		"binaryPath": bin,
+		"httpUrl":    MCPHTTPURL(s.cfg.Listen),
+		"transport":  transport,
 		"targets":    inspectMCPTargets(bin),
 	})
 }
@@ -471,12 +589,13 @@ func inspectMCPTargets(bin string) []MCPTargetStatus {
 		id      string
 		name    string
 		relPath string
+		topKey  string
 		binName string
 	}{
-		{"opencode", "OpenCode (~/.config/opencode/opencode.json)", ".config/opencode/opencode.json", "opencode"},
-		{"claude", "Claude Code (~/.claude.json)", ".claude.json", "claude"},
-		{"cursor", "Cursor IDE (~/.cursor/mcp.json)", ".cursor/mcp.json", "cursor"},
-		{"windsurf", "Windsurf IDE (~/.codeium/windsurf/mcp_config.json)", ".codeium/windsurf/mcp_config.json", "windsurf"},
+		{"opencode", "OpenCode (~/.config/opencode/opencode.json)", ".config/opencode/opencode.json", "mcp", "opencode"},
+		{"claude", "Claude Code (~/.claude.json)", ".claude.json", "mcpServers", "claude"},
+		{"cursor", "Cursor IDE (~/.cursor/mcp.json)", ".cursor/mcp.json", "mcpServers", "cursor"},
+		{"windsurf", "Windsurf IDE (~/.codeium/windsurf/mcp_config.json)", ".codeium/windsurf/mcp_config.json", "mcpServers", "windsurf"},
 	}
 
 	var out []MCPTargetStatus
@@ -486,38 +605,78 @@ func inspectMCPTargets(bin string) []MCPTargetStatus {
 		_, dirErr := os.Stat(filepath.Dir(p))
 		_, binErr := exec.LookPath(t.binName)
 		detected := statErr == nil || dirErr == nil || binErr == nil
-		installed := false
-		if b, err := os.ReadFile(p); err == nil {
-			installed = strings.Contains(string(b), `"xissue"`)
-		}
+		installed, transport := detectMCPEntry(p, t.topKey)
 		out = append(out, MCPTargetStatus{
 			ID:         t.id,
 			Name:       t.name,
 			ConfigPath: p,
 			Detected:   detected,
 			Installed:  installed,
+			Transport:  transport,
 		})
 	}
 
 	// Qoder 动态探测（国际版 ~/.qoder vs 国内版 ~/.qoder-cn）
 	qoderPath, qoderName, qoderDetected := detectQoderConfig(home)
-	qoderInstalled := false
-	if b, err := os.ReadFile(qoderPath); err == nil {
-		qoderInstalled = strings.Contains(string(b), `"xissue"`)
-	}
+	qoderInstalled, qoderTransport := detectMCPEntry(qoderPath, "mcpServers")
 	out = append(out, MCPTargetStatus{
 		ID:         "qoder",
 		Name:       qoderName,
 		ConfigPath: qoderPath,
 		Detected:   qoderDetected,
 		Installed:  qoderInstalled,
+		Transport:  qoderTransport,
 	})
 
 	return out
 }
 
-// InstallMCPTargets injects the xissue MCP server into the specified (or all) local IDE/Agent config files.
-func InstallMCPTargets(bin string, targetIDs []string) ([]string, error) {
+// detectMCPEntry reports whether the xissue entry exists and which transport it uses.
+func detectMCPEntry(path, topKey string) (installed bool, transport string) {
+	b, err := os.ReadFile(path)
+	if err != nil || len(strings.TrimSpace(string(b))) == 0 {
+		return false, ""
+	}
+	var root map[string]json.RawMessage
+	if json.Unmarshal(b, &root) != nil {
+		// Tolerate comments/trailing commas in hand-edited configs for status display.
+		return strings.Contains(string(b), `"xissue"`), ""
+	}
+	var entries map[string]json.RawMessage
+	if json.Unmarshal(root[topKey], &entries) != nil {
+		return false, ""
+	}
+	raw, ok := entries["xissue"]
+	if !ok {
+		return false, ""
+	}
+	var entry map[string]json.RawMessage
+	if json.Unmarshal(raw, &entry) != nil {
+		return true, ""
+	}
+	if _, ok := entry["url"]; ok {
+		return true, "http"
+	}
+	if _, ok := entry["serverUrl"]; ok {
+		return true, "http"
+	}
+	if _, ok := entry["command"]; ok {
+		return true, "stdio"
+	}
+	return true, ""
+}
+
+func withMCPHeaders(entry map[string]any, headers map[string]string) map[string]any {
+	if len(headers) > 0 {
+		entry["headers"] = headers
+	}
+	return entry
+}
+
+// InstallMCPTargets injects the xissue MCP server into the specified (or all)
+// local IDE/Agent config files. transport is "stdio" (default) or "http";
+// httpURL is used only for HTTP-capable clients.
+func InstallMCPTargets(bin string, targetIDs []string, transport, httpURL string, headers map[string]string) ([]string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -528,6 +687,9 @@ func InstallMCPTargets(bin string, targetIDs []string) ([]string, error) {
 	}
 	should := func(id string) bool {
 		return len(want) == 0 || want[id]
+	}
+	if strings.ToLower(strings.TrimSpace(transport)) == "http" {
+		return installMCPHTTPTargets(home, should, httpURL, headers)
 	}
 
 	var installed []string
@@ -591,6 +753,57 @@ func InstallMCPTargets(bin string, targetIDs []string) ([]string, error) {
 		}
 	}
 
+	return installed, nil
+}
+
+// installMCPHTTPTargets rewrites supported clients to use the shared
+// Streamable HTTP endpoint instead of spawning `xissue mcp` per session.
+func installMCPHTTPTargets(home string, should func(string) bool, httpURL string, headers map[string]string) ([]string, error) {
+	if strings.TrimSpace(httpURL) == "" {
+		return nil, fmt.Errorf("empty MCP HTTP URL")
+	}
+	var installed []string
+
+	if should("opencode") {
+		p := filepath.Join(home, ".config/opencode/opencode.json")
+		entry := withMCPHeaders(map[string]any{
+			"type":    "remote",
+			"url":     httpURL,
+			"enabled": true,
+		}, headers)
+		if err := injectJSONMap(p, "mcp", "xissue", entry); err == nil {
+			installed = append(installed, "opencode")
+		}
+	}
+	if should("claude") {
+		p := filepath.Join(home, ".claude.json")
+		entry := withMCPHeaders(map[string]any{
+			"type": "http",
+			"url":  httpURL,
+		}, headers)
+		if err := injectJSONMap(p, "mcpServers", "xissue", entry); err == nil {
+			installed = append(installed, "claude")
+		}
+	}
+	if should("cursor") {
+		p := filepath.Join(home, ".cursor/mcp.json")
+		entry := withMCPHeaders(map[string]any{
+			"url": httpURL,
+		}, headers)
+		if err := injectJSONMap(p, "mcpServers", "xissue", entry); err == nil {
+			installed = append(installed, "cursor")
+		}
+	}
+	if should("windsurf") {
+		p := filepath.Join(home, ".codeium/windsurf/mcp_config.json")
+		entry := withMCPHeaders(map[string]any{
+			"serverUrl": httpURL,
+		}, headers)
+		if err := injectJSONMap(p, "mcpServers", "xissue", entry); err == nil {
+			installed = append(installed, "windsurf")
+		}
+	}
+	// Qoder's remote schema is not stable across releases; keep stdio for it.
 	return installed, nil
 }
 

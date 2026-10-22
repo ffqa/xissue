@@ -104,6 +104,8 @@ type PluginInfo struct {
 	Permissions []string `json:"permissions"`
 	Path        string   `json:"path"`
 	Enabled     bool     `json:"enabled"`
+	HasReadme   bool     `json:"hasReadme"`
+	HasConfig   bool     `json:"hasConfig"`
 	Error       string   `json:"error,omitempty"`
 }
 

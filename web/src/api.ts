@@ -20,7 +20,9 @@ import type {
   MonitorStatus,
   MonitorConfig,
   Notification,
+  PluginConfigFile,
   PluginInfo,
+  PluginReadme,
   Project,
   RemotePR,
   Repo,
@@ -146,7 +148,8 @@ export const api = {
   inspectDir: (path: string) => get<InspectResult>(`/api/fs/inspect?${q({ path })}`),
 
   mcpStatus: () => get<MCPStatus>('/api/mcp/status'),
-  mcpInstall: (targets?: string[]) => post<MCPStatus & { installed: string[] }>('/api/mcp/install', { targets }),
+  mcpInstall: (targets?: string[], transport?: 'stdio' | 'http') =>
+    post<MCPStatus & { installed: string[]; transport: string }>('/api/mcp/install', { targets, transport }),
 
   notifications: (limit = 50) => get<Notification[]>(`/api/notifications?limit=${limit}`),
   markNotificationRead: (id: number) => post<void>(`/api/notifications/${id}/read`),
@@ -184,6 +187,12 @@ export const api = {
 
   detectHooks: (projectId: number) => get<HookStatus[]>(`/api/projects/${projectId}/hooks`),
   plugins: () => get<PluginInfo[]>('/api/plugins'),
+  setPluginEnabled: (id: string, enabled: boolean) =>
+    patch<PluginInfo[]>(`/api/plugins/${encodeURIComponent(id)}`, { enabled }),
+  pluginReadme: (id: string) => get<PluginReadme>(`/api/plugins/${encodeURIComponent(id)}/readme`),
+  pluginConfig: (id: string) => get<PluginConfigFile>(`/api/plugins/${encodeURIComponent(id)}/config`),
+  savePluginConfig: (id: string, content: string) =>
+    put<PluginConfigFile>(`/api/plugins/${encodeURIComponent(id)}/config`, { content }),
 
   projectPRs: (id: number, state: 'open' | 'merged' | 'closed' | 'all' = 'open') =>
     get<RemotePR[]>(`/api/projects/${id}/prs?state=${state}`),
@@ -255,6 +264,10 @@ export const api = {
   testNotify: () => post<{ ok: boolean; message: string }>('/api/monitor/test-notify'),
   monitorLogs: (hours = 8) => get<MonitorLogEntry[]>(`/api/monitor/logs?hours=${hours}`),
   triggerMonitor: () => post<{ ok: boolean; watchesTriggered: number; prsUpdated: number; message: string }>('/api/monitor/trigger'),
+  syncAllIssues: () =>
+    post<{ ok: boolean; projects: number; imported: number; errors?: string[]; message: string }>(
+      '/api/monitor/sync',
+    ),
   pruneMonitorLogs: (hours = 8) => post<{ ok: boolean; prunedCount: number; message: string }>(`/api/monitor/prune?hours=${hours}`),
 
   // 知识库 (Wiki & Docs)
@@ -283,6 +296,8 @@ export const qk = {
   project: (id: number) => ['project', id] as const,
   projectHooks: (projectId: number) => ['projectHooks', projectId] as const,
   plugins: ['plugins'] as const,
+  pluginReadme: (id: string) => ['pluginReadme', id] as const,
+  pluginConfig: (id: string) => ['pluginConfig', id] as const,
   projectPRs: (projectId: number, state?: string) => ['projectPRs', projectId, state ?? 'open'] as const,
   projectDocs: (projectId: number) => ['projectDocs', projectId] as const,
   docDetail: (projectId: number, docId: string) => ['docDetail', projectId, docId] as const,

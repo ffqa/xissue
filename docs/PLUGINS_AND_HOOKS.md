@@ -136,6 +136,15 @@ xissue plugin enable my-plugin
 - 插件目录即工作目录；状态文件应写入插件目录或显式配置的路径。
 - Layer 2 项目 Hook 仍仅对本地目录仓库执行；远程镜像与 run worktree 中的脚本不会被执行。
 
+### 4. Web 全局管理与 `config.json`
+
+- 顶栏「🧩 插件」打开全局插件管理器，按 `plugins/` 目录聚合所有项目的插件，不再需要进入单个项目页；
+- 支持即时启用/停用：停用写入 `.disabled`，下一次事件派发前检查，**停用后不会再触发**；启用会移除该文件并重新校验 manifest；
+- 左侧列表显示 manifest 错误、API 版本、事件与权限；右侧提供 `README.md` 预览与 `config.json` 编辑器；
+- `config.json` 可直接在界面生成、编辑、保存（原子写入，权限 `0600`）。首次生成时优先复制同目录的 `config.example.json`，没有模板则写入 `{}`；
+- 插件进程以插件目录为工作目录，脚本可直接读取 `./config.json`；配置不会自动注入 stdin payload，避免改变既有插件契约；
+- API：`GET /api/plugins`、`GET /api/plugins/{id}/readme`、`GET|PUT /api/plugins/{id}/config`、`PATCH /api/plugins/{id}`（`{enabled}`）。
+
 ---
 
 ## 📦 三、输入输出数据契约 (Data Contracts)

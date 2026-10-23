@@ -683,24 +683,33 @@ func (s *Server) triageExistingRemoteIssue(ctx context.Context, proj *domain.Pro
 	if err != nil || issue.Status == domain.IssueDone {
 		return
 	}
-	for _, label := range issue.Labels {
-		switch strings.ToLower(strings.TrimSpace(label)) {
-		case "bug", "enhancement", "suggestion":
-			return
-		}
-	}
 	triage := runner.ClassifyIssue(*issue)
 	if triage.Kind == runner.IssueKindUnknown {
 		return
 	}
-	if updated, err := s.st.AddIssueLabels(ctx, issue.ID, triage.Label); err == nil {
-		issue = updated
-		s.hub.BroadcastIssueUpdated(issue)
+	hasCanonicalLabel := false
+	for _, label := range issue.Labels {
+		switch strings.ToLower(strings.TrimSpace(label)) {
+		case "bug", "enhancement", "suggestion":
+			hasCanonicalLabel = true
+		}
 	}
-	if err := provider.For(repo.Provider).AddLabels(ctx, repo, ri.Number, []string{triage.Label}); err != nil {
-		s.runner.LogMonitor("WARN", "triage", fmt.Sprintf("%s 远程补标失败 (%s): %v", issue.Key, triage.Label, err))
+	if !hasCanonicalLabel {
+		if updated, err := s.st.AddIssueLabels(ctx, issue.ID, triage.Label); err == nil {
+			issue = updated
+			s.hub.BroadcastIssueUpdated(issue)
+		}
+		if err := provider.For(repo.Provider).AddLabels(ctx, repo, ri.Number, []string{triage.Label}); err != nil {
+			s.runner.LogMonitor("WARN", "triage", fmt.Sprintf("%s 远程补标失败 (%s): %v", issue.Key, triage.Label, err))
+		}
+		s.runner.LogMonitor("EVENT", "triage", fmt.Sprintf("%s 历史 Issue 补判为 %s (%s)", issue.Key, triage.Kind, triage.Reason))
 	}
-	s.runner.LogMonitor("EVENT", "triage", fmt.Sprintf("%s 历史 Issue 补判为 %s (%s)", issue.Key, triage.Kind, triage.Reason))
+	// A previously imported issue may have been triaged before the classifier
+	// understood its wording, or auto-develop may have been enabled after it
+	// was labeled. If it has never been developed, give it one chance now.
+	if runs, err := s.st.ListRuns(ctx, issue.ID); err == nil && len(runs) == 0 {
+		s.maybeAutoDevelop(ctx, proj, issue.Key, ri.Author, triage)
+	}
 }
 
 // syncAllProjectIssues imports issues for every project. It never aborts the

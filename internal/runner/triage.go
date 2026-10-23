@@ -41,6 +41,8 @@ var bugKeywords = []string{
 }
 var featureKeywords = []string{
 	"feature", "enhancement", "support", "add support", "improve",
+	"should be able to", "should also be able to", "would be nice", "would be great",
+	"please add", "can we add",
 	"需求", "功能", "支持", "增加", "新增", "希望", "优化", "改进",
 }
 var suggestionKeywords = []string{

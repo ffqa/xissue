@@ -71,11 +71,34 @@ func (r *Runner) ExportIssueMarkdown(ctx context.Context, issueID int64) {
 	}
 }
 
+// workspaceDescription drops filesystem paths from project descriptions.
+// Local imports often store the original directory in Description; feeding that
+// to an agent makes it operate on the user's main checkout instead of the
+// isolated run worktree.
+func workspaceDescription(raw string) string {
+	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if filepath.IsAbs(trimmed) || strings.HasPrefix(trimmed, "~/") {
+			continue
+		}
+		if len(trimmed) >= 3 && trimmed[1] == ':' && (trimmed[2] == '\\' || trimmed[2] == '/') {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
 func buildWorkspaceAGENTS(proj *domain.Project, issue *domain.Issue) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Project: %s\n\n", proj.Name)
-	if proj.Description != "" {
-		b.WriteString(proj.Description + "\n\n")
+	if desc := workspaceDescription(proj.Description); desc != "" {
+		b.WriteString(desc + "\n\n")
 	}
 	b.WriteString("## Repositories in this Workspace\n\n")
 	for _, repo := range proj.Repos {
@@ -85,6 +108,7 @@ func buildWorkspaceAGENTS(proj *domain.Project, issue *domain.Issue) string {
 		}
 		b.WriteString(")\n")
 	}
+	b.WriteString("\nYour current working directory is the workspace root. Work only inside the repository subdirectories listed above (for example `./ide/`). The project description is free-form text, not a filesystem path; do not `cd` to a path found there.\n")
 	fmt.Fprintf(&b, "\n## Active Issue: [%s] %s\n\n", issue.Key, issue.Title)
 	if strings.TrimSpace(issue.Body) != "" {
 		b.WriteString(issue.Body + "\n\n")

@@ -125,8 +125,10 @@ export interface Issue {
 export interface Comment {
   id: number;
   issueId: number;
-  author: 'me' | 'agent' | 'system';
+  author: string;
   body: string;
+  remoteId?: string;
+  remoteUrl?: string;
   createdAt: string;
 }
 

@@ -91,6 +91,9 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_authors TEXT NOT NULL DEFAULT '[]'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_daily_limit INTEGER NOT NULL DEFAULT 5`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN auto_pr INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE comments ADD COLUMN remote_id TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE comments ADD COLUMN remote_url TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_comments_remote ON comments(issue_id, remote_id) WHERE remote_id <> ''`)
 	return &Store{db: db}, nil
 }
 
@@ -706,7 +709,7 @@ func (s *Store) BatchDeleteIssues(ctx context.Context, ids []int64) (int, error)
 // ---------- Comments ----------
 
 func (s *Store) ListComments(ctx context.Context, issueID int64) ([]domain.Comment, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, issue_id, author, body, created_at FROM comments WHERE issue_id=? ORDER BY id`, issueID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, issue_id, author, body, remote_id, remote_url, created_at FROM comments WHERE issue_id=? ORDER BY created_at, id`, issueID)
 	if err != nil {
 		return nil, err
 	}
@@ -715,7 +718,7 @@ func (s *Store) ListComments(ctx context.Context, issueID int64) ([]domain.Comme
 	for rows.Next() {
 		var c domain.Comment
 		var t string
-		if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Body, &t); err != nil {
+		if err := rows.Scan(&c.ID, &c.IssueID, &c.Author, &c.Body, &c.RemoteID, &c.RemoteURL, &t); err != nil {
 			return nil, err
 		}
 		c.CreatedAt = parseTime(t)
@@ -733,6 +736,54 @@ func (s *Store) AddComment(ctx context.Context, issueID int64, author, body stri
 	id, _ := res.LastInsertId()
 	_, _ = s.db.ExecContext(ctx, `UPDATE issues SET updated_at=? WHERE id=?`, t, issueID)
 	return &domain.Comment{ID: id, IssueID: issueID, Author: author, Body: body, CreatedAt: parseTime(t)}, nil
+}
+
+// UpsertRemoteComment stores a comment fetched from the remote tracker. It is
+// idempotent by (issue_id, remote_id), and updates edited comments in place.
+func (s *Store) UpsertRemoteComment(ctx context.Context, issueID int64, remoteID, author, body, remoteURL string, createdAt time.Time) (bool, bool, error) {
+	remoteID = strings.TrimSpace(remoteID)
+	if remoteID == "" {
+		return false, false, nil
+	}
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+	ts := createdAt.UTC().Format(time.RFC3339Nano)
+	// xIssue may have posted a comment remotely after storing a local copy.
+	// Adopt that local row instead of importing a duplicate.
+	var localID int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM comments WHERE issue_id=? AND remote_id='' AND body IN (?,?,?) ORDER BY id LIMIT 1`,
+		issueID, body, "```text\n"+body+"\n```", "```\n"+body+"\n```",
+	).Scan(&localID); err == nil {
+		_, _ = s.db.ExecContext(ctx, `UPDATE comments SET remote_id=?, remote_url=? WHERE id=?`, remoteID, remoteURL, localID)
+		_, _ = s.db.ExecContext(ctx, `UPDATE issues SET updated_at=? WHERE id=?`, now(), issueID)
+		return false, true, nil
+	}
+	res, err := s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO comments(issue_id, author, body, remote_id, remote_url, created_at) VALUES(?,?,?,?,?,?)`,
+		issueID, author, body, remoteID, remoteURL, ts,
+	)
+	if err != nil {
+		return false, false, err
+	}
+	added, _ := res.RowsAffected()
+	if added > 0 {
+		_, _ = s.db.ExecContext(ctx, `UPDATE issues SET updated_at=? WHERE id=?`, now(), issueID)
+		return true, false, nil
+	}
+	upd, err := s.db.ExecContext(ctx,
+		`UPDATE comments SET author=?, body=?, remote_url=? WHERE issue_id=? AND remote_id=? AND (author<>? OR body<>? OR remote_url<>?)`,
+		author, body, remoteURL, issueID, remoteID, author, body, remoteURL,
+	)
+	if err != nil {
+		return false, false, err
+	}
+	changed, _ := upd.RowsAffected()
+	if changed > 0 {
+		_, _ = s.db.ExecContext(ctx, `UPDATE issues SET updated_at=? WHERE id=?`, now(), issueID)
+	}
+	return false, changed > 0, nil
 }
 
 // ---------- Runs ----------

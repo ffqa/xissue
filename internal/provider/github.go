@@ -70,6 +70,54 @@ func (github) ListOpenIssues(ctx context.Context, repo domain.Repo) ([]RemoteIss
 	return out, nil
 }
 
+func (github) ListRepoIssueComments(ctx context.Context, repo domain.Repo) ([]RemoteIssueComment, error) {
+	if err := requireOwnerRepo(repo); err != nil {
+		return nil, err
+	}
+	b, err := gh(ctx, "api", "--paginate", "--slurp", "repos/"+repo.OwnerRepo+"/issues/comments?per_page=100")
+	if err != nil {
+		return nil, err
+	}
+	var pages [][]struct {
+		ID        any    `json:"id"`
+		NodeID    string `json:"node_id"`
+		Body      string `json:"body"`
+		HTMLURL   string `json:"html_url"`
+		IssueURL  string `json:"issue_url"`
+		CreatedAt string `json:"created_at"`
+		User      struct {
+			Login string `json:"login"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(b, &pages); err != nil {
+		return nil, err
+	}
+	out := []RemoteIssueComment{}
+	for _, page := range pages {
+		for _, c := range page {
+			issueURL := strings.TrimRight(c.IssueURL, "/")
+			number, _ := strconv.ParseInt(issueURL[strings.LastIndex(issueURL, "/")+1:], 10, 64)
+			if number <= 0 {
+				continue
+			}
+			id := strings.TrimSpace(c.NodeID)
+			if id == "" {
+				id = fmt.Sprint(c.ID)
+			}
+			created, _ := time.Parse(time.RFC3339, c.CreatedAt)
+			out = append(out, RemoteIssueComment{
+				ID:          id,
+				IssueNumber: number,
+				Author:      c.User.Login,
+				Body:        c.Body,
+				URL:         c.HTMLURL,
+				CreatedAt:   created,
+			})
+		}
+	}
+	return out, nil
+}
+
 func (github) AddLabels(ctx context.Context, repo domain.Repo, number int64, labels []string) error {
 	if err := requireOwnerRepo(repo); err != nil {
 		return err

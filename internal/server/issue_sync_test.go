@@ -315,3 +315,70 @@ printf '%s' '[{"number":12,"title":"In the global settings, agents should also b
 		t.Fatalf("auto-develop was not reached; comments=%+v", comments)
 	}
 }
+
+func TestSyncImportsRemoteIssueCommentsIdempotently(t *testing.T) {
+	srv, st, tmpDir := newTestServer(t)
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+case "$1 $2" in
+  "issue list")
+    printf '%s' '[{"number":21,"title":"Comment sync","body":"body","labels":[],"url":"https://example.test/issues/21","author":{"login":"alice"}}]'
+    ;;
+  "api --paginate")
+    printf '%s' '[[{"id":2,"node_id":"IC_2","user":{"login":"bob"},"body":"remote reply","html_url":"https://example.test/comment/2","issue_url":"https://api.github.com/repos/acme/comments/issues/21","created_at":"2026-10-23T10:00:00Z"}]]'
+    ;;
+  *)
+    printf '{}'
+    ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(binDir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	proj, err := st.CreateProject(context.Background(), "Comments", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRepo(context.Background(), domain.Repo{
+		ProjectID:     proj.ID,
+		Name:          "comments",
+		Provider:      domain.ProviderGitHub,
+		OwnerRepo:     "acme/comments",
+		DefaultBranch: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	proj, err = st.GetProject(context.Background(), proj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.syncProjectIssues(context.Background(), proj); err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.FindIssueByKey(context.Background(), proj.ID, "acme/comments#21")
+	if err != nil {
+		t.Fatal(err)
+	}
+	comments, err := st.ListComments(context.Background(), issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(comments) != 1 || comments[0].RemoteID != "IC_2" || comments[0].Author != "bob" || comments[0].Body != "remote reply" {
+		t.Fatalf("comments = %+v", comments)
+	}
+	if _, err := srv.syncProjectIssues(context.Background(), proj); err != nil {
+		t.Fatal(err)
+	}
+	comments, err = st.ListComments(context.Background(), issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("second sync duplicated comments: %+v", comments)
+	}
+}

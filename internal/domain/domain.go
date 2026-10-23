@@ -154,8 +154,10 @@ type Issue struct {
 type Comment struct {
 	ID        int64     `json:"id"`
 	IssueID   int64     `json:"issueId"`
-	Author    string    `json:"author"` // me | agent | system
+	Author    string    `json:"author"` // me | agent | system | remote login
 	Body      string    `json:"body"`
+	RemoteID  string    `json:"remoteId,omitempty"`
+	RemoteURL string    `json:"remoteUrl,omitempty"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 

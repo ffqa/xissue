@@ -644,8 +644,71 @@ func (s *Server) syncProjectIssues(ctx context.Context, proj *domain.Project) (i
 				s.triageExistingRemoteIssue(ctx, proj, repo, ri)
 			}
 		}
+		s.syncRemoteIssueComments(ctx, proj, repo)
 	}
 	return imported, nil
+}
+
+// syncRemoteIssueComments imports comments for all issues of one repository in
+// a single paginated GitHub API call, then upserts them by remote ID. Failures
+// are non-fatal: issue syncing still succeeds even if comments are unavailable.
+func (s *Server) syncRemoteIssueComments(ctx context.Context, proj *domain.Project, repo domain.Repo) {
+	comments, err := provider.For(repo.Provider).ListRepoIssueComments(ctx, repo)
+	if err != nil {
+		s.runner.LogMonitor("WARN", "sync", fmt.Sprintf("%s 评论同步失败: %v", repo.Name, err))
+		return
+	}
+	if len(comments) == 0 {
+		return
+	}
+	issues, err := s.st.ListIssues(ctx, proj.ID)
+	if err != nil {
+		return
+	}
+	byNumber := make(map[int64]*domain.Issue, len(issues))
+	for i := range issues {
+		issue := &issues[i]
+		if issue.RepoID == nil || *issue.RepoID != repo.ID || issue.RemoteNumber == nil {
+			continue
+		}
+		byNumber[*issue.RemoteNumber] = issue
+	}
+	changed := map[int64]bool{}
+	added, updated := 0, 0
+	for _, c := range comments {
+		issue := byNumber[c.IssueNumber]
+		if issue == nil || strings.TrimSpace(c.ID) == "" || strings.TrimSpace(c.Body) == "" {
+			continue
+		}
+		author := strings.TrimSpace(c.Author)
+		if author == "" {
+			author = "ghost"
+		}
+		wasAdded, wasUpdated, err := s.st.UpsertRemoteComment(ctx, issue.ID, c.ID, author, c.Body, c.URL, c.CreatedAt)
+		if err != nil {
+			s.runner.LogMonitor("WARN", "sync", fmt.Sprintf("%s 评论写入失败 (%s): %v", issue.Key, c.ID, err))
+			continue
+		}
+		if wasAdded {
+			added++
+		}
+		if wasUpdated {
+			updated++
+		}
+		if wasAdded || wasUpdated {
+			changed[issue.ID] = true
+		}
+	}
+	if added == 0 && updated == 0 {
+		return
+	}
+	for issueID := range changed {
+		if issue, err := s.st.GetIssue(ctx, issueID); err == nil {
+			s.hub.BroadcastIssueUpdated(issue)
+			s.runner.ExportIssueMarkdown(ctx, issueID)
+		}
+	}
+	s.runner.LogMonitor("EVENT", "sync", fmt.Sprintf("%s 评论同步完成: 新增 %d，更新 %d", repo.Name, added, updated))
 }
 
 // handleNewRemoteIssue classifies a newly synced issue, applies a canonical

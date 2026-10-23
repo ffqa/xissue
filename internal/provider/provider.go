@@ -22,6 +22,16 @@ type RemoteIssue struct {
 	Author string
 }
 
+// RemoteIssueComment is a comment/reply attached to a remote issue.
+type RemoteIssueComment struct {
+	ID          string    `json:"id"`
+	IssueNumber int64     `json:"issueNumber"`
+	Author      string    `json:"author"`
+	Body        string    `json:"body"`
+	URL         string    `json:"url"`
+	CreatedAt   time.Time `json:"createdAt"`
+}
+
 // RemotePR is a pull request fetched from a platform.
 type RemotePR struct {
 	Number     int64    `json:"number"`
@@ -77,6 +87,7 @@ type Caps struct {
 type Provider interface {
 	Caps() Caps
 	ListOpenIssues(ctx context.Context, repo domain.Repo) ([]RemoteIssue, error)
+	ListRepoIssueComments(ctx context.Context, repo domain.Repo) ([]RemoteIssueComment, error)
 	CreateIssue(ctx context.Context, repo domain.Repo, title, body string) (*RemoteIssue, error)
 	AddLabels(ctx context.Context, repo domain.Repo, number int64, labels []string) error
 	Comment(ctx context.Context, repo domain.Repo, number int64, body string) error
@@ -110,6 +121,9 @@ type plain struct{}
 
 func (plain) Caps() Caps { return Caps{} }
 func (plain) ListOpenIssues(context.Context, domain.Repo) ([]RemoteIssue, error) {
+	return nil, nil
+}
+func (plain) ListRepoIssueComments(context.Context, domain.Repo) ([]RemoteIssueComment, error) {
 	return nil, nil
 }
 func (plain) CreateIssue(context.Context, domain.Repo, string, string) (*RemoteIssue, error) {

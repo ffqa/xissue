@@ -336,9 +336,17 @@ export default function IssuePage() {
           <div className="col" style={{ marginTop: 8 }}>
             <h3>评论 / 回顾记录 ({commentsQ.data?.length ?? 0})</h3>
             {(commentsQ.data ?? []).map((c) => (
-              <div key={c.id} className={`comment ${c.author}`}>
+              <div
+                key={c.id}
+                className={`comment ${c.author === 'me' || c.author === 'agent' || c.author === 'system' ? c.author : ''}`}
+              >
                 <div className="comment-h">
-                  <b>{c.author === 'me' ? '我' : c.author === 'agent' ? 'Agent 总结' : '系统'}</b>
+                  <b>{c.author === 'me' ? '我' : c.author === 'agent' ? 'Agent 总结' : c.author === 'system' ? '系统' : c.author}</b>
+                  {c.remoteUrl && (
+                    <a className="small dim" href={c.remoteUrl} target="_blank" rel="noreferrer">
+                      原评论
+                    </a>
+                  )}
                   <span className="grow" />
                   <span>{fmtTime(c.createdAt)}</span>
                 </div>

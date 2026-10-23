@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/store"
@@ -179,5 +180,77 @@ func TestProjectPullBranches(t *testing.T) {
 	}
 	if len(got.PullBranches) != 2 || got.PullBranches[0] != "main" || got.PullBranches[1] != "dev" {
 		t.Fatalf("re-fetched pull branches = %#v", got.PullBranches)
+	}
+}
+
+func TestUpsertRemoteCommentIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	proj, err := st.CreateProject(ctx, "Comments", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "Issue", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.AddComment(ctx, issue.ID, "me", "local note"); err != nil {
+		t.Fatal(err)
+	}
+	created := time.Date(2026, 10, 23, 10, 0, 0, 0, time.UTC)
+	added, updated, err := st.UpsertRemoteComment(ctx, issue.ID, "IC_1", "alice", "first", "https://example.test/1", created)
+	if err != nil || !added || updated {
+		t.Fatalf("first upsert = added:%v updated:%v err:%v", added, updated, err)
+	}
+	added, updated, err = st.UpsertRemoteComment(ctx, issue.ID, "IC_1", "alice", "first", "https://example.test/1", created)
+	if err != nil || added || updated {
+		t.Fatalf("duplicate upsert = added:%v updated:%v err:%v", added, updated, err)
+	}
+	added, updated, err = st.UpsertRemoteComment(ctx, issue.ID, "IC_1", "alice", "edited", "https://example.test/1", created)
+	if err != nil || added || !updated {
+		t.Fatalf("edited upsert = added:%v updated:%v err:%v", added, updated, err)
+	}
+	comments, err := st.ListComments(ctx, issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(comments) != 2 || comments[0].Body != "edited" || comments[0].RemoteID != "IC_1" || comments[1].Body != "local note" {
+		t.Fatalf("comments = %+v", comments)
+	}
+}
+
+func TestUpsertRemoteCommentAdoptsLocalCopy(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	proj, err := st.CreateProject(ctx, "Adopt", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "Issue", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "Submitted branch `agent/x`."
+	if _, err := st.AddComment(ctx, issue.ID, "system", "```text\n"+body+"\n```"); err != nil {
+		t.Fatal(err)
+	}
+	added, updated, err := st.UpsertRemoteComment(ctx, issue.ID, "IC_9", "me", body, "https://example.test/9", time.Now())
+	if err != nil || added || !updated {
+		t.Fatalf("adopt = added:%v updated:%v err:%v", added, updated, err)
+	}
+	comments, err := st.ListComments(ctx, issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(comments) != 1 || comments[0].RemoteID != "IC_9" || comments[0].Author != "system" {
+		t.Fatalf("comments = %+v", comments)
 	}
 }

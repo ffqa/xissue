@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/xpier/xissue/internal/knowledge"
+	"github.com/xpier/xissue/internal/runner"
 )
 
 type mcpRequest struct {
@@ -359,12 +360,7 @@ func (s *Server) callMCPTool(ctx context.Context, name string, args map[string]a
 		if boolArg("autoRun") {
 			agent := strArg("agent")
 			if agent == "" {
-				for _, a := range s.runner.ListAgents() {
-					if a.Available {
-						agent = a.Name
-						break
-					}
-				}
+				agent = s.runner.AvailableAgentForRole(runner.AgentRoleIssueDevelop)
 			}
 			if agent != "" {
 				run, rerr := s.runner.StartRun(ctx, issue.ID, agent, strArg("model"), "")
@@ -385,12 +381,7 @@ func (s *Server) callMCPTool(ctx context.Context, name string, args map[string]a
 		}
 		agent := strArg("agent")
 		if agent == "" {
-			for _, a := range s.runner.ListAgents() {
-				if a.Available {
-					agent = a.Name
-					break
-				}
-			}
+			agent = s.runner.AvailableAgentForRole(runner.AgentRoleIssueDevelop)
 		}
 		run, err := s.runner.StartRun(ctx, iid, agent, strArg("model"), strArg("prompt"))
 		if err != nil {

@@ -122,6 +122,34 @@ func (r *Runner) AgentForRole(role AgentRole) string {
 	return name
 }
 
+// AgentForRoleOrDefault resolves a workflow identity, falling back to the
+// global default agent when the role is unset or no longer configured.
+func (r *Runner) AgentForRoleOrDefault(role AgentRole) string {
+	if name := r.AgentForRole(role); name != "" {
+		return name
+	}
+	return r.DefaultAgentName()
+}
+
+// AvailableAgentForRole resolves a role's agent, but only returns it when its
+// binary is installed; otherwise it falls back to the first available agent.
+func (r *Runner) AvailableAgentForRole(role AgentRole) string {
+	preferred := r.AgentForRoleOrDefault(role)
+	fallback := ""
+	for _, a := range r.ListAgents() {
+		if !a.Available {
+			continue
+		}
+		if a.Name == preferred {
+			return a.Name
+		}
+		if fallback == "" {
+			fallback = a.Name
+		}
+	}
+	return fallback
+}
+
 // DefaultAgentName returns the preferred configured agent for automatic runs.
 func (r *Runner) DefaultAgentName() string {
 	agents := r.cfg.AgentsSnapshot()

@@ -212,3 +212,28 @@ func TestMigrateDeprecatedCodexACP(t *testing.T) {
 		t.Fatalf("unrelated agent changed: %q", got)
 	}
 }
+
+func TestAgentRolesRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles := AgentRolesConfig{
+		IssueReview:  "reviewer",
+		IssueDevelop: "developer",
+		PRReview:     "pr-reviewer",
+		AutoMerge:    "merger",
+	}
+	cfg.SetAgentRoles(roles)
+	if err := cfg.Save(); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loaded.AgentRolesSnapshot(); got != roles {
+		t.Fatalf("roles = %+v, want %+v", got, roles)
+	}
+}

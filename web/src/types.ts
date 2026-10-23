@@ -450,9 +450,17 @@ export interface MonitorConfig {
   notificationRoutes?: Record<string, string[]>;
 }
 
+export interface AgentRoles {
+  issueReview: string;
+  issueDevelop: string;
+  prReview: string;
+  autoMerge: string;
+}
+
 export interface AppSettings {
   autoUpdate: boolean;
   defaultAgent: string;
+  agentRoles: AgentRoles;
   globalAutomationRules: AutomationRule[];
 }
 

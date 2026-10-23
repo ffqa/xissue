@@ -87,6 +87,41 @@ If it is actionable:
 Issue title: %s`, issue.Key, issue.Title)
 }
 
+// AgentRole identifies a recurring workflow that can have its own agent.
+type AgentRole string
+
+const (
+	AgentRoleIssueReview  AgentRole = "issue_review"
+	AgentRoleIssueDevelop AgentRole = "issue_develop"
+	AgentRolePRReview     AgentRole = "pr_review"
+	AgentRoleAutoMerge    AgentRole = "auto_merge"
+)
+
+// AgentForRole returns the configured identity for a workflow, if it still
+// refers to a configured agent. Empty means "use the global default agent".
+func (r *Runner) AgentForRole(role AgentRole) string {
+	roles := r.cfg.AgentRolesSnapshot()
+	var name string
+	switch role {
+	case AgentRoleIssueReview:
+		name = roles.IssueReview
+	case AgentRoleIssueDevelop:
+		name = roles.IssueDevelop
+	case AgentRolePRReview:
+		name = roles.PRReview
+	case AgentRoleAutoMerge:
+		name = roles.AutoMerge
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if _, ok := r.cfg.Agent(name); !ok {
+		return ""
+	}
+	return name
+}
+
 // DefaultAgentName returns the preferred configured agent for automatic runs.
 func (r *Runner) DefaultAgentName() string {
 	agents := r.cfg.AgentsSnapshot()

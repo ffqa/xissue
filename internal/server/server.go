@@ -837,6 +837,9 @@ func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key, a
 	}
 	agent := strings.TrimSpace(p.AutoDevelopAgent)
 	if agent == "" {
+		agent = s.runner.AgentForRole(runner.AgentRoleIssueDevelop)
+	}
+	if agent == "" {
 		agent = s.runner.DefaultAgentName()
 	}
 	if agent == "" {
@@ -1702,6 +1705,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"autoUpdate":            s.cfg.AutoUpdateEnabled(),
 		"defaultAgent":          s.cfg.DefaultAgentName(),
+		"agentRoles":            s.cfg.AgentRolesSnapshot(),
 		"globalAutomationRules": s.cfg.GlobalAutomationRulesSnapshot(),
 	})
 }
@@ -1710,6 +1714,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		AutoUpdate            *bool                    `json:"autoUpdate"`
 		DefaultAgent          *string                  `json:"defaultAgent"`
+		AgentRoles            *config.AgentRolesConfig `json:"agentRoles"`
 		GlobalAutomationRules *[]domain.AutomationRule `json:"globalAutomationRules"`
 	}
 	if err := readJSON(r, &body); err != nil {
@@ -1725,6 +1730,10 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 		s.cfg.SetDefaultAgent(*body.DefaultAgent)
 		changed = true
 	}
+	if body.AgentRoles != nil {
+		s.cfg.SetAgentRoles(*body.AgentRoles)
+		changed = true
+	}
 	if body.GlobalAutomationRules != nil {
 		s.cfg.SetGlobalAutomationRules(*body.GlobalAutomationRules)
 		changed = true
@@ -1738,6 +1747,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"autoUpdate":            s.cfg.AutoUpdateEnabled(),
 		"defaultAgent":          s.cfg.DefaultAgentName(),
+		"agentRoles":            s.cfg.AgentRolesSnapshot(),
 		"globalAutomationRules": s.cfg.GlobalAutomationRulesSnapshot(),
 	})
 }

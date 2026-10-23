@@ -56,6 +56,14 @@ type MonitorConfig struct {
 	NotificationRoutes map[string][]string `yaml:"notificationRoutes,omitempty" json:"notificationRoutes,omitempty"`
 }
 
+// AgentRolesConfig assigns configured agents to recurring workflows.
+type AgentRolesConfig struct {
+	IssueReview  string `yaml:"issueReview,omitempty" json:"issueReview,omitempty"`   // default agent for reviewing issues
+	IssueDevelop string `yaml:"issueDevelop,omitempty" json:"issueDevelop,omitempty"` // default agent for developing issues
+	PRReview     string `yaml:"prReview,omitempty" json:"prReview,omitempty"`         // default agent for reviewing pull requests
+	AutoMerge    string `yaml:"autoMerge,omitempty" json:"autoMerge,omitempty"`       // agent used after a review is approved
+}
+
 // Config is the root configuration.
 type Config struct {
 	mu                    sync.RWMutex
@@ -67,6 +75,7 @@ type Config struct {
 	ExportMarkdown        bool                    `yaml:"exportMarkdown"`
 	AutoUpdate            bool                    `yaml:"autoUpdate" json:"autoUpdate"`
 	DefaultAgent          string                  `yaml:"defaultAgent,omitempty" json:"defaultAgent,omitempty"`
+	AgentRoles            AgentRolesConfig        `yaml:"agentRoles,omitempty" json:"agentRoles,omitempty"`
 	Agents                map[string]AgentConfig  `yaml:"agents"`
 	Permissions           PermissionPolicy        `yaml:"permissions"`
 	Runner                RunnerConfig            `yaml:"runner"`
@@ -590,6 +599,26 @@ func (c *Config) SetDefaultAgent(name string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.DefaultAgent = strings.TrimSpace(name)
+}
+
+// AgentRolesSnapshot returns a copy of the configured workflow roles.
+func (c *Config) AgentRolesSnapshot() AgentRolesConfig {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.AgentRoles
+}
+
+// SetAgentRoles stores workflow role assignments. Empty values mean fall back
+// to the global default agent.
+func (c *Config) SetAgentRoles(roles AgentRolesConfig) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.AgentRoles = AgentRolesConfig{
+		IssueReview:  strings.TrimSpace(roles.IssueReview),
+		IssueDevelop: strings.TrimSpace(roles.IssueDevelop),
+		PRReview:     strings.TrimSpace(roles.PRReview),
+		AutoMerge:    strings.TrimSpace(roles.AutoMerge),
+	}
 }
 
 // AutoUpdateEnabled reports whether the hourly self-update check is enabled.

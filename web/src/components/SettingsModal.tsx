@@ -4,7 +4,7 @@ import { api, qk } from '../api';
 import { Modal } from './common';
 import { toast } from '../toast';
 import { useTheme } from '../theme';
-import type { AutomationRule } from '../types';
+import type { AgentRoles, AutomationRule } from '../types';
 import {
   NOTIFICATION_CHANNELS,
   NOTIFICATION_EVENTS,
@@ -48,6 +48,12 @@ export function SettingsModal({
   const [cfgWebhookUrl, setCfgWebhookUrl] = useState('');
   const [autoUpdate, setAutoUpdate] = useState(true);
   const [defaultAgent, setDefaultAgent] = useState('');
+  const [agentRoles, setAgentRoles] = useState<AgentRoles>({
+    issueReview: '',
+    issueDevelop: '',
+    prReview: '',
+    autoMerge: '',
+  });
   const [publicUrl, setPublicUrl] = useState('');
   const [browserNotify, setBrowserNotify] = useState(readBrowserNotify());
   const [browserOnlyHidden, setBrowserOnlyHidden] = useState(readBrowserOnlyHidden());
@@ -83,6 +89,12 @@ export function SettingsModal({
     if (settingsQ.data) {
       setAutoUpdate(settingsQ.data.autoUpdate);
       setDefaultAgent(settingsQ.data.defaultAgent || '');
+      setAgentRoles({
+        issueReview: settingsQ.data.agentRoles?.issueReview || '',
+        issueDevelop: settingsQ.data.agentRoles?.issueDevelop || '',
+        prReview: settingsQ.data.agentRoles?.prReview || '',
+        autoMerge: settingsQ.data.agentRoles?.autoMerge || '',
+      });
       setGlobalRules(settingsQ.data.globalAutomationRules ?? []);
     }
   }, [settingsQ.data]);
@@ -105,7 +117,7 @@ export function SettingsModal({
 
   const saveGeneralMut = useMutation({
     mutationFn: async () => {
-      await api.patchSettings({ autoUpdate, defaultAgent });
+      await api.patchSettings({ autoUpdate, defaultAgent, agentRoles });
       return api.patchMonitorConfig({ publicUrl });
     },
     onSuccess: (updated) => {
@@ -115,6 +127,15 @@ export function SettingsModal({
     },
     onError: (e) => toast.error(`保存失败: ${(e as Error).message}`),
   });
+
+  const saveAgentRole = (key: keyof AgentRoles, value: string) => {
+    const next = { ...agentRoles, [key]: value };
+    setAgentRoles(next);
+    void api
+      .patchSettings({ agentRoles: next })
+      .then(() => qc.invalidateQueries({ queryKey: qk.settings }))
+      .catch((err) => toast.error(`保存 Agent 角色失败: ${(err as Error).message}`));
+  };
 
   const testNotifyMut = useMutation({
     mutationFn: () => api.testNotify(),
@@ -485,6 +506,40 @@ export function SettingsModal({
                     ))}
                   </select>
                 </label>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))',
+                    gap: 10,
+                    marginTop: 14,
+                  }}
+                >
+                  {([
+                    ['issueReview', 'Issue 审查'],
+                    ['issueDevelop', 'Issue 开发'],
+                    ['prReview', 'PR 审查'],
+                    ['autoMerge', '审核通过后自动合并'],
+                  ] as const).map(([key, label]) => (
+                    <label key={key} className="field">
+                      {label} Agent
+                      <select
+                        value={agentRoles[key]}
+                        onChange={(e) => saveAgentRole(key, e.target.value)}
+                      >
+                        <option value="">自动（{defaultAgent || '默认 Agent'}）</option>
+                        {(agentsQ.data ?? []).map((a) => (
+                          <option key={a.name} value={a.name} disabled={!a.available}>
+                            {a.name}{a.available ? '' : '（未就绪）'}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+                <p className="small dim" style={{ marginTop: 10 }}>
+                  Issue 开发身份会用于自动预开发；其他角色供 Issue 审查、PR 审查和审核通过后的自动合并流程使用。留空时回退到默认 Agent。
+                </p>
+
                 <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
                   {onOpenAgents && (
                     <button className="sm ghost" onClick={onOpenAgents}>

@@ -126,3 +126,22 @@ func TestDefaultAgentName(t *testing.T) {
 		t.Fatalf("DefaultAgentName = %q, want empty", got)
 	}
 }
+
+func TestAgentForRole(t *testing.T) {
+	cfg := config.Default()
+	cfg.Agents = map[string]config.AgentConfig{
+		"developer": {Command: "dev"},
+		"reviewer":  {Command: "review"},
+	}
+	cfg.SetAgentRoles(config.AgentRolesConfig{IssueDevelop: "developer", IssueReview: "missing"})
+	r := &Runner{cfg: cfg}
+	if got := r.AgentForRole(AgentRoleIssueDevelop); got != "developer" {
+		t.Fatalf("IssueDevelop = %q", got)
+	}
+	if got := r.AgentForRole(AgentRoleIssueReview); got != "" {
+		t.Fatalf("missing role agent should fall back, got %q", got)
+	}
+	if got := r.AgentForRole(AgentRolePRReview); got != "" {
+		t.Fatalf("unset role = %q", got)
+	}
+}

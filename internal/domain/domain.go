@@ -47,6 +47,7 @@ type Project struct {
 	AutoDevelopAuthors    []string         `json:"autoDevelopAuthors"`    // 仅响应这些作者创建的 issue，空=不限
 	AutoDevelopDailyLimit int              `json:"autoDevelopDailyLimit"` // 每项目每日自动预开发 run 上限，0=使用默认 5
 	AutomationRules       []AutomationRule `json:"automationRules"`
+	PullBranches          []string         `json:"pullBranches"` // 手动/自动拉取时只更新这些分支，空=全部
 	Repos                 []Repo           `json:"repos"`
 	CreatedAt             time.Time        `json:"createdAt"`
 	UpdatedAt             time.Time        `json:"updatedAt"`
@@ -59,29 +60,30 @@ func DefaultAutoDevelopLabels() []string {
 }
 
 type RuleConditions struct {
-	Author      string `json:"author,omitempty"`      // 指定提交人/作者 (如 release-bot, qa-team，留空匹配任意)
-	Pattern     string `json:"pattern,omitempty"`     // 正则表达式匹配内容 (如 (?i)status:\s*passed 或 (?i)feat:)
-	ReviewState string `json:"reviewState,omitempty"` // 审核状态 (approved / changes_requested / commented)
-	Branch      string `json:"branch,omitempty"`      // 监控分支匹配 (如 main, dev，留空匹配任意分支)
+	Author      string `json:"author,omitempty" yaml:"author,omitempty"`           // 指定提交人/作者 (如 release-bot, qa-team，留空匹配任意)
+	Pattern     string `json:"pattern,omitempty" yaml:"pattern,omitempty"`         // 正则表达式匹配内容 (如 (?i)status:\s*passed 或 (?i)feat:)
+	ReviewState string `json:"reviewState,omitempty" yaml:"reviewState,omitempty"` // 审核状态 (approved / changes_requested / commented)
+	Branch      string `json:"branch,omitempty" yaml:"branch,omitempty"`           // 监控分支匹配 (如 main, dev，留空匹配任意分支)
 }
 
 type RuleAction struct {
-	Type     string `json:"type"`               // merge_pr | set_issue_status | pull_local | notify | create_issue | trigger_run
-	Status   string `json:"status,omitempty"`   // for set_issue_status, e.g. "done"
-	Strategy string `json:"strategy,omitempty"` // for merge_pr: "squash" | "merge" | "rebase"
-	Message  string `json:"message,omitempty"`  // for notify
-	Channel  string `json:"channel,omitempty"`  // for notify: "telegram" | "webhook" | "desktop" | "all"
-	Agent    string `json:"agent,omitempty"`    // for trigger_run: 指定运行的 agent 名称 (如 codex, opencode, omp)
-	Prompt   string `json:"prompt,omitempty"`   // for trigger_run / create_issue
+	Type     string `json:"type" yaml:"type"`                             // merge_pr | set_issue_status | pull_local | notify | create_issue | trigger_run
+	Status   string `json:"status,omitempty" yaml:"status,omitempty"`     // for set_issue_status, e.g. "done"
+	Strategy string `json:"strategy,omitempty" yaml:"strategy,omitempty"` // for merge_pr: "squash" | "merge" | "rebase"
+	Message  string `json:"message,omitempty" yaml:"message,omitempty"`   // for notify
+	Channel  string `json:"channel,omitempty" yaml:"channel,omitempty"`   // for notify: "telegram" | "webhook" | "desktop" | "all"
+	Agent    string `json:"agent,omitempty" yaml:"agent,omitempty"`       // for trigger_run: 指定运行的 agent 名称 (如 codex, opencode, omp)
+	Prompt   string `json:"prompt,omitempty" yaml:"prompt,omitempty"`     // for trigger_run / create_issue
 }
 
 type AutomationRule struct {
-	ID         string         `json:"id"`
-	Name       string         `json:"name"`
-	Enabled    bool           `json:"enabled"`
-	Trigger    string         `json:"trigger"` // pr_comment | pr_review | branch_push
-	Conditions RuleConditions `json:"conditions"`
-	Actions    []RuleAction   `json:"actions"`
+	ID         string         `json:"id" yaml:"id"`
+	Name       string         `json:"name" yaml:"name"`
+	Enabled    bool           `json:"enabled" yaml:"enabled"`
+	Trigger    string         `json:"trigger" yaml:"trigger"` // pr_comment | pr_review | branch_push
+	Conditions RuleConditions `json:"conditions" yaml:"conditions"`
+	Actions    []RuleAction   `json:"actions" yaml:"actions"`
+	ProjectIDs []int64        `json:"projectIds,omitempty" yaml:"projectIds,omitempty"` // 全局规则可选的项目范围，空=全部项目
 }
 
 type HookStatus struct {

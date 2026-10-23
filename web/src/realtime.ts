@@ -3,6 +3,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { api, qk } from './api';
 import { toast } from './toast';
 import type { Issue, Notification, Run, RunEvent, WsMessage } from './types';
+import { showBrowserNotification } from './notificationSettings';
 
 /** 合并事件：按 seq 去重并排序 */
 export function mergeEvents(old: RunEvent[] | undefined, incoming: RunEvent[]): RunEvent[] {
@@ -105,6 +106,7 @@ function handleMessage(qc: QueryClient, msg: WsMessage) {
         qc.invalidateQueries({ queryKey: ['watches'] });
       }
       toast.info(`🔔 ${n.title}`);
+      showBrowserNotification(n);
       break;
     }
     case 'status':

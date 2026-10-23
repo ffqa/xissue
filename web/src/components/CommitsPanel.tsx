@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { Crumbs, fmtTime } from '../components/common';
+import { fmtTime } from './common';
 import { copyText } from '../clipboard';
 import { toast } from '../toast';
 import { getBranchWebUrl, getCommitWebUrl } from '../gitUrls';
@@ -55,10 +54,20 @@ function CommitFiles({ files }: { files: CommitFile[] }) {
   );
 }
 
-export default function CommitsPage() {
-  const { id } = useParams();
-  const projectId = Number(id);
-  const [search, setSearch] = useSearchParams();
+export function CommitsPanel({
+  projectId,
+  initialRepoId,
+  initialBranch,
+  initialSha,
+}: {
+  projectId: number;
+  initialRepoId?: number;
+  initialBranch?: string;
+  initialSha?: string;
+}) {
+  const [detailExpanded, setDetailExpanded] = useState(false);
+  const [filesExpanded, setFilesExpanded] = useState(false);
+  const [fullDiff, setFullDiff] = useState(false);
   const selectedRef = useRef<HTMLDivElement | null>(null);
   const qc = useQueryClient();
 
@@ -66,10 +75,11 @@ export default function CommitsPage() {
   const project = projectQ.data;
   const repos = project?.repos ?? [];
 
-  const repoId = Number(search.get('repo')) || repos[0]?.id || 0;
+  const [repoId, setRepoId] = useState(initialRepoId || 0);
   const repo = repos.find((r) => r.id === repoId) || repos[0];
-  const requestedBranch = search.get('branch') || repo?.defaultBranch || '';
-  const shaFromUrl = search.get('sha') || '';
+  const [branch, setBranch] = useState(initialBranch || '');
+  const [shaFromUrl, setShaFromUrl] = useState(initialSha || '');
+  const requestedBranch = branch || repo?.defaultBranch || '';
 
   const branchesQ = useQuery({
     queryKey: qk.repoBranches(repoId),
@@ -77,23 +87,37 @@ export default function CommitsPage() {
     enabled: !!repoId,
   });
   const branches = branchesQ.data ?? [];
-  const branch =
+  const activeBranch =
     branches.length > 0 && !branches.includes(requestedBranch)
       ? branches.includes(repo?.defaultBranch || '')
         ? repo!.defaultBranch
         : branches[0]
       : requestedBranch;
 
+  useEffect(() => {
+    if (!repos.length) return;
+    if (!repoId || !repos.some((r) => r.id === repoId)) {
+      setRepoId(repos[0].id);
+      setBranch(repos[0].defaultBranch);
+      setShaFromUrl('');
+    }
+  }, [repoId, repos]);
+
+  useEffect(() => {
+    const next = initialBranch || repo?.defaultBranch;
+    if (!branch && next) setBranch(next);
+  }, [branch, repo?.defaultBranch, initialBranch]);
+
   const commitsQ = useQuery({
-    queryKey: qk.repoCommits(repoId, branch),
-    queryFn: () => api.repoCommits(repoId, branch, 50),
-    enabled: !!repoId && !!branch,
+    queryKey: qk.repoCommits(repoId, activeBranch),
+    queryFn: () => api.repoCommits(repoId, activeBranch, 50),
+    enabled: !!repoId && !!activeBranch,
   });
   const commits = commitsQ.data ?? [];
   const refreshMut = useMutation({
-    mutationFn: () => api.repoCommits(repoId, branch, 50, true),
+    mutationFn: () => api.repoCommits(repoId, activeBranch, 50, true),
     onSuccess: (data) => {
-      qc.setQueryData(qk.repoCommits(repoId, branch), data);
+      qc.setQueryData(qk.repoCommits(repoId, activeBranch), data);
       toast.success('已同步远端提交');
     },
     onError: (e) => toast.error((e as Error).message),
@@ -106,6 +130,8 @@ export default function CommitsPage() {
   });
   const detail: CommitDetail | undefined = detailQ.data;
 
+  const patchLines = useMemo(() => (detail?.patch ? detail.patch.split('\n') : []), [detail?.patch]);
+
   const total = useMemo(() => {
     let add = 0;
     let del = 0;
@@ -116,38 +142,24 @@ export default function CommitsPage() {
     return { add, del };
   }, [detail]);
 
-  // Normalize missing repo/branch params without adding history entries.
-  useEffect(() => {
-    if (!project || repos.length === 0) return;
-    const currentRepo = Number(search.get('repo'));
-    const currentBranch = search.get('branch');
-    const next = new URLSearchParams(search);
-    let changed = false;
-    if (!currentRepo) {
-      next.set('repo', String(repos[0].id));
-      changed = true;
-    }
-    if (!currentBranch) {
-      next.set('branch', repos[0].defaultBranch || 'main');
-      changed = true;
-    } else if (branches.length > 0 && !branches.includes(currentBranch)) {
-      next.set('branch', branch);
-      changed = true;
-    }
-    if (changed) setSearch(next, { replace: true });
-  }, [project, repos, branches, branch, search, setSearch]);
-
   useEffect(() => {
     selectedRef.current?.scrollIntoView({ block: 'nearest' });
+    setDetailExpanded(false);
+    setFilesExpanded(false);
+    setFullDiff(false);
   }, [selectedSha, commits.length]);
 
-  const updateParams = (patch: Record<string, string | null>) => {
-    const next = new URLSearchParams(search);
-    for (const [k, v] of Object.entries(patch)) {
-      if (v === null || v === '') next.delete(k);
-      else next.set(k, v);
-    }
-    setSearch(next);
+  const selectRepo = (nextRepoId: number, nextBranch?: string, nextSha?: string) => {
+    setRepoId(nextRepoId);
+    setBranch(nextBranch || '');
+    setShaFromUrl(nextSha || '');
+  };
+  const selectBranch = (nextBranch: string) => {
+    setBranch(nextBranch);
+    setShaFromUrl('');
+  };
+  const selectCommit = (sha: string) => {
+    setShaFromUrl(sha);
   };
 
   if (!projectId || (!projectQ.isLoading && !project)) {
@@ -155,64 +167,57 @@ export default function CommitsPage() {
   }
   if (!project) return <div className="page empty">正在加载项目…</div>;
 
-  const branchUrl = getBranchWebUrl(repo, branch);
+  const branchUrl = getBranchWebUrl(repo, activeBranch);
   const commitUrl = detail ? getCommitWebUrl(repo, detail.sha) : null;
 
   return (
-    <div className="page commits-page">
-      <Crumbs>
-        <Link to="/">项目</Link>
-        <span className="dim"> / </span>
-        <Link to={`/projects/${projectId}`}>{project.name}</Link>
-        <span className="dim"> / 提交记录</span>
-      </Crumbs>
-
-      <div className="row" style={{ flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
-        <h2 style={{ margin: 0 }}>📜 提交记录</h2>
-        <span className="grow" />
-        <select
-          className="sm"
-          value={repoId || ''}
-          onChange={(e) => {
-            const nextRepoId = Number(e.target.value);
-            const nextRepo = repos.find((r) => r.id === nextRepoId);
-            updateParams({ repo: e.target.value, branch: nextRepo?.defaultBranch || 'main', sha: null });
-          }}
-        >
-          {repos.map((r) => (
-            <option key={r.id} value={r.id}>
-              {r.name}
-            </option>
-          ))}
-        </select>
-        <select
-          className="sm mono"
-          value={branch}
-          onChange={(e) => updateParams({ branch: e.target.value, sha: null })}
-          style={{ maxWidth: 220 }}
-        >
-          {branches.length === 0 && branch && <option value={branch}>{branch}</option>}
-          {branches.map((b) => (
-            <option key={b} value={b}>
-              {b}
-            </option>
-          ))}
-        </select>
-        <button className="sm" onClick={() => refreshMut.mutate()} disabled={refreshMut.isPending || commitsQ.isFetching}>
-          {refreshMut.isPending ? '同步中…' : '↻ 同步远端'}
-        </button>
-        {branchUrl && (
-          <a className="ghost sm btn" href={branchUrl} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
-            ↗ 平台分支
-          </a>
-        )}
-      </div>
-
+    <div className="commits-modal-body">
       {!repo ? (
         <div className="empty">该项目还没有仓库</div>
       ) : (
         <div className="commits-layout">
           <div className="panel commits-list-panel">
+            <div className="commits-toolbar">
+              <select
+                className="sm"
+                value={repoId || ''}
+                onChange={(e) => {
+                  const nextRepoId = Number(e.target.value);
+                  const nextRepo = repos.find((r) => r.id === nextRepoId);
+                  selectRepo(Number(e.target.value), nextRepo?.defaultBranch || 'main');
+                }}
+                title="切换仓库"
+              >
+                {repos.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </select>
+              <div className="row" style={{ gap: 6 }}>
+                <select
+                  className="sm mono grow"
+                  value={activeBranch}
+                  onChange={(e) => selectBranch(e.target.value)}
+                  title="切换分支"
+                >
+                  {branches.length === 0 && activeBranch && <option value={activeBranch}>{activeBranch}</option>}
+                  {branches.map((b) => (
+                    <option key={b} value={b}>
+                      {b}
+                    </option>
+                  ))}
+                </select>
+                <button className="sm" onClick={() => refreshMut.mutate()} disabled={refreshMut.isPending || commitsQ.isFetching}>
+                  {refreshMut.isPending ? '同步中…' : '↻ 同步'}
+                </button>
+                {branchUrl && (
+                  <a className="ghost sm btn" href={branchUrl} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                    ↗ 平台
+                  </a>
+                )}
+              </div>
+            </div>
             <div className="panel-h">
               <b className="grow">最近提交 ({commits.length})</b>
               {commitsQ.isFetching && <span className="small dim">同步中…</span>}
@@ -232,7 +237,7 @@ export default function CommitsPage() {
                       key={c.sha}
                       ref={selected ? selectedRef : undefined}
                       className={`commit-list-item${selected ? ' selected' : ''}${c.sha === shaFromUrl ? ' target' : ''}`}
-                      onClick={() => updateParams({ sha: c.sha })}
+                      onClick={() => selectCommit(c.sha)}
                     >
                       <div className="row" style={{ gap: 8 }}>
                         <code className="mono small commit-sha">{c.shortSha}</code>
@@ -291,8 +296,15 @@ export default function CommitsPage() {
                       +{total.add} / -{total.del}
                     </div>
                   </div>
-                  {detail.body.trim() !== detail.subject.trim() && (
-                    <pre className="commit-body">{detail.body}</pre>
+                  {detail.body.trim() && detail.body.trim() !== detail.subject.trim() && (
+                    <>
+                      <pre className={`commit-body${detailExpanded ? '' : ' clamped'}`}>{detail.body}</pre>
+                      {(detail.body.length > 240 || detail.body.split('\n').length > 4) && (
+                        <button className="ghost sm" style={{ marginTop: 4, padding: '0 6px' }} onClick={() => setDetailExpanded((v) => !v)}>
+                          {detailExpanded ? '收起提交说明' : '展开提交说明'}
+                        </button>
+                      )}
+                    </>
                   )}
                   {detail.parents.length > 0 && (
                     <div className="small dim" style={{ marginTop: 6 }}>
@@ -304,9 +316,13 @@ export default function CommitsPage() {
                 <div className="commit-section-title">
                   变更文件 ({detail.files.length})
                   <span className="grow" />
-                  <span className="small dim">完整 diff 见下方</span>
+                  {detail.files.length > 10 && (
+                    <button className="ghost sm" style={{ padding: '0 6px' }} onClick={() => setFilesExpanded((v) => !v)}>
+                      {filesExpanded ? '收起文件列表' : `展开全部 ${detail.files.length} 个`}
+                    </button>
+                  )}
                 </div>
-                <CommitFiles files={detail.files} />
+                <CommitFiles files={filesExpanded ? detail.files : detail.files.slice(0, 10)} />
 
                 <div className="commit-section-title" style={{ marginTop: 12 }}>
                   Diff
@@ -314,7 +330,19 @@ export default function CommitsPage() {
                 </div>
                 <div className="diff-view">
                   {detail.patch ? (
-                    detail.patch.split('\n').map((line, i) => <PatchLine key={i} line={line} />)
+                    <>
+                      {(fullDiff ? patchLines : patchLines.slice(0, 800)).map((line, i) => (
+                        <PatchLine key={i} line={line} />
+                      ))}
+                      {!fullDiff && patchLines.length > 800 && (
+                        <div className="diff-truncated">
+                          已渲染前 800 行，避免超大 diff 卡顿。
+                          <button className="sm ghost" onClick={() => setFullDiff(true)}>
+                            显示全部 {patchLines.length} 行
+                          </button>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <div className="dim small" style={{ padding: 12 }}>
                       无文本差异（可能为二进制文件或合并提交）

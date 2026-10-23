@@ -7,9 +7,10 @@ import { copyText } from '../clipboard';
 
 interface MonitorModalProps {
   onClose: () => void;
+  onOpenSettings?: () => void;
 }
 
-export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
+export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSettings }) => {
   const qc = useQueryClient();
   const [hours, setHours] = useState<number>(8);
   const [levelFilter, setLevelFilter] = useState<string>('all');
@@ -38,10 +39,6 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
 
   const [cfgEnabled, setCfgEnabled] = useState(true);
   const [cfgActiveHours, setCfgActiveHours] = useState('');
-  const [cfgPublicUrl, setCfgPublicUrl] = useState('');
-  const [cfgTgToken, setCfgTgToken] = useState('');
-  const [cfgTgChatId, setCfgTgChatId] = useState('');
-  const [cfgWebhookUrl, setCfgWebhookUrl] = useState('');
   const [cfgSyncIssues, setCfgSyncIssues] = useState(false);
   const [cfgSyncIntervalMin, setCfgSyncIntervalMin] = useState(10);
   const [cfgAutoDevelopIssues, setCfgAutoDevelopIssues] = useState(false);
@@ -50,10 +47,6 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
     if (configQ.data) {
       setCfgEnabled(configQ.data.enabled ?? true);
       setCfgActiveHours(configQ.data.activeHours || '');
-      setCfgPublicUrl(configQ.data.publicUrl || '');
-      setCfgTgToken(configQ.data.telegramBotToken || '');
-      setCfgTgChatId(configQ.data.telegramChatId || '');
-      setCfgWebhookUrl(configQ.data.webhookUrl || '');
       setCfgSyncIssues(configQ.data.syncIssues ?? false);
       setCfgSyncIntervalMin(configQ.data.syncIntervalMin || 10);
       setCfgAutoDevelopIssues(configQ.data.autoDevelopIssues ?? false);
@@ -71,7 +64,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
   });
 
   const updateConfigMut = useMutation({
-    mutationFn: (newCfg: MonitorConfig) => api.updateMonitorConfig(newCfg),
+    mutationFn: (newCfg: Partial<MonitorConfig>) => api.patchMonitorConfig(newCfg),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: qk.monitorConfig });
       qc.invalidateQueries({ queryKey: qk.monitorStatus });
@@ -162,10 +155,6 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
     updateConfigMut.mutate({
       enabled: cfgEnabled,
       activeHours: cfgActiveHours,
-      publicUrl: cfgPublicUrl,
-      telegramBotToken: cfgTgToken,
-      telegramChatId: cfgTgChatId,
-      webhookUrl: cfgWebhookUrl,
       syncIssues: cfgSyncIssues,
       syncIntervalMin: cfgSyncIntervalMin,
       autoDevelopIssues: cfgAutoDevelopIssues,
@@ -264,7 +253,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
             <button
               className={`sm ${showConfig ? 'primary' : 'ghost'}`}
               onClick={() => setShowConfig(!showConfig)}
-              title="配置监控活跃时间段与 Telegram/Webhook 通知"
+              title="配置监控活跃时间段、Issue 同步与自动开发"
             >
               ⚙️ 策略与通知
             </button>
@@ -274,7 +263,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
               title={isMaximized ? '还原窗口' : '全屏显示'}
               style={{ fontSize: 13, padding: '4px 10px' }}
             >
-              {isMaximized ? '🗗 还原' : '🗖 全屏'}
+              {isMaximized ? '🗗' : '⛶'}
             </button>
             <button
               className="ghost sm"
@@ -390,61 +379,35 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose }) => {
                 </span>
               </label>
 
-              <label className="field" style={{ margin: 0 }}>
-                外部访问地址 (通知链接)
-                <input
-                  type="text"
-                  className="sm mono"
-                  placeholder="如 http://100.64.0.2:7789"
-                  value={cfgPublicUrl}
-                  onChange={(e) => setCfgPublicUrl(e.target.value)}
-                />
-                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
-                  通知里的链接需要它才能点击；留空时按监听地址自动推导（0.0.0.0 时取本机非回环 IP）。
-                </span>
-              </label>
-
-              <label className="field" style={{ margin: 0 }}>
-                Telegram Bot Token
-                <input
-                  type="password"
-                  className="sm mono"
-                  placeholder="如 123456789:ABCdefGhI..."
-                  value={cfgTgToken}
-                  onChange={(e) => setCfgTgToken(e.target.value)}
-                />
-                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
-                  创建 Bot 获得的 Token；保存后以 ****** 回显，保持 ****** 不变即沿用已存值。
-                </span>
-              </label>
-
-              <label className="field" style={{ margin: 0 }}>
-                Telegram Chat ID
-                <input
-                  type="text"
-                  className="sm mono"
-                  placeholder="如 -1001234567 或个人 ChatID"
-                  value={cfgTgChatId}
-                  onChange={(e) => setCfgTgChatId(e.target.value)}
-                />
-                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
-                  接收通知的目标群组或个人 Chat ID。
-                </span>
-              </label>
-
-              <label className="field" style={{ margin: 0 }}>
-                通用 Webhook URL (飞书 / 企微 / 钉钉 / Slack)
-                <input
-                  type="text"
-                  className="sm mono"
-                  placeholder="https://open.feishu.cn/... 或 https://qyapi.weixin.qq.com/..."
-                  value={cfgWebhookUrl}
-                  onChange={(e) => setCfgWebhookUrl(e.target.value)}
-                />
-                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
-                  POST JSON 格式载荷；保存后以 ****** 回显，保持 ****** 不变即沿用已存值。
-                </span>
-              </label>
+              <div
+                className="row"
+                style={{
+                  gap: 10,
+                  padding: '10px 12px',
+                  background: 'var(--bg-1)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 8,
+                  justifyContent: 'space-between',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div className="col" style={{ gap: 4 }}>
+                  <b className="small">通知组件</b>
+                  <div className="row small muted" style={{ gap: 6, flexWrap: 'wrap' }}>
+                    <span className="badge ok">In-app</span>
+                    {status?.telegramConfigured && <span className="badge ok">Telegram</span>}
+                    {status?.webhookConfigured && <span className="badge ok">Webhook</span>}
+                    {!status?.telegramConfigured && !status?.webhookConfigured && (
+                      <span className="badge">仅 In-app</span>
+                    )}
+                  </div>
+                </div>
+                {onOpenSettings && (
+                  <button className="sm ghost" onClick={onOpenSettings}>
+                    ⚙️ 选择通知组件
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         )}

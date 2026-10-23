@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.19` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.20` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.19`
+- **最新发布版本**: `v0.2.20`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -25,8 +25,8 @@
 
 ### 2.1 Git 监控交互精简与提交详情弹窗
 - **精简交互**: 从分支监控卡片中彻底移除了容易造成误解与无意义操作的 `Cherry-Pick` 按钮，文案整体精简（“监控”、“最新推送”等）；
-- **提交详情弹窗 ([`WatchCommitDetailModal.tsx`](file:///Users/gouki/server/ide/web/src/components/WatchCommitDetailModal.tsx))**:
-  - 点击「📜 提交记录」可弹出查看该分支最近 25 条 Commit 列表；
+- **提交记录弹窗 ([`CommitsModal.tsx`](file:///Users/gouki/server/ide/web/src/components/CommitsModal.tsx) / [`CommitsPanel.tsx`](file:///Users/gouki/server/ide/web/src/components/CommitsPanel.tsx))**：
+  - 点击「📜 提交记录」在项目页直接弹出宽幅弹窗，查看该分支最近 50 条 Commit 列表；
   - 支持查看提交主题（Subject）、提交作者与原始提交时间；
   - 提供一键复制 Commit SHA；
   - 提供「在平台打开」直达外链（支持自动解析 GitHub、GitLab、Gitea 仓库 URL）；
@@ -154,12 +154,17 @@
 - 顶栏移除「实时已连接」「重启」「版本号」，统一并入底部状态栏；顶栏保留通知、监控、插件、主题、MCP 等全局工具。
 
 ### 2.11 提交记录页、自动升级与实时状态栏
-- **独立提交记录页**：新增 `/projects/:id/commits?repo=&branch=&sha=`，左侧提交列表、右侧 GitHub 风格详情（元信息、文件增删统计、统一 diff）；支持从通知/监控卡片直达并高亮目标 Commit；
-- **通知深链**：`branch_push` 与分支推送自动化通知改为提交页链接（仓库、分支、tip SHA 全部 URL 编码），旧 `?watch=<id>` 链接会在项目页自动重定向到对应提交页；
+- **提交记录弹窗**：`CommitsModal` 在项目页打开宽幅弹窗（左侧提交列表、右侧 GitHub 风格详情：元信息、文件增删统计、统一 diff）；原 `/projects/:id/commits` 路由保留并重定向到项目页弹窗，从通知/监控卡片可直达并高亮目标 Commit；
+- **通知深链**：`branch_push` 与分支推送自动化通知改为项目页弹窗链接 `/projects/:id?commits=1&repo=&branch=&sha=`（仓库、分支、tip SHA 全部 URL 编码），旧 `?watch=<id>` 链接同样在项目页打开对应提交弹窗；
 - **自动升级**：`autoUpdate`（默认开启）每小时检查官方 GitHub Release；发现新版本先发应用内/外部通知，再调用 `xissue update`（SHA256SUMS fail-closed 校验）并重启服务；有执行中的 Run 时顺延到下一轮，同一版本失败 6 小时内不重复尝试；
 - **底部实时状态栏**：`GET /api/status` 每 2 秒采样，展示版本、运行时长、Go 堆内存、进程 CPU、磁盘可用/占用、GC 次数与下次 GC 估算、Goroutine 数、自动更新状态。
 - **性能**：提交列表/分支/Commit 详情默认读本地镜像（`EnsureMirrorCached`），首次进入不再等待远端 fetch；「同步远端」按钮显式 `refresh=1`，Commit 详情在缓存缺失时自动 fetch 一次。
 - **历史 Issue 补标**：同步时会为升级前已导入、尚无 `bug`/`enhancement`/`suggestion` 标签的未完成 Issue 补做分类与远端打标，但不会为历史 Issue 启动 Agent。
+
+### 2.13 全局自动化规则与设置弹窗体验
+- **全局自动化规则**：`~/.xissue/config.yaml` 新增 `globalAutomationRules`，所有项目共享；规则可留空 `projectIds` 作用于全部项目，也可限定项目。项目内规则仍会叠加执行；
+- **设置入口**：全局设置「⚡ 自动化」页支持新增/启停/删除全局规则，修改即时保存；`Ctrl/Cmd+S` 可手动保存当前页；
+- **弹窗体验**：全局设置、PR 与提交记录弹窗均支持真实全屏（100vh）和一键退出，Esc 直接关闭；全局设置另支持 `Ctrl/Cmd+S` 保存、`Ctrl/Cmd+Shift+F` 全屏；PR 与提交记录改为与知识库同宽的弹窗，不再跳转独立全屏页面。
 
 ---
 

@@ -1,5 +1,6 @@
 import type {
   AgentConfigInput,
+  AppSettings,
   AgentInfo,
   AgentModels,
   AutomationRule,
@@ -177,6 +178,7 @@ export const api = {
       autoDevelopAuthors?: string[];
       autoDevelopDailyLimit?: number;
       automationRules?: AutomationRule[];
+      pullBranches?: string[];
     },
   ) => patch<Project>(`/api/projects/${id}`, b),
   deleteProject: (id: number, b?: { name: string }) =>
@@ -263,8 +265,9 @@ export const api = {
     get<{ dir: string; analysis: string; events: string }>(`/api/runs/${runId}/archive`),
 
   monitorStatus: () => get<MonitorStatus>('/api/monitor/status'),
+  settings: () => get<AppSettings>('/api/settings'),
+  patchSettings: (b: Partial<AppSettings>) => patch<AppSettings>('/api/settings', b),
   monitorConfig: () => get<MonitorConfig>('/api/monitor/config'),
-  updateMonitorConfig: (b: MonitorConfig) => put<MonitorConfig>('/api/monitor/config', b),
   patchMonitorConfig: (b: Partial<MonitorConfig>) => patch<MonitorConfig>('/api/monitor/config', b),
   testNotify: () => post<{ ok: boolean; message: string }>('/api/monitor/test-notify'),
   monitorLogs: (hours = 8) => get<MonitorLogEntry[]>(`/api/monitor/logs?hours=${hours}`),
@@ -292,6 +295,7 @@ export const qk = {
   health: ['health'] as const,
   status: ['status'] as const,
   monitorStatus: ['monitorStatus'] as const,
+  settings: ['settings'] as const,
   monitorConfig: ['monitorConfig'] as const,
   monitorLogs: (hours?: number) => ['monitorLogs', hours ?? 8] as const,
   agents: ['agents'] as const,

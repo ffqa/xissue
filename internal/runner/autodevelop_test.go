@@ -104,6 +104,14 @@ func TestDefaultAgentName(t *testing.T) {
 	if got := r.DefaultAgentName(); got != "opencode" {
 		t.Fatalf("DefaultAgentName = %q, want opencode", got)
 	}
+	cfg.DefaultAgent = "zeta"
+	if got := r.DefaultAgentName(); got != "zeta" {
+		t.Fatalf("configured DefaultAgentName = %q, want zeta", got)
+	}
+	cfg.DefaultAgent = "missing"
+	if got := r.DefaultAgentName(); got != "opencode" {
+		t.Fatalf("missing DefaultAgent fallback = %q, want opencode", got)
+	}
 
 	cfg.Agents = map[string]config.AgentConfig{
 		"zeta":  {Command: "zeta"},

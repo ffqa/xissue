@@ -488,15 +488,19 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .commit-list-item.selected { background: var(--accent-bg, rgba(110, 123, 242, .14)); border-left-color: var(--accent); }
 .commit-list-item.target { box-shadow: inset 0 0 0 1px var(--accent); }
 .commit-sha { color: var(--accent); font-weight: 600; flex: none; }
-.commit-detail-panel { overflow-y: auto; }
-.commit-detail-head { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.commit-detail-panel { overflow: hidden; }
+.commit-detail-head { padding: 14px 16px; border-bottom: 1px solid var(--border); max-height: 30vh; overflow-y: auto; flex: none; }
 .commit-body { margin: 10px 0 0; padding: 10px 12px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; word-break: break-word; color: var(--text-2); }
+.commit-body.clamped { max-height: 6.2em; overflow: hidden; }
 .commit-section-title { display: flex; align-items: center; gap: 8px; padding: 10px 16px 6px; font-size: 12px; font-weight: 600; color: var(--text-2); }
-.commit-files { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.commit-files { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); max-height: 140px; overflow-y: auto; flex: none; }
+.commits-toolbar { padding: 10px 10px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 7px; flex: none; }
+.commits-toolbar select { width: 100%; min-width: 0; }
 .commit-file-row { display: flex; align-items: center; gap: 10px; padding: 6px 16px; border-bottom: 1px solid var(--border); }
 .commit-file-row:last-child { border-bottom: 0; }
 .commit-file-status { flex: none; font-size: 11px; font-weight: 600; min-width: 42px; }
 .diff-view { overflow: auto; background: var(--bg-0, #0b0c0e); font-family: var(--mono); font-size: 12px; line-height: 1.5; padding-bottom: 16px; flex: 1; min-height: 160px; }
+.diff-truncated { padding: 10px 14px; color: var(--text-3); border-top: 1px dashed var(--border); display: flex; align-items: center; gap: 10px; position: sticky; bottom: 0; background: var(--bg-0, #0b0c0e); }
 .diff-line { padding: 0 14px; white-space: pre; min-width: max-content; }
 .diff-add { background: rgba(76, 183, 130, .14); color: var(--green); }
 .diff-del { background: rgba(235, 87, 87, .13); color: var(--red); }
@@ -523,7 +527,16 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
   white-space: nowrap;
 }
 .status-item { display: inline-flex; align-items: center; gap: 4px; }
-.status-version { color: var(--accent-2); font-weight: 600; }
+.status-version {
+  color: var(--accent-2);
+  font-weight: 600;
+  flex: 0 0 auto;
+  min-width: max-content;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.status-version:hover { color: var(--accent); }
+.status-version svg { flex: none; }
 .status-update { color: var(--green); font-weight: 600; }
 @media (max-width: 900px) {
   .statusbar { gap: 8px; font-size: 10px; }
@@ -532,3 +545,36 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 
 .statusbar .ws-ind { font-size: 10px; gap: 4px; }
 .statusbar .status-restart { height: 18px; padding: 0 7px; font-size: 10px; line-height: 1; }
+
+/* ---- dedicated PR page ---- */
+.pr-page { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.pr-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.pr-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); flex-wrap: wrap; flex: none; }
+.pr-list { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.pr-card { padding: 12px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-1); display: flex; flex-direction: column; gap: 8px; }
+.pr-body { font-size: 12px; color: var(--muted); background: var(--bg-2); padding: 6px 10px; border-radius: 6px; max-height: 80px; overflow-y: auto; white-space: pre-wrap; line-height: 1.4; }
+.pr-actions { margin-top: 2px; padding-top: 8px; border-top: 1px dashed var(--border); justify-content: flex-end; flex-wrap: wrap; }
+
+/* ---- global settings ---- */
+.settings-layout { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 16px; min-height: 0; height: 100%; }
+.settings-nav { display: flex; flex-direction: column; gap: 6px; border-right: 1px solid var(--border); padding-right: 12px; }
+.settings-content { min-width: 0; overflow-y: auto; max-height: none; padding-right: 4px; }
+.settings-card { border: 1px solid var(--border); border-radius: 8px; background: var(--bg-1); padding: 14px 16px; }
+.settings-card h3 { margin: 0 0 6px; font-size: 14px; }
+.route-table { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.route-row { display: grid; grid-template-columns: minmax(150px, 1fr) repeat(3, 74px) 64px; align-items: center; gap: 4px; padding: 8px 10px; border-top: 1px solid var(--border); font-size: 12px; }
+.route-row:first-child { border-top: 0; }
+.route-head { background: var(--bg-2); color: var(--text-2); font-weight: 600; }
+@media (max-width: 760px) {
+  .settings-layout { grid-template-columns: 1fr; }
+  .settings-nav { flex-direction: row; border-right: 0; border-bottom: 1px solid var(--border); padding: 0 0 8px; overflow-x: auto; }
+  .route-row { grid-template-columns: minmax(120px, 1fr) repeat(3, 56px) 50px; padding: 6px; }
+}
+.settings-subcard { border: 1px solid var(--accent); border-radius: 8px; background: var(--bg-2); padding: 12px; margin-top: 10px; }
+.scope-list { display: flex; flex-wrap: wrap; gap: 8px 14px; max-height: 90px; overflow-y: auto; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-1); }
+
+.commits-modal-body { display: flex; flex-direction: column; height: 100%; min-height: 0; flex: 1; }
+.commits-modal-body .commits-layout { height: 100%; }
+.modal.modal-fullscreen .modal-b { padding: 16px 18px; }
+.modal.modal-fullscreen .settings-layout { flex: 1; min-height: 0; height: 100%; }
+.modal.modal-fullscreen .settings-content { max-height: none; height: 100%; }

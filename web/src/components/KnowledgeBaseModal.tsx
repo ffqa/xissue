@@ -199,6 +199,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
         </div>
       }
       size="xl"
+      style={fullscreen ? undefined : { width: 'min(1400px, 96vw)' }}
       fullscreen={fullscreen}
       headerActions={
         <div className="row" style={{ gap: 4 }}>
@@ -240,7 +241,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: sidebarHidden ? '0 1fr' : '320px 1fr',
+          gridTemplateColumns: sidebarHidden ? '1fr' : '320px 1fr',
           height: '100%',
           minHeight: 0,
           flex: 1,
@@ -498,7 +499,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                     }}
                   />
                 ) : (
-                  <div style={{ maxWidth: fullscreen || sidebarHidden ? 1200 : 860, margin: '0 auto', wordBreak: 'break-word' }}>
+                  <div style={{ maxWidth: fullscreen || sidebarHidden ? 1200 : 1050, margin: '0 auto', wordBreak: 'break-word' }}>
                     <Markdown>{curDoc.content || '*(此文档为空)*'}</Markdown>
                   </div>
                 )}

@@ -133,13 +133,15 @@ func (r *Runner) sendExternalNotification(kind, title, body, link string) {
 	tgToken := strings.TrimSpace(mon.TelegramBotToken)
 	tgChatID := strings.TrimSpace(mon.TelegramChatID)
 	webhookURL := strings.TrimSpace(mon.WebhookURL)
+	allowTelegram := notificationRouteAllows(mon.NotificationRoutes, kind, "telegram")
+	allowWebhook := notificationRouteAllows(mon.NotificationRoutes, kind, "webhook")
 
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		// 1. Telegram Bot 推送
-		if tgToken != "" && tgChatID != "" {
+		if allowTelegram && tgToken != "" && tgChatID != "" {
 			tgMsg := fmt.Sprintf("🔔 *%s*\n\n%s", escapeTelegramMarkdown(title), escapeTelegramMarkdown(body))
 			if link != "" {
 				tgMsg += fmt.Sprintf("\n\n🔗 链接: %s", link)
@@ -164,7 +166,7 @@ func (r *Runner) sendExternalNotification(kind, title, body, link string) {
 		}
 
 		// 2. 通用 Webhook 推送 (飞书/企微/钉钉/Slack/自定义)
-		if webhookURL != "" {
+		if allowWebhook && webhookURL != "" {
 			payload, _ := json.Marshal(map[string]any{
 				"event":     kind,
 				"title":     title,
@@ -201,6 +203,24 @@ func (r *Runner) sendExternalNotification(kind, title, body, link string) {
 			_, _ = r.automation.ExecutePlugins(ctx, payload)
 		}
 	}()
+}
+
+// notificationRouteAllows reports whether an event kind may use a channel.
+// An empty route map keeps the historical behavior (all configured channels).
+func notificationRouteAllows(routes map[string][]string, kind, channel string) bool {
+	if len(routes) == 0 {
+		return true
+	}
+	channels, ok := routes[kind]
+	if !ok {
+		return true
+	}
+	for _, ch := range channels {
+		if ch == channel {
+			return true
+		}
+	}
+	return false
 }
 
 func escapeTelegramMarkdown(s string) string {
@@ -251,6 +271,16 @@ func (r *Runner) mirrorPath(repoID int64) string {
 func (r *Runner) ensureRepoMirror(ctx context.Context, repo domain.Repo) (string, error) {
 	mirror := r.mirrorPath(repo.ID)
 	if err := gitx.EnsureMirror(ctx, repo.RemoteURL, mirror); err != nil {
+		return "", err
+	}
+	return mirror, nil
+}
+
+// ensureRepoMirrorCached creates the mirror if needed but does not fetch all
+// branches; callers fetch exactly the refs they need.
+func (r *Runner) ensureRepoMirrorCached(ctx context.Context, repo domain.Repo) (string, error) {
+	mirror := r.mirrorPath(repo.ID)
+	if err := gitx.EnsureMirrorCached(ctx, repo.RemoteURL, mirror); err != nil {
 		return "", err
 	}
 	return mirror, nil
@@ -406,7 +436,12 @@ func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watch
 		return 0, 0, err
 	}
 
-	// Group watches by repoID so we only fetch each mirror once.
+	// Group watches by repoID so we fetch each mirror once, and only fetch the
+	// branches that are actually watched instead of every remote branch.
+	watchedBranches := map[int64][]string{}
+	for _, w := range watches {
+		watchedBranches[w.RepoID] = append(watchedBranches[w.RepoID], w.Branch)
+	}
 	fetchedRepo := map[int64]string{}
 	for _, w := range watches {
 		mirror, ok := fetchedRepo[w.RepoID]
@@ -415,10 +450,11 @@ func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watch
 			if rerr != nil {
 				continue
 			}
-			m, merr := r.ensureRepoMirror(ctx, *repo)
+			m, merr := r.ensureRepoMirrorCached(ctx, *repo)
 			if merr != nil {
 				continue
 			}
+			fetchBranches(ctx, m, validPullBranches(watchedBranches[w.RepoID]))
 			mirror = m
 			fetchedRepo[w.RepoID] = mirror
 		}
@@ -757,30 +793,36 @@ func (r *Runner) ListProjectPRs(ctx context.Context, projectID int64, state stri
 
 // PullProjectRepos pulls the latest remote commits into bare mirrors and into local repo directories.
 func (r *Runner) PullProjectRepos(ctx context.Context, projectID int64) ([]string, error) {
-	repos, err := r.st.ListRepos(ctx, projectID)
+	project, err := r.st.GetProject(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
+	repos := project.Repos
+	pullBranches := validPullBranches(project.PullBranches)
 	var updated []string
 	for _, repo := range repos {
-		// 1. Update mirror
+		// 1. Update mirror. When pullBranches is configured, only fetch those refs
+		// so stale/merged feature branches are not dragged back on every pull.
 		mirror := filepath.Join(r.cfg.MirrorsDir(), fmt.Sprintf("repo-%d.git", repo.ID))
 		if _, statErr := os.Stat(mirror); statErr == nil {
-			_, _ = gitx.Run(ctx, mirror, "fetch", "--prune", "origin")
+			fetchBranches(ctx, mirror, pullBranches)
 		}
 
-		// 2. If it's a local directory repository, pull latest into its working tree if clean
+		// 2. If it's a local directory repository, pull latest into its working tree if clean.
+		// Only the currently checked-out branch can be fast-forwarded; other selected
+		// branches are fetched into origin/<branch> without touching the worktree.
 		if _, statErr := os.Stat(repo.RemoteURL); statErr == nil {
 			branch, _ := gitx.Run(ctx, repo.RemoteURL, "rev-parse", "--abbrev-ref", "HEAD")
 			target := repo.DefaultBranch
 			if target == "" {
 				target = "main"
 			}
+			allowed := len(pullBranches) == 0 || containsString(pullBranches, branch)
 			st, _ := gitx.Run(ctx, repo.RemoteURL, "status", "--porcelain")
-			if strings.TrimSpace(st) == "" && (branch == target || branch == "dev") {
+			if strings.TrimSpace(st) == "" && allowed && (branch == target || branch == "dev") {
 				_, _ = gitx.Run(ctx, repo.RemoteURL, "pull", "--ff-only")
 			} else {
-				_, _ = gitx.Run(ctx, repo.RemoteURL, "fetch", "--prune", "origin")
+				fetchBranches(ctx, repo.RemoteURL, pullBranches)
 			}
 		}
 		updated = append(updated, repo.Name)
@@ -788,6 +830,44 @@ func (r *Runner) PullProjectRepos(ctx context.Context, projectID int64) ([]strin
 	// Also trigger watch & PR status check to keep issues in sync
 	_, _, _ = r.CheckWatchesAndPRs(ctx, projectID)
 	return updated, nil
+}
+
+// validPullBranches drops unsafe branch names from project settings instead of
+// passing them to git as options or refspecs.
+func validPullBranches(branches []string) []string {
+	out := make([]string, 0, len(branches))
+	seen := map[string]bool{}
+	for _, b := range branches {
+		b = strings.TrimSpace(b)
+		if b == "" || seen[b] || gitx.ValidateBranchName(b) != nil {
+			continue
+		}
+		seen[b] = true
+		out = append(out, b)
+	}
+	return out
+}
+
+func containsString(list []string, value string) bool {
+	for _, s := range list {
+		if s == value {
+			return true
+		}
+	}
+	return false
+}
+
+// fetchBranches fetches either all remote branches (empty selection) or exactly
+// the selected branches. Each selected branch is fetched separately so one
+// deleted/renamed branch does not abort the whole pull.
+func fetchBranches(ctx context.Context, dir string, branches []string) {
+	if len(branches) == 0 {
+		_, _ = gitx.Run(ctx, dir, "fetch", "--prune", "origin")
+		return
+	}
+	for _, b := range branches {
+		_, _ = gitx.Run(ctx, dir, "fetch", "--prune", "origin", "+refs/heads/"+b+":refs/remotes/origin/"+b)
+	}
 }
 
 // MergeProjectPR merges a PR in the given repository, and immediately pulls changes locally.
@@ -1065,10 +1145,11 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 		}
 
 		// Layer 1: Rules
-		actions := r.automation.EvaluateRules(project.AutomationRules, "pr_comment", &comment, nil)
+		rules := r.effectiveAutomationRules(project)
+		actions := r.automation.EvaluateRules(rules, "pr_comment", &comment, nil)
 
 		// Layer 2: Project Hooks (安全门控: 仅受信任人员允许触发本地外部脚本执行，防止恶意外部评论 RCE)
-		if isTrustedAuthor(comment.Author, prDetail.Author, project.AutomationRules) {
+		if isTrustedAuthor(comment.Author, prDetail.Author, rules) {
 			if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
 				actions = append(actions, hookActions...)
 			}
@@ -1118,10 +1199,11 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 		}
 
 		// Layer 1: Rules
-		actions := r.automation.EvaluateRules(project.AutomationRules, "pr_review", nil, &review)
+		rules := r.effectiveAutomationRules(project)
+		actions := r.automation.EvaluateRules(rules, "pr_review", nil, &review)
 
 		// Layer 2: Hooks (安全门控)
-		if isTrustedAuthor(review.Author, prDetail.Author, project.AutomationRules) {
+		if isTrustedAuthor(review.Author, prDetail.Author, rules) {
 			if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
 				actions = append(actions, hookActions...)
 			}
@@ -1196,7 +1278,13 @@ func (r *Runner) executeActions(ctx context.Context, actions []domain.RuleAction
 				if targetBranch == "" {
 					targetBranch = repo.DefaultBranch
 				}
-				_, _ = r.ensureRepoMirror(ctx, *repo)
+				if mirror, merr := r.ensureRepoMirrorCached(ctx, *repo); merr == nil {
+					branches := validPullBranches(project.PullBranches)
+					if len(branches) == 0 {
+						branches = []string{targetBranch}
+					}
+					fetchBranches(ctx, mirror, branches)
+				}
 				r.LogMonitor("INFO", "automation", fmt.Sprintf("已自动刷新本地镜像与代码缓存 (%s:%s)", repo.Name, targetBranch))
 			}
 
@@ -1256,6 +1344,30 @@ func isTrustedAuthor(author, prAuthor string, rules []domain.AutomationRule) boo
 	return false
 }
 
+// effectiveAutomationRules merges global rules (optionally scoped to selected
+// projects) with this project's own rules.
+func (r *Runner) effectiveAutomationRules(project *domain.Project) []domain.AutomationRule {
+	var global []domain.AutomationRule
+	if r.cfg != nil {
+		global = r.cfg.GlobalAutomationRulesSnapshot()
+	}
+	out := make([]domain.AutomationRule, 0, len(global)+len(project.AutomationRules))
+	for _, rule := range global {
+		if len(rule.ProjectIDs) == 0 {
+			out = append(out, rule)
+			continue
+		}
+		for _, id := range rule.ProjectIDs {
+			if id == project.ID {
+				out = append(out, rule)
+				break
+			}
+		}
+	}
+	out = append(out, project.AutomationRules...)
+	return out
+}
+
 // shouldRunProjectHooks decides whether repo-supplied Layer-2 scripts may run.
 // Only locally-added repositories are eligible; for any other source the push
 // author must be explicitly trusted by a configured automation rule.
@@ -1280,7 +1392,7 @@ func (r *Runner) ListPlugins() []domain.PluginInfo {
 // branchPushLink deep-links a branch-push notification to the commit page and
 // highlights the branch tip (or the newest commit in the push).
 func branchPushLink(projectID, repoID int64, branch, sha string) string {
-	return fmt.Sprintf("/projects/%d/commits?repo=%d&branch=%s&sha=%s",
+	return fmt.Sprintf("/projects/%d?commits=1&repo=%d&branch=%s&sha=%s",
 		projectID, repoID, url.QueryEscape(branch), url.QueryEscape(sha))
 }
 
@@ -1312,10 +1424,11 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 	}
 
 	// Layer 1: Rules
-	actions := r.automation.EvaluateBranchPushRules(project.AutomationRules, w.Branch, tip.Author, tip.Subject)
+	rules := r.effectiveAutomationRules(project)
+	actions := r.automation.EvaluateBranchPushRules(rules, w.Branch, tip.Author, tip.Subject)
 
 	// Layer 2: Project Hooks (on-branch-push), gated to local working copies.
-	if shouldRunProjectHooks(repo, workdir, tip.Author, project.AutomationRules) {
+	if shouldRunProjectHooks(repo, workdir, tip.Author, rules) {
 		if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
 			actions = append(actions, hookActions...)
 		} else {
@@ -1385,7 +1498,13 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 
 		case "pull_local":
 			if repo != nil {
-				_, _ = r.ensureRepoMirror(ctx, *repo)
+				if mirror, merr := r.ensureRepoMirrorCached(ctx, *repo); merr == nil {
+					branches := validPullBranches(project.PullBranches)
+					if len(branches) == 0 {
+						branches = []string{w.Branch}
+					}
+					fetchBranches(ctx, mirror, branches)
+				}
 				r.LogMonitor("INFO", "automation", fmt.Sprintf("已自动刷新本地镜像与代码缓存 (%s:%s)", repo.Name, w.Branch))
 			}
 

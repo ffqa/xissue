@@ -90,6 +90,11 @@ Issue title: %s`, issue.Key, issue.Title)
 // DefaultAgentName returns the preferred configured agent for automatic runs.
 func (r *Runner) DefaultAgentName() string {
 	agents := r.cfg.AgentsSnapshot()
+	if preferred := strings.TrimSpace(r.cfg.DefaultAgentName()); preferred != "" {
+		if _, ok := agents[preferred]; ok {
+			return preferred
+		}
+	}
 	if _, ok := agents["opencode"]; ok {
 		return "opencode"
 	}

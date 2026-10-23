@@ -28,7 +28,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.19"
+const Version = "0.2.20"
 
 type Server struct {
 	cfg    *config.Config
@@ -273,6 +273,9 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/projects/{id}/docs/save", s.handleSaveProjectDoc)
 
 	m.HandleFunc("GET /api/monitor/status", s.handleMonitorStatus)
+	m.HandleFunc("GET /api/settings", s.handleGetSettings)
+	m.HandleFunc("PATCH /api/settings", s.handlePatchSettings)
+
 	m.HandleFunc("GET /api/monitor/config", s.handleGetMonitorConfig)
 	m.HandleFunc("PUT /api/monitor/config", s.handleUpdateMonitorConfig)
 	m.HandleFunc("PATCH /api/monitor/config", s.handlePatchMonitorConfig)
@@ -1693,6 +1696,50 @@ func (s *Server) handleMonitorStatus(w http.ResponseWriter, r *http.Request) {
 	st.LastIssueSyncError = s.lastSyncError
 	s.syncMu.Unlock()
 	writeJSON(w, http.StatusOK, st)
+}
+
+func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"autoUpdate":            s.cfg.AutoUpdateEnabled(),
+		"defaultAgent":          s.cfg.DefaultAgentName(),
+		"globalAutomationRules": s.cfg.GlobalAutomationRulesSnapshot(),
+	})
+}
+
+func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		AutoUpdate            *bool                    `json:"autoUpdate"`
+		DefaultAgent          *string                  `json:"defaultAgent"`
+		GlobalAutomationRules *[]domain.AutomationRule `json:"globalAutomationRules"`
+	}
+	if err := readJSON(r, &body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	changed := false
+	if body.AutoUpdate != nil {
+		s.cfg.SetAutoUpdate(*body.AutoUpdate)
+		changed = true
+	}
+	if body.DefaultAgent != nil {
+		s.cfg.SetDefaultAgent(*body.DefaultAgent)
+		changed = true
+	}
+	if body.GlobalAutomationRules != nil {
+		s.cfg.SetGlobalAutomationRules(*body.GlobalAutomationRules)
+		changed = true
+	}
+	if changed {
+		if err := s.cfg.Save(); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"autoUpdate":            s.cfg.AutoUpdateEnabled(),
+		"defaultAgent":          s.cfg.DefaultAgentName(),
+		"globalAutomationRules": s.cfg.GlobalAutomationRulesSnapshot(),
+	})
 }
 
 func (s *Server) handleGetMonitorConfig(w http.ResponseWriter, r *http.Request) {

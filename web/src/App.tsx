@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, Route, Routes, useNavigate } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from './api';
 import { useRealtime } from './realtime';
@@ -9,14 +9,16 @@ import { AgentManagerModal } from './components/AgentManagerModal';
 import { MonitorModal } from './components/MonitorModal';
 import { PluginManagerModal } from './components/PluginManagerModal';
 import { StatusBar } from './components/StatusBar';
+import { SettingsModal } from './components/SettingsModal';
+import { MCPModal } from './components/MCPModal';
+import { normalizeNotificationRoutes, writeBrowserRoutes } from './notificationSettings';
 import { fmtTime } from './components/common';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectPage from './pages/ProjectPage';
 import IssuePage from './pages/IssuePage';
-import CommitsPage from './pages/CommitsPage';
 
 
-function NotificationBell() {
+function NotificationBell({ onOpenSettings }: { onOpenSettings: () => void }) {
   const qc = useQueryClient();
   const nav = useNavigate();
   const [open, setOpen] = useState(false);
@@ -122,6 +124,17 @@ function NotificationBell() {
           <div className="panel-head">
             <b>🔔 消息通知 ({unreadCount} 未读)</b>
             <span className="grow" />
+            <button
+              type="button"
+              className="sm ghost"
+              title="打开通知渠道与事件路由设置"
+              onClick={() => {
+                setOpen(false);
+                onOpenSettings();
+              }}
+            >
+              ⚙️ 通知设置
+            </button>
             {unreadCount > 0 && (
               <button
                 type="button"
@@ -195,13 +208,102 @@ function NotificationBell() {
   );
 }
 
+function LegacyProjectViewRedirect({ kind }: { kind: 'commits' | 'prs' }) {
+  const { id } = useParams();
+  const [search] = useSearchParams();
+  const next = new URLSearchParams(search);
+  next.set(kind === 'commits' ? 'commits' : 'prs', '1');
+  return <Navigate to={`/projects/${id}?${next.toString()}`} replace />;
+}
+
+function SystemMenu({
+  onSettings,
+  onAutomation,
+  onMonitor,
+  onPlugins,
+  onAgents,
+  onMCP,
+}: {
+  onSettings: () => void;
+  onAutomation: () => void;
+  onMonitor: () => void;
+  onPlugins: () => void;
+  onAgents: () => void;
+  onMCP: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  const item = (label: string, handler: () => void, hint?: string) => (
+    <button
+      type="button"
+      className="dropdown-item"
+      title={hint}
+      onClick={() => {
+        setOpen(false);
+        handler();
+      }}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="dropdown-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className="ghost sm"
+        title="系统设置：全局设置、监控、插件、MCP/Agent、自动化"
+        onClick={() => setOpen((v) => !v)}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+      >
+        ⚙️
+      </button>
+      {open && (
+        <div className="dropdown-menu" style={{ minWidth: 190 }}>
+          {item('⚙️ 全局设置', onSettings, '通知、浏览器提醒、更新与自动化概览')}
+          {item('📡 监控中心', onMonitor, '查看监控状态、日志与通知配置')}
+          {item('🧩 插件管理', onPlugins, '启停插件、查看 README 与 config.json')}
+          {item('🤖 Agent 管理', onAgents, '管理 Agent、默认模型与运行参数')}
+          {item('🔌 MCP 接入', onMCP, '安装 MCP 到 IDE / Agent，选择 Stdio 或 HTTP')}
+          <div className="dropdown-divider" />
+          {item('⚡ 自动化规则', onAutomation, '管理全局与项目级自动化规则')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function App() {
   const qc = useQueryClient();
   useRealtime(qc);
   const [theme, toggleTheme] = useTheme();
+  const notificationConfigQ = useQuery({
+    queryKey: qk.monitorConfig,
+    queryFn: api.monitorConfig,
+    staleTime: 60_000,
+  });
+  useEffect(() => {
+    if (notificationConfigQ.data) {
+      writeBrowserRoutes(normalizeNotificationRoutes(notificationConfigQ.data.notificationRoutes));
+    }
+  }, [notificationConfigQ.data]);
   const [agentMgrOpen, setAgentMgrOpen] = useState(false);
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [pluginsOpen, setPluginsOpen] = useState(false);
+  const [mcpOpen, setMcpOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'general' | 'channels' | 'routes' | 'automation'>('general');
+  const [settingsFromMonitor, setSettingsFromMonitor] = useState(false);
 
 
   return (
@@ -211,22 +313,29 @@ export default function App() {
           xIssue
         </Link>
         <div id="crumbs" className="crumbs grow" />
-        <NotificationBell />
-        <button
-          className="ghost sm"
-          title="查看监控状态与最近8小时日志"
-          onClick={() => setMonitorOpen(true)}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
-        >
-          📡 监控
-        </button>
-        <button
-          className="ghost sm"
-          title="全局插件管理：启停、README 预览、config.json 编辑"
-          onClick={() => setPluginsOpen(true)}
-        >
-          🧩 插件
-        </button>
+        <NotificationBell
+          onOpenSettings={() => {
+            setSettingsFromMonitor(false);
+            setSettingsTab('routes');
+            setSettingsOpen(true);
+          }}
+        />
+        <SystemMenu
+          onSettings={() => {
+            setSettingsFromMonitor(false);
+            setSettingsTab('general');
+            setSettingsOpen(true);
+          }}
+          onAutomation={() => {
+            setSettingsFromMonitor(false);
+            setSettingsTab('automation');
+            setSettingsOpen(true);
+          }}
+          onMonitor={() => setMonitorOpen(true)}
+          onPlugins={() => setPluginsOpen(true)}
+          onAgents={() => setAgentMgrOpen(true)}
+          onMCP={() => setMcpOpen(true)}
+        />
         <button
           className="ghost sm"
           title={theme === 'dark' ? '切换为亮色模式' : '切换为暗色模式'}
@@ -235,27 +344,52 @@ export default function App() {
         >
           {theme === 'dark' ? '☀️' : '🌙'}
         </button>
-        <button
-          className="ghost sm"
-          title="管理 Agent、一键安装 MCP 到所有 IDE/Agent、绑定默认 Provider/模型"
-          onClick={() => setAgentMgrOpen(true)}
-        >
-          ⚙ MCP
-        </button>
       </header>
       <main className="main">
         <Routes>
           <Route path="/" element={<ProjectsPage />} />
           <Route path="/projects/:id" element={<ProjectPage />} />
-          <Route path="/projects/:id/commits" element={<CommitsPage />} />
+          <Route path="/projects/:id/commits" element={<LegacyProjectViewRedirect kind="commits" />} />
+          <Route path="/projects/:id/prs" element={<LegacyProjectViewRedirect kind="prs" />} />
           <Route path="/issues/:id" element={<IssuePage />} />
           <Route path="*" element={<div className="page empty">页面不存在</div>} />
         </Routes>
       </main>
       <StatusBar />
       {agentMgrOpen && <AgentManagerModal onClose={() => setAgentMgrOpen(false)} />}
-      {monitorOpen && <MonitorModal onClose={() => setMonitorOpen(false)} />}
+      {mcpOpen && <MCPModal onClose={() => setMcpOpen(false)} />}
+      {monitorOpen && (
+        <MonitorModal
+          onClose={() => setMonitorOpen(false)}
+          onOpenSettings={() => {
+            setMonitorOpen(false);
+            setSettingsFromMonitor(true);
+            setSettingsTab('channels');
+            setSettingsOpen(true);
+          }}
+        />
+      )}
       {pluginsOpen && <PluginManagerModal onClose={() => setPluginsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsModal
+          initialTab={settingsTab}
+          onOpenAgents={() => {
+            setSettingsOpen(false);
+            setAgentMgrOpen(true);
+          }}
+          onOpenMCP={() => {
+            setSettingsOpen(false);
+            setMcpOpen(true);
+          }}
+          onClose={() => {
+            setSettingsOpen(false);
+            if (settingsFromMonitor) {
+              setSettingsFromMonitor(false);
+              setMonitorOpen(true);
+            }
+          }}
+        />
+      )}
       <Toaster />
     </div>
   );

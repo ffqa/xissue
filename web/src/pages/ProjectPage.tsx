@@ -5,10 +5,11 @@ import { api, qk } from '../api';
 import { Crumbs, fmtTime, Modal } from '../components/common';
 import { LocalDirPickerModal } from '../components/LocalDirPicker';
 import { CherryPickModal } from '../components/CherryPickModal';
-import { PRListModal } from '../components/PRListModal';
+import { PRModal } from '../components/PRModal';
+import { CommitsModal } from '../components/CommitsModal';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
-import { getCommitWebUrl, getBranchWebUrl, commitPagePath } from '../gitUrls';
+import { getCommitWebUrl, getBranchWebUrl } from '../gitUrls';
 import { toast } from '../toast';
 import { copyText } from '../clipboard';
 import {
@@ -106,7 +107,7 @@ export default function ProjectPage() {
 
   const [watchRepoId, setWatchRepoId] = useState<number>(0);
   const [watchBranch, setWatchBranch] = useState('');
-  const [search] = useSearchParams();
+  const [search, setSearch] = useSearchParams();
 
   const [cpOpen, setCpOpen] = useState(false);
   const [cpInitRepoId, setCpInitRepoId] = useState<number | undefined>();
@@ -121,6 +122,8 @@ export default function ProjectPage() {
 
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [syncMenuOpen, setSyncMenuOpen] = useState(false);
+  const [prModalOpen, setPrModalOpen] = useState(false);
+  const [commitsModal, setCommitsModal] = useState<{ repoId?: number; branch?: string; sha?: string } | null>(null);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
 
@@ -158,6 +161,7 @@ export default function ProjectPage() {
   const [cfgAutoDevelopAuthors, setCfgAutoDevelopAuthors] = useState('');
   const [cfgAutoDevelopDailyLimit, setCfgAutoDevelopDailyLimit] = useState(5);
   const [cfgAutomationRules, setCfgAutomationRules] = useState<AutomationRule[]>([]);
+  const [cfgPullBranches, setCfgPullBranches] = useState('');
 
   // 规则配置表单状态
   const [newRuleOpen, setNewRuleOpen] = useState(false);
@@ -188,6 +192,7 @@ export default function ProjectPage() {
       autoDevelopAuthors?: string[];
       autoDevelopDailyLimit?: number;
       automationRules?: AutomationRule[];
+      pullBranches?: string[];
     }) => api.updateProject(id, b),
     onSuccess: (updated) => {
       qc.setQueryData(qk.project(id), updated);
@@ -313,7 +318,6 @@ export default function ProjectPage() {
     onError: (e) => toast.error((e as Error).message),
   });
 
-  const [prModalOpen, setPrModalOpen] = useState(false);
   const openPRsQ = useQuery({
     queryKey: qk.projectPRs(id, 'open'),
     queryFn: () => api.projectPRs(id, 'open'),
@@ -402,14 +406,32 @@ export default function ProjectPage() {
   const allIssues = issues.data ?? [];
   const watches = watchesQ.data ?? [];
 
-  // Older notifications linked to /projects/:id?watch=<id>. Route them to the
-  // dedicated commit page and highlight the watched tip instead of a modal.
+  // Deep links from notifications open the matching modal over the project
+  // instead of navigating to a separate full-width page.
   useEffect(() => {
     const watchID = Number(search.get('watch'));
-    if (!watchID || watches.length === 0) return;
-    const watch = watches.find((w) => w.id === watchID);
-    if (watch) nav(commitPagePath(id, watch.repoId, watch.branch, watch.lastSha), { replace: true });
-  }, [search, watches, id, nav]);
+    const wantsCommits = search.get('commits') === '1';
+    const wantsPRs = search.get('prs') === '1';
+    if (!watchID && !wantsCommits && !wantsPRs) return;
+    if (watchID && watches.length === 0) return;
+    if (wantsPRs) setPrModalOpen(true);
+    if (wantsCommits || watchID) {
+      const watch = watchID ? watches.find((w) => w.id === watchID) : undefined;
+      setCommitsModal({
+        repoId: watch?.repoId ?? (Number(search.get('repo')) || undefined),
+        branch: watch?.branch ?? (search.get('branch') || undefined),
+        sha: watch?.lastSha ?? (search.get('sha') || undefined),
+      });
+    }
+    const next = new URLSearchParams(search);
+    next.delete('watch');
+    next.delete('commits');
+    next.delete('repo');
+    next.delete('branch');
+    next.delete('sha');
+    next.delete('prs');
+    setSearch(next, { replace: true });
+  }, [search, watches, setSearch]);
 
   const doneIssues = allIssues.filter((it) => it.status === 'done');
   const filteredDoneIssues = doneIssues.filter((it) => {
@@ -537,21 +559,6 @@ export default function ProjectPage() {
                 >
                   🍒 Cherry-Pick
                 </button>
-                <button
-                  className="dropdown-item"
-                  onClick={() => {
-                    setSyncMenuOpen(false);
-                    api.syncWiki(id)
-                      .then((r) => {
-                        qc.invalidateQueries({ queryKey: qk.projectDocs(id) });
-                        toast.success(r.message || 'Wiki 同步完成');
-                      })
-                      .catch((e) => toast.error(e.message));
-                  }}
-                  title="拉取并同步 GitHub Wiki 仓库"
-                >
-                  🌐 同步 Wiki
-                </button>
               </div>
             </>
           )}
@@ -603,6 +610,7 @@ export default function ProjectPage() {
             setCfgAutoDevelopAuthors((p?.autoDevelopAuthors ?? []).join(', '));
             setCfgAutoDevelopDailyLimit(p?.autoDevelopDailyLimit || 5);
             setCfgAutomationRules(p?.automationRules ?? []);
+            setCfgPullBranches((p?.pullBranches ?? []).join(', '));
             setSettingsTab('mode');
             setSettingsOpen(true);
           }}
@@ -824,7 +832,7 @@ export default function ProjectPage() {
                             cursor: 'pointer',
                           }}
                           title={w.lastSha}
-                          onClick={() => nav(commitPagePath(id, w.repoId, w.branch, w.lastSha))}
+                          onClick={() => setCommitsModal({ repoId: w.repoId, branch: w.branch, sha: w.lastSha })}
                         >
                           {w.lastSha.slice(0, 7)}
                         </code>
@@ -837,7 +845,7 @@ export default function ProjectPage() {
                       className="small muted ellipsis grow"
                       style={{ cursor: 'pointer' }}
                       title={`点击查看详情: ${w.lastMessage || '无提交信息'}`}
-                      onClick={() => nav(commitPagePath(id, w.repoId, w.branch, w.lastSha))}
+                      onClick={() => setCommitsModal({ repoId: w.repoId, branch: w.branch, sha: w.lastSha })}
                     >
                       {w.lastMessage || '无提交信息'}{' '}
                       {w.lastAuthor && <span className="dim">({w.lastAuthor})</span>}
@@ -848,7 +856,7 @@ export default function ProjectPage() {
                     <button
                       className="sm ghost"
                       title="查看该分支的历史提交记录与详细信息"
-                      onClick={() => nav(commitPagePath(id, w.repoId, w.branch, w.lastSha))}
+                      onClick={() => setCommitsModal({ repoId: w.repoId, branch: w.branch, sha: w.lastSha })}
                     >
                       📜 提交记录
                     </button>
@@ -1272,6 +1280,7 @@ export default function ProjectPage() {
                     autoDevelopAuthors: cfgAutoDevelopAuthors.split(',').map((s) => s.trim().replace(/^@/, '')).filter(Boolean),
                     autoDevelopDailyLimit: cfgAutoDevelopDailyLimit,
                     automationRules: cfgAutomationRules,
+                    pullBranches: cfgPullBranches.split(',').map((s) => s.trim()).filter(Boolean),
                   })
                 }
               >
@@ -1437,6 +1446,19 @@ export default function ProjectPage() {
                   )}
               </div>
 
+              <label className="field">
+                拉取代码的分支（可选）
+                <input
+                  className="mono"
+                  value={cfgPullBranches}
+                  onChange={(e) => setCfgPullBranches(e.target.value)}
+                  placeholder="main, dev（留空 = 拉取全部远端分支）"
+                />
+                <span className="small dim">
+                  💡 只拉取这里列出的分支，避免把已合并/废弃的远端分支重新抓回本地；留空保持原有全量拉取。
+                </span>
+              </label>
+
               <label className="row" style={{ gap: 8, cursor: 'pointer', marginTop: 4 }}>
                 <input
                   type="checkbox"
@@ -1599,6 +1621,9 @@ export default function ProjectPage() {
                 <span style={{ marginLeft: 6 }}>
                   后台每次轮询 PR 时，将按序执行：<b>Layer 1 (A)</b> 声明式无代码规则 → <b>Layer 2 (B)</b> 项目级 Hooks 脚本 → <b>Layer 3 (C)</b> 规范化生态插件。
                 </span>
+                <div className="small" style={{ marginTop: 6, color: 'var(--text-3)' }}>
+                  当前规则保存在本项目，<b>仅对本项目生效</b>；跨项目的通用能力请使用顶部「🧩 插件」。
+                </div>
               </div>
 
               {/* Layer 1: A 声明式规则 */}
@@ -2118,10 +2143,14 @@ export default function ProjectPage() {
         </Modal>
       )}
 
-      {prModalOpen && (
-        <PRListModal
+      {prModalOpen && <PRModal projectId={id} onClose={() => setPrModalOpen(false)} />}
+      {commitsModal && (
+        <CommitsModal
           projectId={id}
-          onClose={() => setPrModalOpen(false)}
+          repoId={commitsModal.repoId}
+          branch={commitsModal.branch}
+          sha={commitsModal.sha}
+          onClose={() => setCommitsModal(null)}
         />
       )}
 

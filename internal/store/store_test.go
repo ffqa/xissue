@@ -143,3 +143,41 @@ func TestDeleteProjectCascading(t *testing.T) {
 	}
 }
 
+func TestProjectPullBranches(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer st.Close()
+
+	p, err := st.CreateProject(ctx, "Branches", "desc")
+	if err != nil {
+		t.Fatalf("CreateProject: %v", err)
+	}
+	if p.PullBranches == nil || len(p.PullBranches) != 0 {
+		t.Fatalf("expected empty pull branches, got %#v", p.PullBranches)
+	}
+	branches := []string{" main ", "dev", ""}
+	updated, err := st.UpdateProject(ctx, p.ID, store.ProjectPatch{PullBranches: &branches})
+	if err != nil {
+		t.Fatalf("UpdateProject: %v", err)
+	}
+	want := []string{"main", "dev"}
+	if len(updated.PullBranches) != len(want) {
+		t.Fatalf("pull branches = %#v, want %#v", updated.PullBranches, want)
+	}
+	for i := range want {
+		if updated.PullBranches[i] != want[i] {
+			t.Fatalf("pull branches = %#v, want %#v", updated.PullBranches, want)
+		}
+	}
+	got, err := st.GetProject(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("GetProject: %v", err)
+	}
+	if len(got.PullBranches) != 2 || got.PullBranches[0] != "main" || got.PullBranches[1] != "dev" {
+		t.Fatalf("re-fetched pull branches = %#v", got.PullBranches)
+	}
+}

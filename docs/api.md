@@ -34,6 +34,8 @@ interface Project {
   devMode: DevMode;        // "single_main" (默认直合本地 main) | "main_dev" (必须提 PR 到 dev)
   targetBranch: string;    // 默认目标分支，如 "main" 或 "dev"
   autoPrOnConfirm: boolean;
+  pullBranches: string[];  // 拉取代码时只更新这些分支，空数组=全部
+  automationRules: AutomationRule[];
   repos: Repo[];
   createdAt: string; updatedAt: string;
 }
@@ -106,6 +108,8 @@ interface RunEvent {
 |---|---|---|
 | GET | `/api/health` | `{ ok, version, editorUrlTemplate }`。`editorUrlTemplate` 如 `vscode://file{path}`，前端替换 `{path}` 为绝对路径 |
 | GET | `/api/status` | 实时运行状态：版本、PID、uptime、堆内存、进程 CPU、磁盘、GC、goroutine、自动更新状态 |
+| GET / PATCH | `/api/settings` | 全局设置；PATCH `{ autoUpdate?, defaultAgent?, globalAutomationRules? }`（全局自动化规则支持 `projectIds` 限定项目，空数组表示全部项目） |
+| GET / PUT / PATCH | `/api/monitor/config` | 监控与通知配置；`notificationRoutes` 为按事件分通道的路由表 |
 | GET | `/api/plugins` | 已安装插件 → `PluginInfo[]`（`apiVersion`、`events`、`permissions`、`enabled`、`hasReadme`、`hasConfig`、`error`）；CLI 为 `xissue plugin list` |
 | PATCH | `/api/plugins/{id}` | `{ enabled }` 即时启用/停用（写/删 `.disabled`）→ `PluginInfo[]`；manifest 无效时不能启用 |
 | GET | `/api/plugins/{id}/readme` | `{ name, path, content }`，预览插件 README |

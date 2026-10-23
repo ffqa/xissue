@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/xpier/xissue/internal/domain"
 	"gopkg.in/yaml.v3"
 )
 
@@ -50,22 +51,27 @@ type MonitorConfig struct {
 	SyncIssues        bool   `yaml:"syncIssues" json:"syncIssues"`                                 // 全局自动同步各项目的远程 Issue
 	SyncIntervalMin   int    `yaml:"syncIntervalMin" json:"syncIntervalMin"`                       // 自动同步间隔（分钟），默认 10
 	AutoDevelopIssues bool   `yaml:"autoDevelopIssues" json:"autoDevelopIssues"`                   // 全局自动开发判定为 Bug/需求的 Issue
+	// NotificationRoutes maps notification event kinds to external channels
+	// (browser/telegram/webhook). An empty map preserves legacy "send all".
+	NotificationRoutes map[string][]string `yaml:"notificationRoutes,omitempty" json:"notificationRoutes,omitempty"`
 }
 
 // Config is the root configuration.
 type Config struct {
-	mu                sync.RWMutex
-	Path              string                 `yaml:"-" json:"-"`
-	Listen            string                 `yaml:"listen"`
-	Token             string                 `yaml:"token"`
-	DataDir           string                 `yaml:"dataDir"`
-	EditorURLTemplate string                 `yaml:"editorUrlTemplate"`
-	ExportMarkdown    bool                   `yaml:"exportMarkdown"`
-	AutoUpdate        bool                   `yaml:"autoUpdate" json:"autoUpdate"`
-	Agents            map[string]AgentConfig `yaml:"agents"`
-	Permissions       PermissionPolicy       `yaml:"permissions"`
-	Runner            RunnerConfig           `yaml:"runner"`
-	Monitor           MonitorConfig          `yaml:"monitor"`
+	mu                    sync.RWMutex
+	Path                  string                  `yaml:"-" json:"-"`
+	Listen                string                  `yaml:"listen"`
+	Token                 string                  `yaml:"token"`
+	DataDir               string                  `yaml:"dataDir"`
+	EditorURLTemplate     string                  `yaml:"editorUrlTemplate"`
+	ExportMarkdown        bool                    `yaml:"exportMarkdown"`
+	AutoUpdate            bool                    `yaml:"autoUpdate" json:"autoUpdate"`
+	DefaultAgent          string                  `yaml:"defaultAgent,omitempty" json:"defaultAgent,omitempty"`
+	Agents                map[string]AgentConfig  `yaml:"agents"`
+	Permissions           PermissionPolicy        `yaml:"permissions"`
+	Runner                RunnerConfig            `yaml:"runner"`
+	Monitor               MonitorConfig           `yaml:"monitor"`
+	GlobalAutomationRules []domain.AutomationRule `yaml:"globalAutomationRules,omitempty" json:"globalAutomationRules,omitempty"`
 }
 
 func cloneAgent(ac AgentConfig) AgentConfig {
@@ -145,15 +151,16 @@ const MaskedSecret = "******"
 
 // MonitorPatch updates only the supplied monitor fields.
 type MonitorPatch struct {
-	Enabled           *bool   `json:"enabled"`
-	ActiveHours       *string `json:"activeHours"`
-	PublicURL         *string `json:"publicUrl"`
-	TelegramBotToken  *string `json:"telegramBotToken"`
-	TelegramChatID    *string `json:"telegramChatId"`
-	WebhookURL        *string `json:"webhookUrl"`
-	SyncIssues        *bool   `json:"syncIssues"`
-	SyncIntervalMin   *int    `json:"syncIntervalMin"`
-	AutoDevelopIssues *bool   `json:"autoDevelopIssues"`
+	Enabled            *bool                `json:"enabled"`
+	ActiveHours        *string              `json:"activeHours"`
+	PublicURL          *string              `json:"publicUrl"`
+	TelegramBotToken   *string              `json:"telegramBotToken"`
+	TelegramChatID     *string              `json:"telegramChatId"`
+	WebhookURL         *string              `json:"webhookUrl"`
+	SyncIssues         *bool                `json:"syncIssues"`
+	SyncIntervalMin    *int                 `json:"syncIntervalMin"`
+	AutoDevelopIssues  *bool                `json:"autoDevelopIssues"`
+	NotificationRoutes *map[string][]string `json:"notificationRoutes"`
 }
 
 // MaskedMonitorSnapshot returns monitor settings with credentials masked.
@@ -333,6 +340,7 @@ func Load(path string) (*Config, error) {
 		cfg.Runner.MaxConcurrent = 1
 	}
 	cfg.Monitor.SyncIntervalMin = normalizeSyncInterval(cfg.Monitor.SyncIntervalMin)
+	cfg.Monitor.NotificationRoutes = sanitizeNotificationRoutes(cfg.Monitor.NotificationRoutes)
 	return cfg, nil
 }
 
@@ -423,6 +431,7 @@ func (c *Config) UpdateMonitor(m MonitorConfig) error {
 	m.ActiveHours = strings.TrimSpace(m.ActiveHours)
 	m.PublicURL = strings.TrimSpace(m.PublicURL)
 	m.SyncIntervalMin = normalizeSyncInterval(m.SyncIntervalMin)
+	m.NotificationRoutes = sanitizeNotificationRoutes(m.NotificationRoutes)
 	c.Monitor = m
 	return c.saveLocked()
 }
@@ -463,9 +472,82 @@ func (c *Config) PatchMonitor(p MonitorPatch) error {
 	if p.AutoDevelopIssues != nil {
 		m.AutoDevelopIssues = *p.AutoDevelopIssues
 	}
+	if p.NotificationRoutes != nil {
+		m.NotificationRoutes = sanitizeNotificationRoutes(*p.NotificationRoutes)
+	}
 	m.SyncIntervalMin = normalizeSyncInterval(m.SyncIntervalMin)
 	c.Monitor = m
 	return c.saveLocked()
+}
+
+// NotificationEventKinds are the event kinds exposed in the routing UI.
+var NotificationEventKinds = []string{
+	"run_done", "permission", "pr_status", "branch_push",
+	"automation", "update", "test",
+}
+
+var notificationChannels = map[string]bool{
+	"browser":  true,
+	"telegram": true,
+	"webhook":  true,
+}
+
+func sanitizeNotificationRoutes(in map[string][]string) map[string][]string {
+	if len(in) == 0 {
+		return nil
+	}
+	known := make(map[string]bool, len(NotificationEventKinds))
+	for _, kind := range NotificationEventKinds {
+		known[kind] = true
+	}
+	out := make(map[string][]string, len(in))
+	for kind, channels := range in {
+		kind = strings.TrimSpace(kind)
+		if !known[kind] {
+			continue
+		}
+		seen := map[string]bool{}
+		clean := make([]string, 0, len(channels))
+		for _, ch := range channels {
+			ch = strings.TrimSpace(ch)
+			if !notificationChannels[ch] || seen[ch] {
+				continue
+			}
+			seen[ch] = true
+			clean = append(clean, ch)
+		}
+		out[kind] = clean
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// GlobalAutomationRulesSnapshot returns a defensive copy of global rules.
+func (c *Config) GlobalAutomationRulesSnapshot() []domain.AutomationRule {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]domain.AutomationRule, len(c.GlobalAutomationRules))
+	for i, rule := range c.GlobalAutomationRules {
+		rule.Actions = append([]domain.RuleAction(nil), rule.Actions...)
+		rule.ProjectIDs = append([]int64(nil), rule.ProjectIDs...)
+		out[i] = rule
+	}
+	return out
+}
+
+// SetGlobalAutomationRules replaces the global automation rule set.
+func (c *Config) SetGlobalAutomationRules(rules []domain.AutomationRule) {
+	copied := make([]domain.AutomationRule, len(rules))
+	for i, rule := range rules {
+		rule.Actions = append([]domain.RuleAction(nil), rule.Actions...)
+		rule.ProjectIDs = append([]int64(nil), rule.ProjectIDs...)
+		copied[i] = rule
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.GlobalAutomationRules = copied
 }
 
 // Path helpers.
@@ -474,6 +556,20 @@ func (c *Config) MirrorsDir() string { return filepath.Join(c.DataDir, "mirrors"
 func (c *Config) RunsDir() string    { return filepath.Join(c.DataDir, "runs") }
 func (c *Config) IssuesDir() string  { return filepath.Join(c.DataDir, "issues") }
 func (c *Config) PluginsDir() string { return filepath.Join(c.DataDir, "plugins") }
+
+// DefaultAgentName returns the globally preferred agent, if configured.
+func (c *Config) DefaultAgentName() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return strings.TrimSpace(c.DefaultAgent)
+}
+
+// SetDefaultAgent stores the preferred agent name.
+func (c *Config) SetDefaultAgent(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.DefaultAgent = strings.TrimSpace(name)
+}
 
 // AutoUpdateEnabled reports whether the hourly self-update check is enabled.
 func (c *Config) AutoUpdateEnabled() bool {

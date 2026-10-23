@@ -28,6 +28,7 @@ export interface Project {
   autoDevelopAuthors: string[];
   autoDevelopDailyLimit: number;
   automationRules: AutomationRule[];
+  pullBranches: string[];
   repos: Repo[];
   createdAt: string;
   updatedAt: string;
@@ -56,6 +57,7 @@ export interface AutomationRule {
   trigger: 'pr_comment' | 'pr_review' | 'branch_push';
   conditions: RuleConditions;
   actions: RuleAction[];
+  projectIds?: number[];
 }
 
 export interface HookStatus {
@@ -445,6 +447,13 @@ export interface MonitorConfig {
   syncIssues: boolean;
   syncIntervalMin: number;
   autoDevelopIssues: boolean;
+  notificationRoutes?: Record<string, string[]>;
+}
+
+export interface AppSettings {
+  autoUpdate: boolean;
+  defaultAgent: string;
+  globalAutomationRules: AutomationRule[];
 }
 
 export interface MonitorStatus {

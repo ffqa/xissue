@@ -176,3 +176,21 @@ func TestAutoUpdateDefaultsOn(t *testing.T) {
 		t.Fatal("legacy config without autoUpdate should keep default true")
 	}
 }
+
+func TestNotificationRouteSanitizing(t *testing.T) {
+	routes := map[string][]string{
+		"pr_status":   {"telegram", "webhook", "telegram", " nope "},
+		"unknown":     {"telegram"},
+		"branch_push": {},
+	}
+	got := sanitizeNotificationRoutes(routes)
+	if len(got) != 2 {
+		t.Fatalf("sanitized routes = %#v, want two known events", got)
+	}
+	if len(got["pr_status"]) != 2 || got["pr_status"][0] != "telegram" || got["pr_status"][1] != "webhook" {
+		t.Fatalf("pr_status routes = %#v", got["pr_status"])
+	}
+	if got["branch_push"] == nil || len(got["branch_push"]) != 0 {
+		t.Fatalf("branch_push should stay empty, got %#v", got["branch_push"])
+	}
+}

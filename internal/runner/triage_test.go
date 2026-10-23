@@ -25,6 +25,7 @@ func TestClassifyIssue(t *testing.T) {
 		{"bug keyword wins over suggestion", "App crashes when opening settings", "建议修复", nil, IssueKindBug, true},
 		{"feature keyword", "请增加导出功能", "", nil, IssueKindFeature, true},
 		{"feature phrase before bug keyword", "Add support for error handling", "", nil, IssueKindFeature, true},
+		{"feature request with should be able to", "In the global settings, agents should also be able to have assigned identities,", "The default agent for reviewing PRs. Only this makes sense.", nil, IssueKindFeature, true},
 		{"suggestion keyword", "建议增加深色模式", "", nil, IssueKindSuggestion, false},
 		{"unknown", "hello", "", nil, IssueKindUnknown, false},
 	}

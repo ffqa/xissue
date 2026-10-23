@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.21` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.22` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.21`
+- **最新发布版本**: `v0.2.22`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -166,6 +166,12 @@
 - **全局自动化规则**：`~/.xissue/config.yaml` 新增 `globalAutomationRules`，所有项目共享；规则可留空 `projectIds` 作用于全部项目，也可限定项目。项目内规则仍会叠加执行；
 - **设置入口**：全局设置「⚡ 自动化」页支持新增/启停/删除全局规则，修改即时保存；`Ctrl/Cmd+S` 可手动保存当前页；
 - **弹窗体验**：全局设置、PR 与提交记录弹窗均支持真实全屏（100vh）和一键退出，Esc 直接关闭；全局设置另支持 `Ctrl/Cmd+S` 保存、`Ctrl/Cmd+Shift+F` 全屏；PR 与提交记录改为与知识库同宽的弹窗，不再跳转独立全屏页面。
+
+### 2.14 模型探测诊断、Codex ACP 迁移与服务重启校验（v0.2.22）
+- **Codex ACP 包迁移**：`@zed-industries/codex-acp` 已废弃，且其平台可选依赖安装不稳定会以 exit status 1 退出；默认 Agent 与旧配置自动迁移到维护中的 `@agentclientprotocol/codex-acp`；
+- **探测错误可诊断**：ACP 客户端保留子进程 stderr 尾部（最多 12 行 / 8KB），启动或 initialize 失败时把真实错误和命令行一起返回给 Agent 管理界面，不再只显示 `agent exited: exit status 1`；
+- **服务重启校验**：`xissue service restart` 不再只检查 7789 端口是否监听；必须出现新的监听 PID 才算成功，否则先停止占用端口的旧进程再重试，最后重新注册服务，避免旧进程占着端口造成“假重启”。
+
 
 ---
 

@@ -440,7 +440,7 @@ func (r *Runner) ListAgentModels(ctx context.Context, agentName string, refresh 
 			Dir:     probeDir,
 		}, acp.Handlers{})
 		if err != nil {
-			probeErr = fmt.Sprintf("启动 Agent 失败: %v", err)
+			probeErr = fmt.Sprintf("启动 Agent 失败 (%s): %v", strings.Join(append([]string{ac.Command}, ac.Args...), " "), err)
 		} else {
 			defer client.Close()
 			if err := client.NewSession(pctx, probeDir); err != nil {

@@ -286,7 +286,7 @@ func Default() *Config {
 		Agents: map[string]AgentConfig{
 			"opencode": {Command: "opencode", Args: []string{"acp"}, MemoryMB: 500},
 			"omp":      {Command: "omp", Args: []string{"acp"}, MemoryMB: 500},
-			"codex":    {Command: "npx", Args: []string{"-y", "@zed-industries/codex-acp"}, MemoryMB: 200},
+			"codex":    {Command: "npx", Args: []string{"-y", "@agentclientprotocol/codex-acp"}, MemoryMB: 200},
 		},
 		Permissions: PermissionPolicy{
 			AutoAllowKinds:    []string{"read", "search", "think", "fetch", "edit"},
@@ -342,6 +342,27 @@ func Load(path string) (*Config, error) {
 	cfg.Monitor.SyncIntervalMin = normalizeSyncInterval(cfg.Monitor.SyncIntervalMin)
 	cfg.Monitor.NotificationRoutes = sanitizeNotificationRoutes(cfg.Monitor.NotificationRoutes)
 	return cfg, nil
+}
+
+// migrateDeprecatedAgents upgrades the retired Zed Codex ACP npm package to
+// the maintained Agent Client Protocol package. The old package's optional
+// platform binaries are no longer installed reliably and exit with status 1.
+func migrateDeprecatedAgents(agents map[string]AgentConfig) {
+	for name, ac := range agents {
+		if ac.Command != "npx" {
+			continue
+		}
+		changed := false
+		for i, arg := range ac.Args {
+			if strings.HasPrefix(arg, "@zed-industries/codex-acp") {
+				ac.Args[i] = "@agentclientprotocol/codex-acp"
+				changed = true
+			}
+		}
+		if changed {
+			agents[name] = ac
+		}
+	}
 }
 
 func normalizeSyncInterval(v int) int {

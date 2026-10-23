@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 const ProtocolVersion = 1
@@ -58,12 +59,12 @@ type Options struct {
 }
 
 type rpcMsg struct {
-	JSONRPC string          `json:"jsonrpc"`
+	JSONRPC string           `json:"jsonrpc"`
 	ID      *json.RawMessage `json:"id,omitempty"`
-	Method  string          `json:"method,omitempty"`
-	Params  json.RawMessage `json:"params,omitempty"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
+	Method  string           `json:"method,omitempty"`
+	Params  json.RawMessage  `json:"params,omitempty"`
+	Result  json.RawMessage  `json:"result,omitempty"`
+	Error   *rpcError        `json:"error,omitempty"`
 }
 
 type rpcError struct {
@@ -95,6 +96,11 @@ type Client struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	suppress atomic.Bool // drop replayed updates during session/load
+
+	stderrMu   sync.Mutex
+	stderrTail []string
+	stderrSize int
+	stderrDone chan struct{}
 
 	SessionID    string
 	CanLoad      bool
@@ -134,7 +140,7 @@ func Start(ctx context.Context, o Options, h Handlers) (*Client, error) {
 		cancel()
 		return nil, fmt.Errorf("start %s: %w", o.Command, err)
 	}
-	c := &Client{cmd: cmd, stdin: stdin, pending: map[int64]chan rpcMsg{}, h: h, done: make(chan struct{}), ctx: cctx, cancel: cancel}
+	c := &Client{cmd: cmd, stdin: stdin, pending: map[int64]chan rpcMsg{}, h: h, done: make(chan struct{}), stderrDone: make(chan struct{}), ctx: cctx, cancel: cancel}
 	go c.readLoop(stdout)
 	go c.stderrLoop(stderr)
 	go func() {
@@ -370,10 +376,49 @@ func (c *Client) call(ctx context.Context, method string, params any, out any) e
 }
 
 func (c *Client) exitError() error {
-	if c.exitErr != nil {
-		return fmt.Errorf("agent exited: %w", c.exitErr)
+	if c.stderrDone != nil {
+		select {
+		case <-c.stderrDone:
+		case <-time.After(250 * time.Millisecond):
+		}
 	}
-	return errors.New("agent exited")
+	base := errors.New("agent exited")
+	if c.exitErr != nil {
+		base = fmt.Errorf("agent exited: %w", c.exitErr)
+	}
+	if detail := c.stderrSummary(); detail != "" {
+		return fmt.Errorf("%w: %s", base, detail)
+	}
+	return base
+}
+
+func (c *Client) rememberStderr(line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	if len(line) > 2048 {
+		line = line[:2048] + "…"
+	}
+	const maxLines = 12
+	const maxBytes = 8 * 1024
+	c.stderrMu.Lock()
+	defer c.stderrMu.Unlock()
+	c.stderrTail = append(c.stderrTail, line)
+	c.stderrSize += len(line)
+	for len(c.stderrTail) > maxLines || c.stderrSize > maxBytes {
+		c.stderrSize -= len(c.stderrTail[0])
+		c.stderrTail = c.stderrTail[1:]
+	}
+}
+
+func (c *Client) stderrSummary() string {
+	c.stderrMu.Lock()
+	defer c.stderrMu.Unlock()
+	if len(c.stderrTail) == 0 {
+		return ""
+	}
+	return strings.Join(c.stderrTail, " | ")
 }
 
 func (c *Client) failPending() {
@@ -424,17 +469,22 @@ func (c *Client) readLoop(r io.Reader) {
 }
 
 func (c *Client) stderrLoop(r io.Reader) {
+	if c.stderrDone != nil {
+		defer close(c.stderrDone)
+	}
 	defer func() {
 		_ = recover()
 	}()
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for sc.Scan() {
+		line := sc.Text()
+		c.rememberStderr(line)
 		h := c.handlers()
 		if h.OnEvent != nil {
 			func() {
 				defer func() { _ = recover() }()
-				h.OnEvent(Event{Type: "stderr", Data: map[string]any{"text": sc.Text()}})
+				h.OnEvent(Event{Type: "stderr", Data: map[string]any{"text": line}})
 			}()
 		}
 	}

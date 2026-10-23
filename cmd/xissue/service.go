@@ -457,21 +457,34 @@ func restartService() {
 
 	if runtime.GOOS == "darwin" {
 		uid := os.Getuid()
-		// 优先委托 launchd 进行平滑重载 (-k: kill old process & restart immediately)
-		if err := exec.Command("launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/%s", uid, serviceLabel)).Run(); err == nil {
-			// 等待服务端口就绪（最多 3 秒）
-			for i := 0; i < 15; i++ {
-				time.Sleep(200 * time.Millisecond)
-				if isPortListening(7789) {
-					fmt.Printf("✓ 已重启服务: %s\n", serviceLabel)
-					return
-				}
+		before := listenerPIDs(7789)
+		kickstart := func() error {
+			return exec.Command("launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/%s", uid, serviceLabel)).Run()
+		}
+		// 优先委托 launchd 进行平滑重载 (-k: kill old process & restart immediately).
+		// 注意：仅检查端口是否监听会被旧进程占用的端口骗过，必须确认监听 PID 已变化。
+		if err := kickstart(); err == nil {
+			if waitForListenerRestart(7789, before, 5*time.Second) {
+				fmt.Printf("✓ 已重启服务: %s\n", serviceLabel)
+				return
+			}
+			fmt.Println("⚠️ launchd 已响应，但端口仍由旧进程占用，正在停止旧进程后重试...")
+		} else {
+			fmt.Println("launchd 未响应重启请求，正在停止旧进程后重试...")
+		}
+
+		// 清理占用端口的旧进程（可能是升级前手动启动、brew services 或
+		// 其他残留实例），再让 launchd 重新拉起当前服务。
+		killPort(7789)
+		if err := kickstart(); err == nil {
+			if waitForListenerRestart(7789, before, 5*time.Second) {
+				fmt.Printf("✓ 已重启服务: %s\n", serviceLabel)
+				return
 			}
 		}
 
-		// 若 kickstart 失败或超时，说明服务未加载或端口异常，进行安全清理后重新注册
-		fmt.Println("服务未响应，正在进行平滑清理并重新启动...")
-		killPort(7789)
+		// 最后兜底：重新注册服务。
+		fmt.Println("服务仍未接管端口，正在重新安装并启动服务...")
 		installService()
 		return
 	}
@@ -489,9 +502,51 @@ func restartService() {
 	fmt.Println("请手动重启 xissue 进程。")
 }
 
-func isPortListening(port int) bool {
+func listenerPIDs(port int) []int {
 	out, err := exec.Command("lsof", "-ti", fmt.Sprintf("tcp:%d", port), "-sTCP:LISTEN").CombinedOutput()
-	return err == nil && len(strings.TrimSpace(string(out))) > 0
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, field := range strings.Fields(string(out)) {
+		if pid, err := strconv.Atoi(field); err == nil && pid > 0 {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
+}
+
+func isPortListening(port int) bool {
+	return len(listenerPIDs(port)) > 0
+}
+
+// waitForListenerRestart waits until at least one listener PID differs from
+// the snapshot taken before the restart. A still-listening old PID is not a
+// successful restart.
+func waitForListenerRestart(port int, before []int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if hasNewListener(before, listenerPIDs(port)) {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func hasNewListener(before, now []int) bool {
+	old := make(map[int]bool, len(before))
+	for _, pid := range before {
+		old[pid] = true
+	}
+	for _, pid := range now {
+		if !old[pid] {
+			return true
+		}
+	}
+	return false
 }
 
 func checkPort(port int) {
@@ -504,17 +559,10 @@ func checkPort(port int) {
 }
 
 func killPort(port int) {
-	// 仅查找真正处于 LISTEN 状态的监听进程，避免误杀连接中的客户端 socket
-	out, err := exec.Command("lsof", "-ti", fmt.Sprintf("tcp:%d", port), "-sTCP:LISTEN").CombinedOutput()
-	if err != nil || len(strings.TrimSpace(string(out))) == 0 {
+	// 仅查找真正处于 LISTEN 状态的监听进程，避免误杀连接中的客户端 socket。
+	pids := listenerPIDs(port)
+	if len(pids) == 0 {
 		return
-	}
-
-	pids := []int{}
-	for _, pidStr := range strings.Fields(string(out)) {
-		if pid, err := strconv.Atoi(pidStr); err == nil && pid > 0 {
-			pids = append(pids, pid)
-		}
 	}
 
 	// 优先发送 SIGTERM 优雅退出

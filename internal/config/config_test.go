@@ -194,3 +194,21 @@ func TestNotificationRouteSanitizing(t *testing.T) {
 		t.Fatalf("branch_push should stay empty, got %#v", got["branch_push"])
 	}
 }
+
+func TestMigrateDeprecatedCodexACP(t *testing.T) {
+	agents := map[string]AgentConfig{
+		"codex": {Command: "npx", Args: []string{"-y", "@zed-industries/codex-acp"}},
+		"other": {Command: "npx", Args: []string{"-y", "@zed-industries/codex-acp@0.16.0"}},
+		"keep":  {Command: "opencode", Args: []string{"acp"}},
+	}
+	migrateDeprecatedAgents(agents)
+	if got := agents["codex"].Args[1]; got != "@agentclientprotocol/codex-acp" {
+		t.Fatalf("codex arg = %q", got)
+	}
+	if got := agents["other"].Args[1]; got != "@agentclientprotocol/codex-acp" {
+		t.Fatalf("versioned arg = %q", got)
+	}
+	if got := agents["keep"].Args[0]; got != "acp" {
+		t.Fatalf("unrelated agent changed: %q", got)
+	}
+}

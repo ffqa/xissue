@@ -234,7 +234,7 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
             <input
               className="mono"
               value={argsText}
-              placeholder="例如：acp 或 -y @zed-industries/codex-acp"
+              placeholder="例如：acp 或 -y @agentclientprotocol/codex-acp"
               onChange={(e) => setArgsText(e.target.value)}
             />
           </label>

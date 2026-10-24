@@ -26,6 +26,7 @@ import type {
   PluginInfo,
   PluginReadme,
   Project,
+  ProjectReadme,
   RemotePR,
   Repo,
   RepoChanges,
@@ -280,6 +281,7 @@ export const api = {
 
   // 知识库 (Wiki & Docs)
   projectDocs: (projectId: number) => get<DocItem[]>(`/api/projects/${projectId}/docs`),
+  projectReadmes: (projectId: number) => get<ProjectReadme[]>(`/api/projects/${projectId}/readmes`),
   docDetail: (projectId: number, docId: string) =>
     get<DocDetail>(`/api/projects/${projectId}/docs/detail?${q({ docId })}`),
   syncWiki: (projectId: number, repoId?: number) =>
@@ -310,6 +312,7 @@ export const qk = {
   pluginConfig: (id: string) => ['pluginConfig', id] as const,
   projectPRs: (projectId: number, state?: string) => ['projectPRs', projectId, state ?? 'open'] as const,
   projectDocs: (projectId: number) => ['projectDocs', projectId] as const,
+  projectReadmes: (projectId: number) => ['projectReadmes', projectId] as const,
   docDetail: (projectId: number, docId: string) => ['docDetail', projectId, docId] as const,
   watches: (projectId: number) => ['watches', projectId] as const,
   repoBranches: (repoId: number) => ['repoBranches', repoId] as const,

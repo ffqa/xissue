@@ -267,6 +267,7 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/plugins/{id}/config", s.handlePluginConfig)
 
 	m.HandleFunc("GET /api/projects/{id}/docs", s.handleListProjectDocs)
+	m.HandleFunc("GET /api/projects/{id}/readmes", s.handleListProjectReadmes)
 	m.HandleFunc("GET /api/projects/{id}/docs/detail", s.handleGetProjectDocDetail)
 	m.HandleFunc("POST /api/projects/{id}/docs/sync-wiki", s.handleSyncProjectWiki)
 	m.HandleFunc("POST /api/projects/{id}/docs/search", s.handleSearchProjectDocs)
@@ -1948,6 +1949,28 @@ func (s *Server) handleListProjectDocs(w http.ResponseWriter, r *http.Request) {
 		docs = []domain.DocItem{}
 	}
 	writeJSON(w, http.StatusOK, docs)
+}
+
+func (s *Server) handleListProjectReadmes(w http.ResponseWriter, r *http.Request) {
+	pid, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	p, err := s.st.GetProject(r.Context(), pid)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	readmes, err := knowledge.ProjectReadmes(r.Context(), s.cfg.DataDir, p)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if readmes == nil {
+		readmes = []domain.ProjectReadme{}
+	}
+	writeJSON(w, http.StatusOK, readmes)
 }
 
 func (s *Server) handleGetProjectDocDetail(w http.ResponseWriter, r *http.Request) {

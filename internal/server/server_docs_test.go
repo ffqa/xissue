@@ -79,6 +79,23 @@ func TestDocsAPIAndMCP(t *testing.T) {
 		t.Fatalf("expected at least 2 docs, got %d", len(docs))
 	}
 
+	// 1b. Test GET /api/projects/{id}/readmes
+	readmeReq := httptest.NewRequest("GET", "/api/projects/1/readmes", nil)
+	readmeReq.Host = "127.0.0.1:7789"
+	readmeReq.Header.Set("X-XIssue", "1")
+	readmeW := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(readmeW, readmeReq)
+	if readmeW.Code != http.StatusOK {
+		t.Fatalf("GET readmes returned %d: %s", readmeW.Code, readmeW.Body.String())
+	}
+	var readmes []domain.ProjectReadme
+	if err := json.Unmarshal(readmeW.Body.Bytes(), &readmes); err != nil {
+		t.Fatalf("unmarshal readmes: %v", err)
+	}
+	if len(readmes) != 1 || !readmes[0].Found || !strings.Contains(readmes[0].Content, "DocProj Readme") {
+		t.Fatalf("readmes = %+v", readmes)
+	}
+
 	// 2. Test GET /api/projects/{id}/docs/detail
 	detailReq := httptest.NewRequest("GET", "/api/projects/1/docs/detail?docId="+docs[0].ID, nil)
 	detailReq.Host = "127.0.0.1:7789"

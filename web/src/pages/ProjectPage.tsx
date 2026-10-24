@@ -9,6 +9,7 @@ import { PRModal } from '../components/PRModal';
 import { CommitsModal } from '../components/CommitsModal';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
+import { ProjectReadmePanel } from '../components/ProjectReadmePanel';
 import { getCommitWebUrl, getBranchWebUrl } from '../gitUrls';
 import { toast } from '../toast';
 import { copyText } from '../clipboard';
@@ -226,6 +227,7 @@ export default function ProjectPage() {
   const refreshProject = () => {
     qc.invalidateQueries({ queryKey: qk.project(id) });
     qc.invalidateQueries({ queryKey: qk.projects });
+    qc.invalidateQueries({ queryKey: qk.projectReadmes(id) });
   };
 
   const addRepo = useMutation({
@@ -669,6 +671,8 @@ export default function ProjectPage() {
           )}
         </div>
       </div>
+
+      <ProjectReadmePanel projectId={id} onOpenKnowledge={() => setKnowledgeOpen(true)} />
 
       {/* 仓库与分支监控双栏面板 */}
       <div

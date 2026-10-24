@@ -62,11 +62,14 @@ flowchart TD
 
 | 事件 | 支持执行的 Action |
 | :--- | :--- |
-| `branch_push`、`pr_comment`、`pr_review` | 全部：`notify`、`create_issue`、`trigger_run`、`pull_local`、`merge_pr`、`set_issue_status` |
+| `branch_push`、`pr_comment`、`pr_review` | 全部：`notify`、`add_labels`、`create_issue`、`trigger_run`、`pull_local`、`merge_pr`、`set_issue_status` |
 | `pr_merged` | `notify`、`pull_local`、`set_issue_status`（`merge_pr` 会被忽略，避免重复合并） |
-| `issue_created`、`issue_status_changed`、`run_started`、`run_finished`、`pr_created`、`notification_dispatch` | 仅 `notify`；其余动作会被记录并忽略，防止事件递归与 Token 失控 |
+| `issue_created`、`issue_status_changed` | `notify`、`add_labels`（自动打标、分流、同步外部状态） |
+| `run_finished` | `notify`、`add_labels`、`create_issue`（失败复盘、派生后续任务、复核 Issue） |
+| `pr_created` | `notify`、`add_labels`、`trigger_run`（自动启动 PR 审查 Agent；不允许多级递归） |
+| `run_started`、`notification_dispatch` | 仅 `notify`；其余动作会被记录并忽略，防止事件递归与 Token 失控 |
 
-事件回调始终执行插件；插件返回的 Action 由上述白名单决定是否落地。生命周期事件的上下文包含 `issue`、`run`、`previousStatus`、`timestamp` 等字段。
+事件回调始终执行插件；插件返回的 Action 由上述白名单决定是否落地。生命周期事件的上下文包含 `issue`、`run`、`previousStatus`、`timestamp` 等字段。`create_issue` 只允许在 `run_finished` 落地，`trigger_run` 只允许在 `pr_created` 落地，避免插件通过生命周期事件形成无限循环。
 
 ---
 
@@ -202,8 +205,13 @@ xIssue 通过标准输入（`stdin`）将上下文信息以 JSON 格式传递给
       "message": "自定义通知内容，支持 Markdown"
     },
     {
+      "type": "add_labels",
+      "labels": ["needs-review", "auto"]
+    },
+    {
       "type": "create_issue",
-      "prompt": "[自动跟进] 发现关键改动，自动创建 Issue"
+      "prompt": "[自动跟进] 发现关键改动，自动创建 Issue",
+      "labels": ["follow-up", "auto"]
     },
     {
       "type": "trigger_run",
@@ -351,7 +359,7 @@ urllib.request.urlopen(bark_url)
 3. **清单失败即禁用**：`plugin.yaml` 缺失、解析失败、API 版本不支持、事件未知或 entrypoint 逃逸时，插件 `Enabled=false`，不会被意外启用；
 4. **独立进程空间**：插件以独立子进程运行，崩溃或异常退出不会影响 xIssue 自身稳定性；
 5. **权限声明不是沙箱**：`permissions` 仅用于审计与 UI 展示。插件以当前用户身份运行，可读写文件、访问网络、启动子进程；请只安装可信代码；
-6. **生命周期动作白名单**：`issue_*`、`run_*`、`pr_created`、`notification_dispatch` 仅执行 `notify`，避免插件递归触发事件；`pr_merged` 忽略 `merge_pr`；
+6. **生命周期动作白名单**：`issue_created` / `issue_status_changed` 可 `add_labels`；`run_finished` 可 `add_labels` / `create_issue`；`pr_created` 可 `add_labels` / `trigger_run`；`run_started` 与 `notification_dispatch` 仅 `notify`；`pr_merged` 忽略 `merge_pr`；
 7. **日志审计**：Hook/Plugin 非零退出时，其 `stderr` 会随错误写入监控日志；目前不会逐行实时转发插件输出。
 
 ---

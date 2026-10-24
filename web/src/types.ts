@@ -42,12 +42,13 @@ export interface RuleConditions {
 }
 
 export interface RuleAction {
-  type: 'merge_pr' | 'set_issue_status' | 'pull_local' | 'notify' | 'create_issue' | 'trigger_run';
+  type: 'merge_pr' | 'set_issue_status' | 'pull_local' | 'notify' | 'create_issue' | 'trigger_run' | 'add_labels';
   status?: string;
   strategy?: 'squash' | 'merge' | 'rebase';
   message?: string;
   agent?: string;
   prompt?: string;
+  labels?: string[];
 }
 
 export interface AutomationRule {

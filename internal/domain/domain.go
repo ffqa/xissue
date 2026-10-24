@@ -67,13 +67,14 @@ type RuleConditions struct {
 }
 
 type RuleAction struct {
-	Type     string `json:"type" yaml:"type"`                             // merge_pr | set_issue_status | pull_local | notify | create_issue | trigger_run
-	Status   string `json:"status,omitempty" yaml:"status,omitempty"`     // for set_issue_status, e.g. "done"
-	Strategy string `json:"strategy,omitempty" yaml:"strategy,omitempty"` // for merge_pr: "squash" | "merge" | "rebase"
-	Message  string `json:"message,omitempty" yaml:"message,omitempty"`   // for notify
-	Channel  string `json:"channel,omitempty" yaml:"channel,omitempty"`   // for notify: "telegram" | "webhook" | "desktop" | "all"
-	Agent    string `json:"agent,omitempty" yaml:"agent,omitempty"`       // for trigger_run: 指定运行的 agent 名称 (如 codex, opencode, omp)
-	Prompt   string `json:"prompt,omitempty" yaml:"prompt,omitempty"`     // for trigger_run / create_issue
+	Type     string   `json:"type" yaml:"type"`                             // merge_pr | set_issue_status | pull_local | notify | create_issue | trigger_run
+	Status   string   `json:"status,omitempty" yaml:"status,omitempty"`     // for set_issue_status, e.g. "done"
+	Strategy string   `json:"strategy,omitempty" yaml:"strategy,omitempty"` // for merge_pr: "squash" | "merge" | "rebase"
+	Message  string   `json:"message,omitempty" yaml:"message,omitempty"`   // for notify
+	Channel  string   `json:"channel,omitempty" yaml:"channel,omitempty"`   // for notify: "telegram" | "webhook" | "desktop" | "all"
+	Agent    string   `json:"agent,omitempty" yaml:"agent,omitempty"`       // for trigger_run: 指定运行的 agent 名称 (如 codex, opencode, omp)
+	Prompt   string   `json:"prompt,omitempty" yaml:"prompt,omitempty"`     // for trigger_run / create_issue
+	Labels   []string `json:"labels,omitempty" yaml:"labels,omitempty"`     // for add_labels
 }
 
 type AutomationRule struct {

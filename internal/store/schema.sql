@@ -56,9 +56,6 @@ CREATE TABLE IF NOT EXISTS comments (
     created_at TEXT NOT NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_comments_remote
-    ON comments(issue_id, remote_id) WHERE remote_id <> '';
-
 CREATE TABLE IF NOT EXISTS runs (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     issue_id      INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,

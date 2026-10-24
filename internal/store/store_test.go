@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -252,5 +253,51 @@ func TestUpsertRemoteCommentAdoptsLocalCopy(t *testing.T) {
 	}
 	if len(comments) != 1 || comments[0].RemoteID != "IC_9" || comments[0].Author != "system" {
 		t.Fatalf("comments = %+v", comments)
+	}
+}
+
+func TestOpenMigratesLegacyCommentsTable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE comments (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		issue_id INTEGER NOT NULL,
+		author TEXT NOT NULL,
+		body TEXT NOT NULL,
+		created_at TEXT NOT NULL
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("Open legacy db: %v", err)
+	}
+	defer st.Close()
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	rows, err := raw.Query(`SELECT name FROM pragma_table_info('comments')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		cols[name] = true
+	}
+	if !cols["remote_id"] || !cols["remote_url"] {
+		t.Fatalf("legacy comments columns = %+v", cols)
 	}
 }

@@ -125,7 +125,7 @@
 - **契约 v1**: `plugin.yaml` 新增 `apiVersion`、`permissions` 与严格校验；未知事件/权限、缺失 entrypoint、绝对路径或 `..`/符号链接逃逸一律 fail-closed；`.disabled` 标记实现无需改动 manifest 的启停；
 - **安装链路**: 新增 `xissue plugin list|install|enable|disable|check`。安装器支持官方目录（`index.json`）、任意 `owner/repo`、monorepo `--path`、`--force` 原子替换；默认目录为 `<data-dir>/plugins`（默认 `~/.xissue/plugins`）；
 - **生命周期事件补齐**: 实际派发 `pr_created`、`issue_created`、`issue_status_changed`、`run_started`、`run_finished`；新增对应项目 Hook 检测项；`pr_merged` 现在会执行 `notify`/`pull_local`/`set_issue_status` 动作，并忽略 `merge_pr`；
-- **动作白名单**: 生命周期事件仅执行 `notify`，防止事件递归与 Token 失控；`branch_push`/`pr_comment`/`pr_review` 保留完整动作集；
+- **动作白名单**: `issue_*` 可 `notify`/`add_labels`，`run_finished` 可 `notify`/`add_labels`/`create_issue`，`pr_created` 可 `notify`/`add_labels`/`trigger_run`；`run_started`/`notification_dispatch` 仅 `notify`，防止事件递归与 Token 失控；`branch_push`/`pr_comment`/`pr_review` 保留完整动作集；
 - **独立仓库**: 模板 <https://github.com/ffqa/xissue-plugin-template>，目录 <https://github.com/ffqa/xissue-plugins>（`custom-notifier`、`follow-commit-watcher`、`slack-notifier`、`run-audit`）；主仓不再重复维护示例插件；
 - **验证**: 新增 manifest/安装器/生命周期测试；真实从 GitHub 目录安装四个插件；浏览器验证插件 API 版本、权限、启用/禁用与错误状态展示；`go test -race`、`go vet`、`tsc`、`vite build` 通过。
 

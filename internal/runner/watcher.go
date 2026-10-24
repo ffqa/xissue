@@ -1341,6 +1341,18 @@ func (r *Runner) executeActions(ctx context.Context, actions []domain.RuleAction
 			r.notify.BroadcastIssueUpdated(newIssue)
 			r.LogMonitor("INFO", "automation", fmt.Sprintf("已为 PR #%d 的%s创建跟进 Issue %s", prDetail.Number, trig.Label, newIssue.Key))
 
+		case "add_labels":
+			if issue == nil || len(act.Labels) == 0 {
+				continue
+			}
+			updated, err := r.st.AddIssueLabels(ctx, issue.ID, act.Labels...)
+			if err != nil {
+				r.LogMonitor("WARN", "automation", fmt.Sprintf("添加标签失败: %v", err))
+				continue
+			}
+			r.notify.BroadcastIssueUpdated(updated)
+			r.LogMonitor("INFO", "automation", fmt.Sprintf("已为 Issue %s 添加标签 %v", issue.Key, act.Labels))
+
 		case "set_issue_status":
 			targetStatus := domain.IssueStatus(act.Status)
 			if targetStatus == "" {

@@ -742,12 +742,7 @@ func (r *Runner) CherryPick(ctx context.Context, req CherryPickRequest) (*Cherry
 // BatchRunTodoIssues starts runs for all backlog/todo issues in a project that don't have an active run.
 func (r *Runner) BatchRunTodoIssues(ctx context.Context, projectID int64, agentName, modelName string) ([]*domain.Run, error) {
 	if strings.TrimSpace(agentName) == "" {
-		for _, a := range r.ListAgents() {
-			if a.Available {
-				agentName = a.Name
-				break
-			}
-		}
+		agentName = r.AvailableAgentForRole(AgentRoleIssueDevelop)
 	}
 	if agentName == "" {
 		return nil, fmt.Errorf("未找到可用的 Agent")
@@ -1164,7 +1159,8 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 
 		if len(actions) > 0 {
 			r.LogMonitor("EVENT", "automation", fmt.Sprintf("触发 %d 个自动化动作 (PR #%d, 评论作者: @%s)", len(actions), prDetail.Number, comment.Author))
-			mergedNow, aerr := r.executeActions(ctx, actions, project, repo, issue, run, prDetail, "评论/Report", comment.Author)
+			trig := prEventTrigger{Event: "pr_comment", Label: "评论/Report", Author: comment.Author, Body: comment.Body, Rules: rules}
+			mergedNow, aerr := r.executeActions(ctx, actions, project, repo, issue, run, prDetail, trig)
 			if aerr == nil && mergedNow {
 				merged = true
 			}
@@ -1218,7 +1214,8 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 
 		if len(actions) > 0 {
 			r.LogMonitor("EVENT", "automation", fmt.Sprintf("触发 %d 个自动化动作 (PR #%d, 审核人: @%s, 状态: %s)", len(actions), prDetail.Number, review.Author, review.State))
-			mergedNow, aerr := r.executeActions(ctx, actions, project, repo, issue, run, prDetail, "审核/Review", review.Author)
+			trig := prEventTrigger{Event: "pr_review", Label: "审核/Review", Author: review.Author, State: review.State, Body: review.Body, Rules: rules}
+			mergedNow, aerr := r.executeActions(ctx, actions, project, repo, issue, run, prDetail, trig)
 			if aerr == nil && mergedNow {
 				merged = true
 			}
@@ -1234,7 +1231,17 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 	return merged, nil
 }
 
-func (r *Runner) executeActions(ctx context.Context, actions []domain.RuleAction, project *domain.Project, repo *domain.Repo, issue *domain.Issue, run domain.Run, prDetail *provider.PRDetailInfo, triggerType, triggerAuthor string) (bool, error) {
+// prEventTrigger describes the remote PR event that fired a set of actions.
+type prEventTrigger struct {
+	Event  string                  // pr_comment | pr_review | pr_merged
+	Label  string                  // human-readable label used in logs/comments
+	Author string                  // triggering login
+	State  string                  // pr_review state (approved / changes_requested / ...)
+	Body   string                  // comment or review body
+	Rules  []domain.AutomationRule // effective automation rules (author trust gate)
+}
+
+func (r *Runner) executeActions(ctx context.Context, actions []domain.RuleAction, project *domain.Project, repo *domain.Repo, issue *domain.Issue, run domain.Run, prDetail *provider.PRDetailInfo, trig prEventTrigger) (bool, error) {
 	merged := false
 	for _, act := range actions {
 		switch act.Type {
@@ -1245,6 +1252,12 @@ func (r *Runner) executeActions(ctx context.Context, actions []domain.RuleAction
 			strategy := act.Strategy
 			if strategy == "" {
 				strategy = "squash"
+			}
+			// Auto-merge identity: rule-level act.Agent first, then the global
+			// autoMerge role.
+			merger := strings.TrimSpace(act.Agent)
+			if merger == "" {
+				merger = r.AgentForRole(AgentRoleAutoMerge)
 			}
 			r.LogMonitor("INFO", "automation", fmt.Sprintf("正在执行自动合并 PR #%d (策略: %s)...", prDetail.Number, strategy))
 			pvd := provider.For(repo.Provider)
@@ -1257,8 +1270,76 @@ func (r *Runner) executeActions(ctx context.Context, actions []domain.RuleAction
 			merged = true
 
 			// 添加系统说明评论
-			_, _ = r.st.AddComment(ctx, issue.ID, "system", fmt.Sprintf("🤖 [自动化与Hook] 检测到 @%s 提交的 %s 满足要求，PR #%d 已自动合并！", triggerAuthor, triggerType, prDetail.Number))
-			r.pushNotification("pr_status", fmt.Sprintf("🤖 [%s] PR 已自动合并", issue.Key), fmt.Sprintf("检测到 @%s 的 %s 通过，已自动合并 PR #%d\n%s", triggerAuthor, triggerType, prDetail.Number, prDetail.URL), fmt.Sprintf("/issues/%d", issue.ID), "")
+			mergerNote := ""
+			if merger != "" {
+				mergerNote = fmt.Sprintf("（自动合并身份: %s）", merger)
+			}
+			_, _ = r.st.AddComment(ctx, issue.ID, "system", fmt.Sprintf("🤖 [自动化与Hook] 检测到 @%s 提交的 %s 满足要求，PR #%d 已自动合并！%s", trig.Author, trig.Label, prDetail.Number, mergerNote))
+			r.pushNotification("pr_status", fmt.Sprintf("🤖 [%s] PR 已自动合并", issue.Key), fmt.Sprintf("检测到 @%s 的 %s 通过，已自动合并 PR #%d\n%s", trig.Author, trig.Label, prDetail.Number, prDetail.URL), fmt.Sprintf("/issues/%d", issue.ID), "")
+
+		case "trigger_run":
+			// Only PR feedback events may dispatch agents. Lifecycle events such
+			// as pr_merged stay notify-only to avoid recursive runs.
+			if trig.Event != "pr_comment" && trig.Event != "pr_review" {
+				r.LogMonitor("WARN", "automation", fmt.Sprintf("事件 %s 不支持 trigger_run 动作，已忽略", trig.Event))
+				continue
+			}
+			if issue == nil {
+				continue
+			}
+			// Trust gate: only the PR author or explicitly trusted rule authors
+			// may start an agent, so external commenters cannot inject prompts.
+			if !isTrustedAuthor(trig.Author, prDetail.Author, trig.Rules) {
+				r.LogMonitor("WARN", "automation", fmt.Sprintf("%s 作者 @%s 非信任人员，已阻断 trigger_run 调度", trig.Label, trig.Author))
+				continue
+			}
+			agentName := strings.TrimSpace(act.Agent)
+			if agentName == "" {
+				agentName = r.AgentForRoleOrDefault(AgentRolePRReview)
+			}
+			if agentName == "" {
+				r.LogMonitor("WARN", "automation", "trigger_run 无可用 Agent，已跳过")
+				continue
+			}
+			prompt := strings.TrimSpace(act.Prompt)
+			if prompt == "" {
+				prompt = prReviewRunPrompt(trig, prDetail, issue)
+			}
+			r.LogMonitor("INFO", "automation", fmt.Sprintf("正在为 Issue %s 自动调度 PR 评审 Agent [%s]...", issue.Key, agentName))
+			if _, rerr := r.StartRun(ctx, issue.ID, agentName, "", prompt); rerr != nil {
+				r.LogMonitor("ERROR", "automation", fmt.Sprintf("调度 PR 评审 Agent 失败: %v", rerr))
+			} else {
+				r.LogMonitor("EVENT", "automation", fmt.Sprintf("已启动 Agent [%s] 处理 Issue %s 的 PR %s", agentName, issue.Key, trig.Label))
+			}
+
+		case "create_issue":
+			if trig.Event != "pr_comment" && trig.Event != "pr_review" {
+				r.LogMonitor("WARN", "automation", fmt.Sprintf("事件 %s 不支持 create_issue 动作，已忽略", trig.Event))
+				continue
+			}
+			title := strings.TrimSpace(act.Prompt)
+			if title == "" {
+				title = fmt.Sprintf("跟进 PR #%d 的%s反馈", prDetail.Number, trig.Label)
+			}
+			var b strings.Builder
+			fmt.Fprintf(&b, "## PR 反馈跟进\n\nPR #%d (%s)\n\n触发者: @%s (%s", prDetail.Number, prDetail.URL, trig.Author, trig.Label)
+			if trig.State != "" {
+				fmt.Fprintf(&b, ", 状态: %s", trig.State)
+			}
+			b.WriteString(")\n\n")
+			if body := strings.TrimSpace(trig.Body); body != "" {
+				fmt.Fprintf(&b, "### 内容\n\n%s\n", body)
+			}
+			newIssue, err := r.st.CreateLocalIssue(ctx, project.ID, title, b.String(), []string{"pr-feedback", "auto"})
+			if err != nil {
+				r.LogMonitor("ERROR", "automation", fmt.Sprintf("自动化创建 Issue 失败: %v", err))
+				continue
+			}
+			if repo != nil {
+				_ = r.st.BindIssueRepo(ctx, newIssue.ID, repo.ID)
+			}
+			r.notify.BroadcastIssueUpdated(newIssue)
+			r.LogMonitor("INFO", "automation", fmt.Sprintf("已为 PR #%d 的%s创建跟进 Issue %s", prDetail.Number, trig.Label, newIssue.Key))
 
 		case "set_issue_status":
 			targetStatus := domain.IssueStatus(act.Status)
@@ -1323,6 +1404,28 @@ func (r *Runner) DetectProjectHooks(ctx context.Context, projectID int64) []doma
 	}
 	mirror := r.mirrorPath(repos[0].ID)
 	return automation.DetectHooks(mirror)
+}
+
+// prReviewRunPrompt builds the default prompt for a run triggered by PR
+// comment/review feedback when the rule does not supply its own prompt.
+func prReviewRunPrompt(trig prEventTrigger, prDetail *provider.PRDetailInfo, issue *domain.Issue) string {
+	var b strings.Builder
+	if trig.Event == "pr_review" {
+		fmt.Fprintf(&b, "PR #%d (%s) received a review", prDetail.Number, prDetail.URL)
+		if trig.State != "" {
+			fmt.Fprintf(&b, " (%s)", trig.State)
+		}
+		fmt.Fprintf(&b, " from @%s", trig.Author)
+	} else {
+		fmt.Fprintf(&b, "PR #%d (%s) received a new comment from @%s", prDetail.Number, prDetail.URL, trig.Author)
+	}
+	b.WriteString(":\n\n")
+	if body := strings.TrimSpace(trig.Body); body != "" {
+		b.WriteString(body)
+		b.WriteString("\n\n")
+	}
+	fmt.Fprintf(&b, "Please review this feedback in the context of issue %s, update the code on the current branch when changes are needed, and summarize your assessment. Do NOT merge or close the PR yourself.", issue.Key)
+	return b.String()
 }
 
 func isTrustedAuthor(author, prAuthor string, rules []domain.AutomationRule) bool {
@@ -1478,9 +1581,9 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 			r.LogMonitor("INFO", "automation", fmt.Sprintf("已自动创建 Issue %s 跟踪分支推送", newIssue.Key))
 
 			if act.Type == "trigger_run" {
-				agentName := act.Agent
+				agentName := strings.TrimSpace(act.Agent)
 				if agentName == "" {
-					agentName = r.DefaultAgentName()
+					agentName = r.AgentForRoleOrDefault(AgentRoleIssueReview)
 				}
 				if agentName != "" {
 					prompt := act.Prompt
@@ -1570,7 +1673,8 @@ func (r *Runner) processPRMergedAutomation(ctx context.Context, issue *domain.Is
 	}
 	if len(filtered) > 0 {
 		r.LogMonitor("EVENT", "automation", fmt.Sprintf("PR #%d 合并事件触发 %d 个生命周期动作", prDetail.Number, len(filtered)))
-		_, _ = r.executeActions(ctx, filtered, project, repo, issue, run, prDetail, "PR 合并", prDetail.Author)
+		trig := prEventTrigger{Event: "pr_merged", Label: "PR 合并", Author: prDetail.Author}
+		_, _ = r.executeActions(ctx, filtered, project, repo, issue, run, prDetail, trig)
 	}
 
 	r.LogMonitor("EVENT", "automation", fmt.Sprintf("PR #%d 合并事件已成功派发至生命周期 Hooks 与插件 (pr_merged)", prDetail.Number))

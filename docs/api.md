@@ -108,7 +108,7 @@ interface RunEvent {
 |---|---|---|
 | GET | `/api/health` | `{ ok, version, editorUrlTemplate }`。`editorUrlTemplate` 如 `vscode://file{path}`，前端替换 `{path}` 为绝对路径 |
 | GET | `/api/status` | 实时运行状态：版本、PID、uptime、堆内存、进程 CPU、磁盘、GC、goroutine、自动更新状态 |
-| GET / PATCH | `/api/settings` | 全局设置；PATCH `{ autoUpdate?, defaultAgent?, globalAutomationRules? }`（全局自动化规则支持 `projectIds` 限定项目，空数组表示全部项目） |
+| GET / PATCH | `/api/settings` | 全局设置；PATCH `{ autoUpdate?, defaultAgent?, agentRoles?, globalAutomationRules? }`。`agentRoles` 为 Agent 身份分配 `{ issueReview?, issueDevelop?, prReview?, autoMerge? }`（留空跟随 `defaultAgent`；全局自动化规则支持 `projectIds` 限定项目，空数组表示全部项目） |
 | GET / PUT / PATCH | `/api/monitor/config` | 监控与通知配置；`notificationRoutes` 为按事件分通道的路由表 |
 | GET | `/api/plugins` | 已安装插件 → `PluginInfo[]`（`apiVersion`、`events`、`permissions`、`enabled`、`hasReadme`、`hasConfig`、`error`）；CLI 为 `xissue plugin list` |
 | PATCH | `/api/plugins/{id}` | `{ enabled }` 即时启用/停用（写/删 `.disabled`）→ `PluginInfo[]`；manifest 无效时不能启用 |
@@ -140,7 +140,7 @@ interface RunEvent {
 | POST | `/api/issues/{id}/publish` | `{ repoId }` 把本地 Issue 发布到平台 → `Issue` |
 | GET / POST | `/api/issues/{id}/comments` | POST `{ body }` |
 | GET | `/api/issues/{id}/runs` | `Run[]`（新的在前） |
-| POST | `/api/issues/{id}/runs` | `{ agent, prompt? }` 启动 Run → `Run`。`prompt` 为额外说明 |
+| POST | `/api/issues/{id}/runs` | `{ agent?, prompt? }` 启动 Run → `Run`。`agent` 留空时使用 `agentRoles.issueDevelop`（其次 `defaultAgent`）；`prompt` 为额外说明 |
 | GET | `/api/runs/{id}` | `Run` |
 | GET | `/api/runs/{id}/events?after=<seq>` | `RunEvent[]` |
 | POST | `/api/runs/{id}/message` | `{ text }` 追加指令 / 打回反馈（会话结束后会自动恢复会话） |

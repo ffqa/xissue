@@ -1140,7 +1140,15 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	run, err := s.runner.StartRun(r.Context(), issueID, body.Agent, body.Model, body.Prompt)
+	agent := strings.TrimSpace(body.Agent)
+	if agent == "" {
+		agent = s.runner.AgentForRoleOrDefault(runner.AgentRoleIssueDevelop)
+	}
+	if agent == "" {
+		writeErr(w, http.StatusBadRequest, errors.New("no agent configured; assign one in global settings"))
+		return
+	}
+	run, err := s.runner.StartRun(r.Context(), issueID, agent, body.Model, body.Prompt)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return

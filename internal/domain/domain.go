@@ -262,6 +262,19 @@ type DocDetail struct {
 	Content string `json:"content"` // Full Markdown content
 }
 
+// ProjectReadme is the root README of one repository in a project.
+type ProjectReadme struct {
+	RepoID    int64  `json:"repoId"`
+	RepoName  string `json:"repoName"`
+	Branch    string `json:"branch"`
+	Path      string `json:"path"`
+	Title     string `json:"title"`
+	Content   string `json:"content"`
+	Size      int64  `json:"size"`
+	Truncated bool   `json:"truncated"`
+	Found     bool   `json:"found"`
+}
+
 // DocSearchResult represents a hit in knowledge base search.
 type DocSearchResult struct {
 	DocItem

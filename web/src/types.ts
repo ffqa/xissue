@@ -508,6 +508,18 @@ export interface DocDetail extends DocItem {
   content: string;
 }
 
+export interface ProjectReadme {
+  repoId: number;
+  repoName: string;
+  branch: string;
+  path: string;
+  title: string;
+  content: string;
+  size: number;
+  truncated: boolean;
+  found: boolean;
+}
+
 export interface DocSearchResult extends DocItem {
   snippet: string;
   score: number;

@@ -132,6 +132,15 @@ func (r *Runner) AgentForRoleOrDefault(role AgentRole) string {
 
 // AvailableAgentForRole resolves a role's agent, but only returns it when its
 // binary is installed; otherwise it falls back to the first available agent.
+// AvailableAgentForProject resolves an agent for a project. Remote projects
+// must not require the agent binary on the server host.
+func (r *Runner) AvailableAgentForProject(role AgentRole, proj *domain.Project) string {
+	if proj != nil && strings.TrimSpace(proj.RunnerID) != "" {
+		return r.AgentForRoleOrDefault(role)
+	}
+	return r.AvailableAgentForRole(role)
+}
+
 func (r *Runner) AvailableAgentForRole(role AgentRole) string {
 	preferred := r.AgentForRoleOrDefault(role)
 	fallback := ""

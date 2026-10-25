@@ -32,6 +32,7 @@ import type {
   Repo,
   RepoPullStatus,
   RepoChanges,
+  RemoteRunnerInfo,
   RepoInput,
   Run,
   RunEvent,
@@ -147,6 +148,7 @@ export const api = {
   restartServer: () => post<{ restarting: boolean }>('/api/restart'),
   status: () => get<SystemStatus>('/api/status'),
   agents: () => get<AgentInfo[]>('/api/agents'),
+  runners: () => get<{ runners: RemoteRunnerInfo[] }>('/api/runners'),
   reloadAgents: () => post<AgentInfo[]>('/api/agents/reload'),
   upsertAgent: (name: string, b: AgentConfigInput) => put<AgentInfo>(`/api/agents/${encodeURIComponent(name)}`, b),
   deleteAgent: (name: string) => del<void>(`/api/agents/${encodeURIComponent(name)}`),
@@ -183,6 +185,7 @@ export const api = {
       autoDevelopDailyLimit?: number;
       automationRules?: AutomationRule[];
       pullBranches?: string[];
+      runnerId?: string;
     },
   ) => patch<Project>(`/api/projects/${id}`, b),
   deleteProject: (id: number, b?: { name: string }) =>
@@ -309,6 +312,7 @@ export const qk = {
   usage: (days: number) => ['usage', days] as const,
   monitorLogs: (hours?: number) => ['monitorLogs', hours ?? 8] as const,
   agents: ['agents'] as const,
+  runners: ['runners'] as const,
   agentModels: (name: string) => ['agentModels', name] as const,
   mcpStatus: ['mcpStatus'] as const,
   notifications: ['notifications'] as const,

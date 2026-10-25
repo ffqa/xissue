@@ -138,7 +138,7 @@ func (r *Runner) recordTurnUsage(act *activeRun, runID, issueID int64, usage *ac
 	upd.InputTokens = &input
 	upd.OutputTokens = &output
 	upd.TotalTokens = &total
-	if usage.Cost != nil && !act.usageSawCost {
+	if usage.Cost != nil && !act.usageSawCost && run.UsageCumulativeCost == 0 {
 		cost := run.CostAmount + usage.Cost.Amount
 		upd.CostAmount = &cost
 		if strings.TrimSpace(usage.Cost.Currency) != "" {

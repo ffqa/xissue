@@ -40,9 +40,11 @@ func (r *Runner) maybeAutoFixCI(ctx context.Context, issue *domain.Issue, run *d
 		r.LogMonitor("WARN", "ci-fix", fmt.Sprintf("skip %s: agent %q is not configured", issue.Key, agentName))
 		return
 	}
-	if _, err := LookupAgentBinary(ac.Command); err != nil {
-		r.LogMonitor("WARN", "ci-fix", fmt.Sprintf("skip %s: agent %q is unavailable: %v", issue.Key, agentName, err))
-		return
+	if strings.TrimSpace(run.RunnerID) == "" {
+		if _, err := LookupAgentBinary(ac.Command); err != nil {
+			r.LogMonitor("WARN", "ci-fix", fmt.Sprintf("skip %s: agent %q is unavailable: %v", issue.Key, agentName, err))
+			return
+		}
 	}
 
 	r.ciFixMu.Lock()

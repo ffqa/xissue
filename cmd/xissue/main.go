@@ -40,6 +40,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  update [--check]     检查并升级 xIssue (支持 Homebrew / 独立二进制自更新)\n")
 		fmt.Fprintf(os.Stderr, "  mcp [--install]      运行或注册 MCP JSON-RPC 服务到本机 IDE / Agent\n")
 		fmt.Fprintf(os.Stderr, "  plugin <cmd>         插件管理 (list/install/enable/disable/check)\n")
+		fmt.Fprintf(os.Stderr, "  runner               以远程执行节点连接 xIssue 服务 (--server/--token/--name)\n")
 		fmt.Fprintf(os.Stderr, "  version              打印当前版本并退出\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
@@ -58,6 +59,11 @@ func main() {
 
 	if flag.NArg() > 0 && flag.Arg(0) == "update" {
 		runUpdate(flag.Args()[1:])
+		return
+	}
+
+	if flag.NArg() > 0 && flag.Arg(0) == "runner" {
+		runRemoteRunner(flag.Args()[1:])
 		return
 	}
 

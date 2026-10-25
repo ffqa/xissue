@@ -99,7 +99,9 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_text INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_authors TEXT NOT NULL DEFAULT '[]'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_daily_limit INTEGER NOT NULL DEFAULT 5`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN auto_pr INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN runner_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0`)
@@ -143,7 +145,7 @@ func nullInt(ns sql.NullInt64) *int64 {
 
 // ---------- Projects ----------
 
-const projectCols = `id, name, description, dev_mode, target_branch, auto_pr_on_confirm, automation_rules, auto_develop, auto_develop_agent, auto_develop_labels, auto_develop_text, auto_develop_authors, auto_develop_daily_limit, pull_branches, created_at, updated_at`
+const projectCols = `id, name, description, dev_mode, target_branch, auto_pr_on_confirm, automation_rules, auto_develop, auto_develop_agent, auto_develop_labels, auto_develop_text, auto_develop_authors, auto_develop_daily_limit, pull_branches, runner_id, created_at, updated_at`
 
 func scanProject(s interface{ Scan(...any) error }) (domain.Project, error) {
 	var p domain.Project
@@ -151,7 +153,7 @@ func scanProject(s interface{ Scan(...any) error }) (domain.Project, error) {
 	var autoPR, autoDevelop, autoDevelopText, autoDevelopDailyLimit int
 	var devMode string
 	var autoRulesRaw, autoLabelsRaw, autoAuthorsRaw, pullBranchesRaw string
-	err := s.Scan(&p.ID, &p.Name, &p.Description, &devMode, &p.TargetBranch, &autoPR, &autoRulesRaw, &autoDevelop, &p.AutoDevelopAgent, &autoLabelsRaw, &autoDevelopText, &autoAuthorsRaw, &autoDevelopDailyLimit, &pullBranchesRaw, &c, &u)
+	err := s.Scan(&p.ID, &p.Name, &p.Description, &devMode, &p.TargetBranch, &autoPR, &autoRulesRaw, &autoDevelop, &p.AutoDevelopAgent, &autoLabelsRaw, &autoDevelopText, &autoAuthorsRaw, &autoDevelopDailyLimit, &pullBranchesRaw, &p.RunnerID, &c, &u)
 	if err != nil {
 		return p, err
 	}
@@ -268,6 +270,7 @@ type ProjectPatch struct {
 	AutoDevelopDailyLimit *int                     `json:"autoDevelopDailyLimit"`
 	AutomationRules       *[]domain.AutomationRule `json:"automationRules"`
 	PullBranches          *[]string                `json:"pullBranches"`
+	RunnerID              *string                  `json:"runnerId"`
 }
 
 func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch) (*domain.Project, error) {
@@ -354,6 +357,9 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 		}
 		p.PullBranches = branches
 	}
+	if patch.RunnerID != nil {
+		p.RunnerID = strings.TrimSpace(*patch.RunnerID)
+	}
 	autoInt := 0
 	if p.AutoPROnConfirm {
 		autoInt = 1
@@ -370,8 +376,8 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 	pullBranchesJSON, _ := json.Marshal(p.PullBranches)
 	labelsJSON, _ := json.Marshal(p.AutoDevelopLabels)
 	authorsJSON, _ := json.Marshal(p.AutoDevelopAuthors)
-	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, dev_mode=?, target_branch=?, auto_pr_on_confirm=?, automation_rules=?, auto_develop=?, auto_develop_agent=?, auto_develop_labels=?, auto_develop_text=?, auto_develop_authors=?, auto_develop_daily_limit=?, pull_branches=?, updated_at=? WHERE id=?`,
-		p.Name, p.Description, string(p.DevMode), p.TargetBranch, autoInt, string(rulesJSON), autoDevInt, p.AutoDevelopAgent, string(labelsJSON), autoDevTextInt, string(authorsJSON), p.AutoDevelopDailyLimit, string(pullBranchesJSON), now(), id); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, dev_mode=?, target_branch=?, auto_pr_on_confirm=?, automation_rules=?, auto_develop=?, auto_develop_agent=?, auto_develop_labels=?, auto_develop_text=?, auto_develop_authors=?, auto_develop_daily_limit=?, pull_branches=?, runner_id=?, updated_at=? WHERE id=?`,
+		p.Name, p.Description, string(p.DevMode), p.TargetBranch, autoInt, string(rulesJSON), autoDevInt, p.AutoDevelopAgent, string(labelsJSON), autoDevTextInt, string(authorsJSON), p.AutoDevelopDailyLimit, string(pullBranchesJSON), p.RunnerID, now(), id); err != nil {
 		return nil, err
 	}
 	return s.GetProject(ctx, id)
@@ -844,13 +850,13 @@ func (s *Store) UpsertRemoteComment(ctx context.Context, issueID int64, remoteID
 
 // ---------- Runs ----------
 
-const runCols = `id, issue_id, agent, model, status, branch, target_branch, workdir, session_id, summary, error, pr_url, pr_state, change_record, auto_pr, input_tokens, output_tokens, total_tokens, context_used, context_size, cost_amount, cost_currency, usage_cumulative_cost, usage_json, usage_updated_at, created_at, started_at, ended_at`
+const runCols = `id, issue_id, agent, model, status, branch, target_branch, workdir, session_id, summary, error, pr_url, pr_state, change_record, auto_pr, runner_id, input_tokens, output_tokens, total_tokens, context_used, context_size, cost_amount, cost_currency, usage_cumulative_cost, usage_json, usage_updated_at, created_at, started_at, ended_at`
 
 func scanRun(sc interface{ Scan(...any) error }) (domain.Run, error) {
 	var r domain.Run
 	var c string
 	var st, en, usageAt sql.NullString
-	err := sc.Scan(&r.ID, &r.IssueID, &r.Agent, &r.Model, &r.Status, &r.Branch, &r.TargetBranch, &r.Workdir, &r.SessionID, &r.Summary, &r.Error, &r.PRURL, &r.PRState, &r.ChangeRecord, &r.AutoPR, &r.InputTokens, &r.OutputTokens, &r.TotalTokens, &r.ContextUsed, &r.ContextSize, &r.CostAmount, &r.CostCurrency, &r.UsageCumulativeCost, &r.UsageJSON, &usageAt, &c, &st, &en)
+	err := sc.Scan(&r.ID, &r.IssueID, &r.Agent, &r.Model, &r.Status, &r.Branch, &r.TargetBranch, &r.Workdir, &r.SessionID, &r.Summary, &r.Error, &r.PRURL, &r.PRState, &r.ChangeRecord, &r.AutoPR, &r.RunnerID, &r.InputTokens, &r.OutputTokens, &r.TotalTokens, &r.ContextUsed, &r.ContextSize, &r.CostAmount, &r.CostCurrency, &r.UsageCumulativeCost, &r.UsageJSON, &usageAt, &c, &st, &en)
 	r.CreatedAt, r.StartedAt, r.EndedAt = parseTime(c), parseTimePtr(st), parseTimePtr(en)
 	r.UsageUpdatedAt = parseTimePtr(usageAt)
 	return r, err
@@ -954,6 +960,7 @@ type RunUpdate struct {
 	PRState             *string
 	ChangeRecord        *string
 	AutoPR              *bool
+	RunnerID            *string
 	InputTokens         *int64
 	OutputTokens        *int64
 	TotalTokens         *int64
@@ -1007,6 +1014,9 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, u RunUpdate) (*domain.R
 	}
 	if u.AutoPR != nil {
 		add("auto_pr", *u.AutoPR)
+	}
+	if u.RunnerID != nil {
+		add("runner_id", *u.RunnerID)
 	}
 	if u.InputTokens != nil {
 		add("input_tokens", *u.InputTokens)

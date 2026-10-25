@@ -64,6 +64,12 @@ func (r *Runner) Changes(ctx context.Context, runID int64) ([]RepoChanges, error
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(run.RunnerID) != "" {
+		if r.remote == nil || !r.remote.Online(run.RunnerID) {
+			return nil, fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, run.RunnerID)
+		}
+		return r.remote.Changes(ctx, run, proj, issue)
+	}
 	repos := reposForIssue(proj, issue)
 	out := make([]RepoChanges, 0, len(repos))
 	for _, repo := range repos {
@@ -86,6 +92,14 @@ func (r *Runner) Changes(ctx context.Context, runID int64) ([]RepoChanges, error
 }
 
 func (r *Runner) ReadFile(ctx context.Context, runID, repoID int64, relPath, side string) (string, error) {
+	if run, proj, issue, err := r.remoteContext(ctx, runID); err != nil {
+		return "", err
+	} else if run != nil {
+		if r.remote == nil || !r.remote.Online(run.RunnerID) {
+			return "", fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, run.RunnerID)
+		}
+		return r.remote.ReadFile(ctx, run, proj, issue, repoID, relPath, side)
+	}
 	run, repo, wt, _, err := r.resolveRepoFile(ctx, runID, repoID, relPath)
 	if err != nil {
 		return "", err
@@ -107,6 +121,14 @@ func (r *Runner) ReadFile(ctx context.Context, runID, repoID int64, relPath, sid
 }
 
 func (r *Runner) WriteFile(ctx context.Context, runID, repoID int64, relPath, content string) error {
+	if run, proj, issue, err := r.remoteContext(ctx, runID); err != nil {
+		return err
+	} else if run != nil {
+		if r.remote == nil || !r.remote.Online(run.RunnerID) {
+			return fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, run.RunnerID)
+		}
+		return r.remote.WriteFile(ctx, run, proj, issue, repoID, relPath, content)
+	}
 	_, _, wt, _, err := r.resolveRepoFile(ctx, runID, repoID, relPath)
 	if err != nil {
 		return err

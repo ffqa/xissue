@@ -500,8 +500,8 @@ export function SettingsModal({
                   >
                     <option value="">自动选择（优先 opencode）</option>
                     {(agentsQ.data ?? []).map((a) => (
-                      <option key={a.name} value={a.name} disabled={!a.available}>
-                        {a.name}{a.available ? '' : '（未就绪）'}
+                      <option key={a.name} value={a.name}>
+                        {a.name}{a.available ? '' : '（本机未就绪，可用于远程节点）'}
                       </option>
                     ))}
                   </select>
@@ -528,8 +528,8 @@ export function SettingsModal({
                       >
                         <option value="">自动（{defaultAgent || '默认 Agent'}）</option>
                         {(agentsQ.data ?? []).map((a) => (
-                          <option key={a.name} value={a.name} disabled={!a.available}>
-                            {a.name}{a.available ? '' : '（未就绪）'}
+                          <option key={a.name} value={a.name}>
+                            {a.name}{a.available ? '' : '（本机未就绪，可用于远程节点）'}
                           </option>
                         ))}
                       </select>

@@ -217,6 +217,16 @@
 - **前端**: `@xterm/xterm` + `@xterm/addon-fit`，通过 `React.lazy` 拆到独立 chunk，不影响首屏；支持窗口自适应、滚轮回看与 Shell 退出提示。
 - **测试**: `internal/server/terminal_unix_test.go` 实测 PTY 的 cwd 与命令输出；本地浏览器冒烟验证「已连接」、`echo PTY_SMOKE` 输出与工作区路径。
 
+### 2.21 远程执行节点（Remote Runner）
+- **连接模型**: 执行节点通过 `xissue runner --server ... --token ... --name ...` 主动拨出 `GET /api/runners/ws`；服务端不需要在节点上开入站端口。节点名即 `RunnerID`，注册后可在项目设置里选择。
+- **认证与边界**: 配置了服务端 `token` 时 Runner 必须携带 Bearer；未配置 token 时仅接受回环地址。Runner 端点拒绝带浏览器 `Origin` 的请求，避免跨站 WebSocket；任务帧中包含的 Agent 配置（含显式 Env）只发给已认证节点。
+- **协议**: `internal/remote` 定义 `hello/welcome`、`job_start/job_message`、`status`、`event`、`permission/permission_result`、`rpc` 与 `cancel`。Runner 侧实现 `internal/remoterunner`，复用 `internal/agent/acp`、`internal/gitx` 与 ACP 事件/权限语义。
+- **路由**: `Runner` 新增 `RemoteExecutor` 接口；`StartRun`、`SendMessage`、`Cancel`、`RespondPermission`、`Changes`、`ReadFile/WriteFile`、`Submit`、`Discard/Delete` 在 Run 有 `runner_id` 时走远程后端，本地 Run 行为不变。`Project.runnerId` / `runs.runner_id` 均带 SQLite 迁移。
+- **远程工作区与提交**: 节点在 `--data-dir`（默认 `~/.xissue-runner`）下创建镜像与 `runs/run-N` 工作区；主服务通过 `rpc` 读取 diff/文件、编辑文件。提交时节点 commit+push 分支，主服务用 Provider API 创建 PR，并复用本地 `FormatChangeRecord`/生命周期通知/归档逻辑。`merge_local` 在远程模式下明确拒绝。
+- **自动流程**: 远程 Run 完成/失败会同步 Issue 状态、事件、评论与归档；`autoPR` 完成后由服务端自动提 PR；CI 自动修复的 `autoPush` 在远程 Turn 完成后走 push-only 提交。
+- **可观测性**: `GET /api/runners` 列出在线节点；项目设置显示执行节点，离线节点会显示为「离线 / 未连接」。`GET /api/status` 不统计远程节点资源，节点资源由节点本机负责。
+- **测试**: `internal/server/remote_manager_test.go` 使用真实 WebSocket Runner + 假 ACP 覆盖注册、远程启动、事件/用量、diff/读写、后续 Turn、push 提交清理、离线拒绝、权限往返与浏览器 Origin 拒绝。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid
@@ -245,6 +255,10 @@ flowchart TD
 | **环境与命令** | [`internal/runner/env.go`](file:///Users/gouki/server/ide/internal/runner/env.go) | 智能扫描用户目录并增强 PATH，`LookupAgentBinary` 解析可执行路径 |
 | **Agent 调度** | [`internal/runner/runner.go`](file:///Users/gouki/server/ide/internal/runner/runner.go) | Agent 模型探测（带 `probeError`）、Run 状态机、工作区管理 |
 | **自动预开发** | [`internal/runner/autodevelop.go`](file:///Users/gouki/server/ide/internal/runner/autodevelop.go) | Issue 需求/Bug 判定、预开发提示词、完成后自动创建 PR（不合并） |
+| **远程 Runner 协议** | [`internal/remote/protocol.go`](file:///Users/gouki/server/ide/internal/remote/protocol.go) | 服务端与远程执行节点之间的 WebSocket 帧、Job、RPC 与权限消息 |
+| **远程 Runner 客户端** | [`internal/remoterunner/client.go`](file:///Users/gouki/server/ide/internal/remoterunner/client.go)<br>[`internal/remoterunner/job.go`](file:///Users/gouki/server/ide/internal/remoterunner/job.go) | 主动拨号、断线重连、远程工作区、ACP 会话/权限/用量、diff/提交 RPC |
+| **远程 Runner 管理** | [`internal/server/remote_manager.go`](file:///Users/gouki/server/ide/internal/server/remote_manager.go) | 节点注册/认证、Run 路由、事件与状态落库、远程权限、PR 创建与清理 |
+| **运行路由桥** | [`internal/runner/remote.go`](file:///Users/gouki/server/ide/internal/runner/remote.go) | `RemoteExecutor` 接口与本地/远程 Run 操作分支 |
 | **知识库/Wiki** | [`internal/knowledge/knowledge.go`](file:///Users/gouki/server/ide/internal/knowledge/knowledge.go) | Wiki 与本地 Docs 递归扫描、全文搜索、正文读取与持久化保存 |
 | **知识库测试** | [`internal/knowledge/knowledge_test.go`](file:///Users/gouki/server/ide/internal/knowledge/knowledge_test.go) | 包含深层 Wiki 目录与搜索的自动化测试 |
 | **自动化引擎** | [`internal/automation/engine.go`](file:///Users/gouki/server/ide/internal/automation/engine.go) | 自动化规则评估、分支推送触发、动作派发与 Hook 事件派发 |

@@ -179,6 +179,7 @@ type Runner struct {
 	lastTrigWatches int
 	lastUpdatedPRs  int
 	automation      *automation.Engine
+	remote          RemoteExecutor
 }
 
 func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
@@ -732,23 +733,6 @@ func (r *Runner) startRun(ctx context.Context, issueID int64, agentName, modelNa
 	if !ok {
 		return nil, fmt.Errorf("unknown agent %q", agentName)
 	}
-	r.mu.Lock()
-	for _, a := range r.active {
-		if a.issueID == issueID {
-			r.mu.Unlock()
-			return nil, errors.New("this issue already has an active run in progress")
-		}
-	}
-	r.mu.Unlock()
-	binPath, err := LookupAgentBinary(ac.Command)
-	if err != nil {
-		return nil, fmt.Errorf("agent binary %q not found in PATH or standard user directories", ac.Command)
-	}
-	ac.Command = binPath
-	modelName = strings.TrimSpace(modelName)
-	if modelName == "" && ac.DefaultModel != "" {
-		modelName = strings.TrimSpace(ac.DefaultModel)
-	}
 	issue, err := r.st.GetIssue(ctx, issueID)
 	if err != nil {
 		return nil, err
@@ -757,28 +741,78 @@ func (r *Runner) startRun(ctx context.Context, issueID int64, agentName, modelNa
 	if err != nil {
 		return nil, err
 	}
-	if !r.reserveQueueSlot() {
-		return nil, ErrQueueFull
+	remoteExec := r.remoteFor(proj)
+	remoteRun := strings.TrimSpace(proj.RunnerID) != ""
+	if remoteRun && remoteExec == nil {
+		return nil, fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, proj.RunnerID)
 	}
-	slotHeld := true
-	defer func() {
-		if slotHeld {
-			r.releaseQueueSlot()
+	if remoteRun {
+		if r.issueHasActiveRunAny(ctx, issueID) {
+			return nil, errors.New("this issue already has an active run in progress")
 		}
-	}()
+	} else {
+		r.mu.Lock()
+		for _, a := range r.active {
+			if a.issueID == issueID {
+				r.mu.Unlock()
+				return nil, errors.New("this issue already has an active run in progress")
+			}
+		}
+		r.mu.Unlock()
+		binPath, err := LookupAgentBinary(ac.Command)
+		if err != nil {
+			return nil, fmt.Errorf("agent binary %q not found in PATH or standard user directories", ac.Command)
+		}
+		ac.Command = binPath
+	}
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" && ac.DefaultModel != "" {
+		modelName = strings.TrimSpace(ac.DefaultModel)
+	}
+	slotHeld := false
+	if !remoteRun {
+		if !r.reserveQueueSlot() {
+			return nil, ErrQueueFull
+		}
+		slotHeld = true
+		defer func() {
+			if slotHeld {
+				r.releaseQueueSlot()
+			}
+		}()
+	}
 	run, err := r.st.CreateRun(ctx, issueID, agentName, modelName)
 	if err != nil {
 		return nil, err
 	}
 	branch := fmt.Sprintf("agent/%s-run-%d", sanitizeBranch(issue.Key), run.ID)
-	workdir := filepath.Join(r.cfg.RunsDir(), fmt.Sprintf("run-%d", run.ID))
-	upd := store.RunUpdate{Branch: &branch, Workdir: &workdir}
+	upd := store.RunUpdate{Branch: &branch}
 	if autoPR {
 		upd.AutoPR = &autoPR
+	}
+	if remoteRun {
+		upd.RunnerID = &proj.RunnerID
+	} else {
+		workdir := filepath.Join(r.cfg.RunsDir(), fmt.Sprintf("run-%d", run.ID))
+		upd.Workdir = &workdir
 	}
 	run, err = r.st.UpdateRun(ctx, run.ID, upd)
 	if err != nil {
 		return nil, err
+	}
+
+	if remoteRun {
+		r.notify.BroadcastRunUpdated(run)
+		prompt := buildInitialPrompt(proj, issue, extraPrompt)
+		if strings.TrimSpace(extraPrompt) != "" {
+			r.emitEvent(run.ID, issue.ID, "user", map[string]any{"text": extraPrompt})
+		}
+		job := r.remoteJob(proj, issue, run, ac, prompt, false, false)
+		if err := remoteExec.Start(r.ctx, job); err != nil {
+			r.failRemoteStart(run, issue, err)
+			return nil, err
+		}
+		return run, nil
 	}
 
 	act, ok := r.reserveActiveRun(run.ID, issue.ID)
@@ -828,6 +862,27 @@ func (r *Runner) sendMessage(ctx context.Context, runID int64, text string, auto
 	ac, ok := r.cfg.Agent(run.Agent)
 	if !ok {
 		return fmt.Errorf("unknown agent %q", run.Agent)
+	}
+	if strings.TrimSpace(run.RunnerID) != "" {
+		if r.remote == nil || !r.remote.Online(run.RunnerID) {
+			return fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, run.RunnerID)
+		}
+		switch run.Status {
+		case domain.RunQueued, domain.RunStarting, domain.RunRunning, domain.RunAwaiting:
+			return errors.New("agent is currently busy; cancel or wait for the current turn to finish")
+		}
+		r.emitEvent(run.ID, issue.ID, "user", map[string]any{"text": text})
+		queued := domain.RunQueued
+		if u, err := r.st.UpdateRun(ctx, run.ID, store.RunUpdate{Status: &queued, Reopen: true}); err == nil {
+			r.emitEvent(run.ID, issue.ID, "status", map[string]any{"status": queued})
+			r.notify.BroadcastRunUpdated(u)
+		}
+		job := r.remoteJob(proj, issue, run, ac, text, true, autoPush)
+		if err := r.remote.Send(r.ctx, job); err != nil {
+			r.failRemoteStart(run, issue, err)
+			return err
+		}
+		return nil
 	}
 	if !r.reserveQueueSlot() {
 		return ErrQueueFull
@@ -970,6 +1025,12 @@ func (r *Runner) Shutdown() {
 
 // RespondPermission delivers the user's permission decision to a waiting run.
 func (r *Runner) RespondPermission(runID int64, requestID, optionID string) error {
+	if run, err := r.st.GetRun(context.Background(), runID); err == nil && strings.TrimSpace(run.RunnerID) != "" {
+		if r.remote == nil || !r.remote.Online(run.RunnerID) {
+			return fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, run.RunnerID)
+		}
+		return r.remote.RespondPermission(runID, requestID, optionID)
+	}
 	r.mu.Lock()
 	act := r.active[runID]
 	r.mu.Unlock()
@@ -991,6 +1052,12 @@ func (r *Runner) RespondPermission(runID int64, requestID, optionID string) erro
 
 // Cancel terminates an active run and waits briefly for the turn goroutine to finish.
 func (r *Runner) Cancel(runID int64) error {
+	if run, err := r.st.GetRun(context.Background(), runID); err == nil && strings.TrimSpace(run.RunnerID) != "" {
+		if r.remote == nil || !r.remote.Online(run.RunnerID) {
+			return fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, run.RunnerID)
+		}
+		return r.remote.Cancel(runID)
+	}
 	r.closeWarmClient(runID)
 	r.mu.Lock()
 	act := r.active[runID]
@@ -1389,3 +1456,17 @@ func (r *Runner) failRun(runID, issueID int64, msg string) {
 }
 
 var nonBranchChars = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+
+func (r *Runner) failRemoteStart(run *domain.Run, issue *domain.Issue, err error) {
+	failed := domain.RunFailed
+	msg := err.Error()
+	ended := true
+	if u, uerr := r.st.UpdateRun(context.Background(), run.ID, store.RunUpdate{Status: &failed, Error: &msg, Ended: ended}); uerr == nil {
+		r.notify.BroadcastRunUpdated(u)
+	}
+	r.emitEvent(run.ID, issue.ID, "status", map[string]any{"status": failed, "error": msg})
+	ist := domain.IssueFailed
+	if u, uerr := r.st.UpdateIssue(context.Background(), issue.ID, store.IssuePatch{Status: &ist}); uerr == nil {
+		r.notify.BroadcastIssueUpdated(u)
+	}
+}

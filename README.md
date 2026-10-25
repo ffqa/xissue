@@ -69,6 +69,22 @@ xissue update --check
 xissue update
 ```
 
+### 🖥️ 远程执行节点 (`xissue runner`)
+
+项目默认在本机执行 Agent；也可以把 Run 派发到另一台已安装 xIssue 的机器。远程节点**主动拨出** WebSocket 连接，因此不需要公网 IP、端口映射或反向代理。
+
+```bash
+# 在被用作执行节点的机器上运行（xissue 二进制需与主服务版本一致）
+xissue runner --server http://SERVER_IP:7789 --token YOUR_TOKEN --name build-mac-mini
+```
+
+- 主服务配置了 `token` 时，远程 Runner 必须用 `--token` 或 `XISSUE_TOKEN` 携带同一 Token；未配置 Token 时只允许本机回环连接。
+- 连接成功后，在项目「⚙️ 项目设置 → 执行节点」中选择该 Runner；项目之后创建的 Run 会在该节点执行。
+- 每个 Run 的工作区位于节点的 `~/.xissue-runner/runs/run-N/`（`--data-dir` 可改），仓库镜像复用 `~/.xissue-runner/mirrors/`。
+- 节点需要自行具备 Agent CLI、对应模型凭据，以及 `git push` 所需的 SSH/HTTPS 凭据；主服务负责在推送成功后通过 Provider API 创建 PR。
+- 远程节点暂不支持「直接合入目标分支（merge_local）」，请使用 PR 或 push；节点断线时，正在执行的 Run 会标记为失败并可重试。
+- `GET /api/runners` 返回当前在线 Runner；项目设置的 Runner 下拉框每 15 秒刷新一次。
+
 ### macOS 首次运行被系统拦截（Gatekeeper）
 
 若手动下载的二进制首次执行被 macOS 拦截：
@@ -83,6 +99,7 @@ chmod +x ~/.local/bin/xissue
 ## ✨ 核心特性
 
 - **Git 平台适配**：GitHub 复用本机 `gh`；Gitea/Forgejo 使用 REST API（Issue/评论/标签/PR 创建/合并/关闭/状态同步）。Gitea 连接信息只从环境变量读取：`XISSUE_GITEA_URL`（或 `GITEA_URL`）与 `XISSUE_GITEA_TOKEN`（或 `GITEA_TOKEN` / `GITEA_ACCESS_TOKEN`），Token 不写入数据库或 Web UI，也不会传给 Agent 子进程。PR 列表会展示 CI 汇总徽标；GitLab 暂按 plain Git 处理。
+- **🖥️ 远程执行节点**：项目可把 Run 派发到另一台机器上的 `xissue runner`；节点主动拨出 WebSocket，无需公网入口。远程 Run 支持事件流、权限审批、会话续跑、Diff 编辑、提交/提 PR，服务端负责状态与 PR 编排。
 - **单仓 / 多仓统一模型**：一个 Project 包含 `1..N` 个 Git 仓库。每次 Run 为各仓库从本地 bare mirror 创建独立 `git worktree` 放在同一父目录下，Agent 可跨仓库修改；提交时按仓库分别 commit / push / 提 PR。
 - **精简四列拖拽流转看板**：
   - 看板卡片仅展示**标题**与**两行摘要**，干净清爽；完整描述、评论、状态下拉与代码审查均在详情页内操作。

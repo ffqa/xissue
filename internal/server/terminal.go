@@ -54,6 +54,10 @@ func (s *Server) handleRunTerminal(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	if run.RunnerID != "" {
+		writeErr(w, http.StatusConflict, errors.New("remote run workspaces are on the remote runner; use a local run for the terminal"))
+		return
+	}
 	if run.Workdir == "" {
 		writeErr(w, http.StatusConflict, errors.New("run has no workspace"))
 		return

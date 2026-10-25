@@ -999,7 +999,8 @@ func (r *Runner) CherryPick(ctx context.Context, req CherryPickRequest) (*Cherry
 // BatchRunTodoIssues starts runs for all backlog/todo issues in a project that don't have an active run.
 func (r *Runner) BatchRunTodoIssues(ctx context.Context, projectID int64, agentName, modelName string) ([]*domain.Run, error) {
 	if strings.TrimSpace(agentName) == "" {
-		agentName = r.AvailableAgentForRole(AgentRoleIssueDevelop)
+		proj, _ := r.st.GetProject(ctx, projectID)
+		agentName = r.AvailableAgentForProject(AgentRoleIssueDevelop, proj)
 	}
 	if agentName == "" {
 		return nil, fmt.Errorf("未找到可用的 Agent")

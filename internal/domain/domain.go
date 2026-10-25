@@ -48,6 +48,7 @@ type Project struct {
 	AutoDevelopDailyLimit int              `json:"autoDevelopDailyLimit"` // 每项目每日自动预开发 run 上限，0=使用默认 5
 	AutomationRules       []AutomationRule `json:"automationRules"`
 	PullBranches          []string         `json:"pullBranches"` // 手动/自动拉取时只更新这些分支，空=全部
+	RunnerID              string           `json:"runnerId"`     // empty = local built-in runner; otherwise a connected remote runner
 	Repos                 []Repo           `json:"repos"`
 	CreatedAt             time.Time        `json:"createdAt"`
 	UpdatedAt             time.Time        `json:"updatedAt"`
@@ -197,6 +198,7 @@ type Run struct {
 	PRState      string    `json:"prState"`
 	ChangeRecord string    `json:"changeRecord"`
 	AutoPR       bool      `json:"autoPr"` // 自动预开发产生的 run，完成后自动发 PR（不合并）
+	RunnerID     string    `json:"runnerId"`
 	// Usage is populated from ACP usage_update / prompt usage. CostAmount is
 	// attributed to this run (deltas of the session's cumulative cost).
 	InputTokens         int64      `json:"inputTokens"`

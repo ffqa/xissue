@@ -11,6 +11,7 @@
 - 若配置了 `token`：请求需带 `Authorization: Bearer <token>`，或 Cookie `xissue_token=<token>`。
   访问 `/?token=<token>` 时服务端会写入该 Cookie 并重定向到 `/`。WebSocket 依赖 Cookie，并校验 Origin。
 - `GET /api/fs/browse` / `GET /api/fs/inspect` 无根目录白名单；配置 token 后应视为敏感接口。
+- `GET /api/runners/ws` 供远程执行节点主动拨入；配置 token 时必须带 Bearer，未配置 token 时只允许回环地址，并拒绝带浏览器 `Origin` 的请求。
 
 ## 类型
 
@@ -36,6 +37,7 @@ interface Project {
   targetBranch: string;    // 默认目标分支，如 "main" 或 "dev"
   autoPrOnConfirm: boolean;
   pullBranches: string[];  // 拉取代码时只更新这些分支，空数组=全部
+  runnerId?: string;       // 空=本机；非空=已连接的远程 Runner 名称
   automationRules: AutomationRule[];
   repos: Repo[];
   createdAt: string; updatedAt: string;
@@ -117,6 +119,7 @@ interface RunEvent {
 | GET | `/api/plugins/{id}/config` | `{ exists, template, content, path }`；无 `config.json` 时优先返回 `config.example.json` 内容 |
 | PUT | `/api/plugins/{id}/config` | `{ content }` 原子写入 `config.json`（校验 JSON，权限 `0600`）→ 同 GET |
 | GET | `/api/agents` | `[{ name, command, available }]` |
+| GET | `/api/runners` | `{ runners: [{ id, name, version, online, connectedAt }] }`；远程 Runner 通过 `GET /api/runners/ws`（WebSocket，`xissue runner`）注册 |
 | GET | `/api/projects` | `Project[]` |
 | POST | `/api/projects` | `{ name, description }` → `Project` |
 | GET / PATCH / DELETE | `/api/projects/{id}` | PATCH `{ name?, description? }` |

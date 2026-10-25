@@ -51,9 +51,18 @@ export interface Project {
   autoDevelopDailyLimit: number;
   automationRules: AutomationRule[];
   pullBranches: string[];
+  runnerId?: string;
   repos: Repo[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RemoteRunnerInfo {
+  id: string;
+  name: string;
+  version: string;
+  online: boolean;
+  connectedAt?: string;
 }
 
 export interface RuleConditions {
@@ -183,6 +192,7 @@ export interface Run {
   prUrl: string;
   prState: string;
   changeRecord: string;
+  runnerId?: string;
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;

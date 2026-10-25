@@ -96,6 +96,7 @@ export default function ProjectPage() {
   const issues = useQuery({ queryKey: qk.issues(id), queryFn: () => api.issues(id) });
   const agentsQ = useQuery({ queryKey: qk.agents, queryFn: api.agents });
   const watchesQ = useQuery({ queryKey: qk.watches(id), queryFn: () => api.watches(id) });
+  const runnersQ = useQuery({ queryKey: qk.runners, queryFn: api.runners, refetchInterval: 15000 });
 
   const [repoOpen, setRepoOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -158,6 +159,7 @@ export default function ProjectPage() {
   const [settingsTab, setSettingsTab] = useState<'mode' | 'automation'>('mode');
   const [cfgDevMode, setCfgDevMode] = useState<DevMode>('single_main');
   const [cfgTargetBranch, setCfgTargetBranch] = useState('main');
+  const [cfgRunnerID, setCfgRunnerID] = useState('');
   const [cfgAutoPR, setCfgAutoPR] = useState(true);
   const [cfgAutoDevelop, setCfgAutoDevelop] = useState(false);
   const [cfgAutoDevelopAgent, setCfgAutoDevelopAgent] = useState('');
@@ -198,6 +200,7 @@ export default function ProjectPage() {
       autoDevelopDailyLimit?: number;
       automationRules?: AutomationRule[];
       pullBranches?: string[];
+      runnerId?: string;
     }) => api.updateProject(id, b),
     onSuccess: (updated) => {
       qc.setQueryData(qk.project(id), updated);
@@ -223,10 +226,12 @@ export default function ProjectPage() {
     saveRulesMut.mutate(rules);
   };
 
-  const defaultAgent =
-    (agentsQ.data ?? []).find((a) => a.available && a.name === 'opencode')?.name ||
-    (agentsQ.data ?? []).find((a) => a.available)?.name ||
-    'opencode';
+  const remoteProject = Boolean(project.data?.runnerId);
+  const defaultAgent = remoteProject
+    ? (agentsQ.data ?? []).find((a) => a.name === 'opencode')?.name || (agentsQ.data ?? [])[0]?.name || 'opencode'
+    : (agentsQ.data ?? []).find((a) => a.available && a.name === 'opencode')?.name ||
+      (agentsQ.data ?? []).find((a) => a.available)?.name ||
+      'opencode';
 
   const refreshProject = () => {
     qc.invalidateQueries({ queryKey: qk.project(id) });
@@ -507,6 +512,15 @@ export default function ProjectPage() {
         <div className="grow">
           <h1>{p?.name ?? '加载中…'}</h1>
           {p?.description && <div className="muted small">{p.description}</div>}
+          {p?.runnerId && (() => {
+            const r = (runnersQ.data?.runners ?? []).find((x) => x.id === p.runnerId);
+            return (
+              <div className="small" style={{ marginTop: 4 }}>
+                🖥️ 执行节点：<span className="mono">{r?.name || p.runnerId}</span>{' '}
+                <span style={{ color: r ? 'var(--success)' : 'var(--error)' }}>{r ? '在线' : '离线'}</span>
+              </div>
+            );
+          })()}
         </div>
         <button
           className="ghost"
@@ -567,6 +581,7 @@ export default function ProjectPage() {
             const curMode = p?.devMode || 'single_main';
             setCfgDevMode(curMode);
             setCfgTargetBranch(p?.targetBranch || (curMode === 'main_dev' ? 'dev' : 'main'));
+            setCfgRunnerID(p?.runnerId || '');
             setCfgAutoPR(p?.autoPrOnConfirm ?? true);
             setCfgAutoDevelop(p?.autoDevelop ?? false);
             setCfgAutoDevelopAgent(p?.autoDevelopAgent ?? '');
@@ -1251,6 +1266,7 @@ export default function ProjectPage() {
                     autoDevelopDailyLimit: cfgAutoDevelopDailyLimit,
                     automationRules: cfgAutomationRules,
                     pullBranches: cfgPullBranches.split(',').map((s) => s.trim()).filter(Boolean),
+                    runnerId: cfgRunnerID,
                   })
                 }
               >
@@ -1387,6 +1403,28 @@ export default function ProjectPage() {
                 </span>
               </label>
 
+              <label className="field">
+                执行节点 (Runner)
+                <select
+                  className="mono"
+                  value={cfgRunnerID}
+                  onChange={(e) => setCfgRunnerID(e.target.value)}
+                >
+                  <option value="">本机执行（内置 Runner）</option>
+                  {cfgRunnerID && !(runnersQ.data?.runners ?? []).some((r) => r.id === cfgRunnerID) && (
+                    <option value={cfgRunnerID}>{cfgRunnerID}（离线 / 未连接）</option>
+                  )}
+                  {(runnersQ.data?.runners ?? []).map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name} {r.online ? '· 在线' : '· 离线'} ({r.version || 'unknown'})
+                    </option>
+                  ))}
+                </select>
+                <span className="small dim">
+                  选择已连接的远程 Runner 后，本项目的新 Run 会在该节点执行；离线 Runner 无法启动。
+                </span>
+              </label>
+
               <div className="row" style={{ gap: 8 }}>
                 <span className="small muted">快捷选择常用分支:</span>
                 <button
@@ -1480,9 +1518,9 @@ export default function ProjectPage() {
                       >
                         <option value="">默认（{defaultAgent}）</option>
                         {(agentsQ.data ?? []).map((ag) => (
-                          <option key={ag.name} value={ag.name} disabled={!ag.available}>
+                          <option key={ag.name} value={ag.name} disabled={!ag.available && !remoteProject}>
                             {ag.name}
-                            {ag.available ? '' : '（不可用）'}
+                            {ag.available ? '' : remoteProject ? '（本机未安装，远程执行）' : '（不可用）'}
                           </option>
                         ))}
                       </select>
@@ -1829,8 +1867,8 @@ export default function ProjectPage() {
                               onChange={(e) => setNewRuleAgent(e.target.value)}
                             >
                               {(agentsQ.data ?? []).map((ag) => (
-                                <option key={ag.name} value={ag.name} disabled={!ag.available}>
-                                  {ag.name} {!ag.available ? '(未就绪)' : ''}
+                                <option key={ag.name} value={ag.name} disabled={!ag.available && !remoteProject}>
+                                  {ag.name} {!ag.available ? remoteProject ? '(本机未就绪，远程执行)' : '(未就绪)' : ''}
                                 </option>
                               ))}
                             </select>

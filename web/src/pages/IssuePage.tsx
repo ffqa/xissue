@@ -52,6 +52,8 @@ export default function IssuePage() {
   const agentsQ = useQuery({ queryKey: qk.agents, queryFn: api.agents });
   const healthQ = useQuery({ queryKey: qk.health, queryFn: api.health, staleTime: Infinity });
 
+  const remoteProject = Boolean(project?.runnerId);
+  const agentUsable = (a: { available: boolean }) => a.available || remoteProject;
   const runs = runsQ.data ?? [];
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
 
@@ -79,10 +81,10 @@ export default function IssuePage() {
 
   useEffect(() => {
     if (!agent && agentsQ.data && agentsQ.data.length > 0) {
-      const avail = agentsQ.data.find((a) => a.available) ?? agentsQ.data[0];
+      const avail = agentsQ.data.find((a) => agentUsable(a)) ?? agentsQ.data[0];
       setAgent(avail.name);
     }
-  }, [agent, agentsQ.data]);
+  }, [agent, agentsQ.data, remoteProject]);
 
   const modelsQ = useQuery({
     queryKey: qk.agentModels(agent),
@@ -461,7 +463,7 @@ export default function IssuePage() {
                     📁 文本复盘归档
                   </button>
                 )}
-                {currentRun?.workdir && (
+                {currentRun?.workdir && !currentRun?.runnerId && (
                   <button
                     type="button"
                     className="sm ghost"
@@ -471,7 +473,7 @@ export default function IssuePage() {
                     ⌨️ 终端
                   </button>
                 )}
-                {currentRun?.workdir && healthQ.data?.editorUrlTemplate && (
+                {currentRun?.workdir && !currentRun?.runnerId && healthQ.data?.editorUrlTemplate && (
                   <a
                     className="btn sm"
                     href={editorUrl(healthQ.data.editorUrlTemplate, currentRun.workdir) ?? '#'}
@@ -594,9 +596,9 @@ export default function IssuePage() {
             选择 Agent
             <select value={agent} onChange={(e) => handleAgentChange(e.target.value)}>
               {(agentsQ.data ?? []).map((a) => (
-                <option key={a.name} value={a.name} disabled={!a.available}>
+                <option key={a.name} value={a.name} disabled={!agentUsable(a)}>
                   {a.name} ({a.command}){a.defaultModel ? ` · 默认: ${a.defaultModel}` : ''}
-                  {a.available ? '' : ' - 未安装'}
+                  {a.available ? '' : remoteProject ? ' - 本机未安装，将在远程执行' : ' - 未安装'}
                 </option>
               ))}
             </select>
@@ -1028,6 +1030,7 @@ function ReviewPane({
   });
 
   const totalFiles = groups.reduce((n, g) => n + g.files.length, 0);
+  const isRemoteRun = Boolean(run.runnerId);
   const absPath = sel && run.workdir ? `${run.workdir}/${sel.repoName}/${sel.path}` : '';
   const openHref = absPath ? editorUrl(editorTemplate, absPath) : null;
 
@@ -1078,9 +1081,9 @@ function ReviewPane({
           <>
             <button
               className="primary sm"
-              disabled={totalFiles === 0 || isRunning || submit.isPending}
+              disabled={totalFiles === 0 || isRunning || submit.isPending || isRemoteRun}
               onClick={() => openSubmitModal('merge_local', 'main')}
-              title="改完确认后直接合入本地 main 分支并标记完成"
+              title={isRemoteRun ? '远程 Run 不支持直接合入本地分支，请使用 PR 或仅推送' : '改完确认后直接合入本地 main 分支并标记完成'}
             >
               {submit.isPending ? '合入中…' : '⚡ 确认并合入本地 main'}
             </button>
@@ -1304,6 +1307,8 @@ function ReviewPane({
                 <button
                   type="button"
                   className={`sm ${subMode === 'merge_local' ? 'primary' : 'ghost'}`}
+                  disabled={isRemoteRun}
+                  title={isRemoteRun ? '远程 Run 不支持直接合入本地分支' : undefined}
                   onClick={() => setSubMode('merge_local')}
                 >
                   ⚡ 合入本地分支

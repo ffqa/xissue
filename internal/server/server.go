@@ -26,6 +26,7 @@ type Server struct {
 	cfg    *config.Config
 	st     *store.Store
 	runner *runner.Runner
+	remote *remoteManager
 	hub    *Hub
 	mux    *http.ServeMux
 
@@ -66,6 +67,8 @@ func New(cfg *config.Config, st *store.Store) *Server {
 		stopCh:    make(chan struct{}),
 		startedAt: time.Now(),
 	}
+	s.remote = newRemoteManager(cfg, st, r, hub)
+	r.SetRemoteExecutor(s.remote)
 	s.routes()
 	go s.issueSyncLoop()
 	go s.autoUpdateLoop()
@@ -79,6 +82,9 @@ func (s *Server) Shutdown() {
 			close(s.stopCh)
 		}
 	})
+	if s.remote != nil {
+		s.remote.Close()
+	}
 	if s.runner != nil {
 		s.runner.Shutdown()
 	}
@@ -116,8 +122,9 @@ func isStateChanging(method string) bool {
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// 1. Host header validation (DNS Rebinding protection)
-		if !isAllowedHost(r.Host, s.cfg.Listen) {
+		// 1. Host header validation (DNS Rebinding protection). Remote runners
+		// authenticate with a bearer token and may connect through a LAN IP.
+		if r.URL.Path != "/api/runners/ws" && !isAllowedHost(r.Host, s.cfg.Listen) {
 			http.Error(w, "forbidden: invalid host header", http.StatusForbidden)
 			return
 		}
@@ -196,6 +203,8 @@ func (s *Server) routes() {
 	m.HandleFunc("DELETE /api/agents/{name}", s.handleDeleteAgent)
 	m.HandleFunc("GET /api/agents/{name}/models", s.handleAgentModels)
 	m.HandleFunc("GET /api/ws", s.hub.serveWS)
+	m.HandleFunc("GET /api/runners", s.remote.handleList)
+	m.HandleFunc("GET /api/runners/ws", s.remote.handleWS)
 	m.HandleFunc("GET /api/fs/browse", s.handleBrowseDir)
 	m.HandleFunc("GET /api/fs/inspect", s.handleInspectDir)
 

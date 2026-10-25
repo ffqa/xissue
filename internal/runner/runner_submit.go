@@ -17,14 +17,6 @@ import (
 )
 
 func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]SubmitResult, error) {
-	r.mu.Lock()
-	busy := r.active[runID] != nil
-	r.mu.Unlock()
-	if busy {
-		return nil, errors.New("cannot submit while agent is still running")
-	}
-	r.closeWarmClient(runID)
-
 	run, proj, err := r.runAndProject(ctx, runID)
 	if err != nil {
 		return nil, err
@@ -33,6 +25,23 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 	if err != nil {
 		return nil, err
 	}
+	if strings.TrimSpace(run.RunnerID) != "" {
+		switch run.Status {
+		case domain.RunQueued, domain.RunStarting, domain.RunRunning, domain.RunAwaiting:
+			return nil, errors.New("cannot submit while agent is still running")
+		}
+		if r.remote == nil || !r.remote.Online(run.RunnerID) {
+			return nil, fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, run.RunnerID)
+		}
+		return r.remote.Submit(ctx, run, proj, issue, req)
+	}
+	r.mu.Lock()
+	busy := r.active[runID] != nil
+	r.mu.Unlock()
+	if busy {
+		return nil, errors.New("cannot submit while agent is still running")
+	}
+	r.closeWarmClient(runID)
 	commitMsg := strings.TrimSpace(req.CommitMessage)
 	if commitMsg == "" {
 		commitMsg = fmt.Sprintf("%s (%s)", issue.Title, issue.Key)
@@ -284,13 +293,31 @@ func (r *Runner) removeRunWorkdir(ctx context.Context, run *domain.Run, proj *do
 
 func (r *Runner) Discard(ctx context.Context, runID int64) error {
 	_ = r.Cancel(runID)
-	r.mu.Lock()
-	delete(r.allowSet, runID)
-	r.mu.Unlock()
 	run, proj, err := r.runAndProject(ctx, runID)
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(run.RunnerID) != "" {
+		if r.remote == nil || !r.remote.Online(run.RunnerID) {
+			return fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, run.RunnerID)
+		}
+		if err := r.remote.Discard(ctx, run, proj); err != nil {
+			return err
+		}
+		r.ArchiveRemoteRun(run.ID)
+		empty := ""
+		st := domain.RunDiscarded
+		if u, err := r.st.UpdateRun(ctx, run.ID, store.RunUpdate{Status: &st, Workdir: &empty, Ended: true}); err == nil {
+			r.notify.BroadcastRunUpdated(u)
+		}
+		if run.EndedAt == nil {
+			r.DispatchRemoteRunEvent(run.ID, automation.EventRunFinished)
+		}
+		return nil
+	}
+	r.mu.Lock()
+	delete(r.allowSet, runID)
+	r.mu.Unlock()
 	_, _ = r.ArchiveRun(ctx, run.ID)
 	r.cleanupRunWorkdir(ctx, run, proj)
 	empty := ""
@@ -307,13 +334,44 @@ func (r *Runner) Discard(ctx context.Context, runID int64) error {
 // Delete removes the run's worktree/branch on disk and deletes the run record.
 func (r *Runner) Delete(ctx context.Context, runID int64) error {
 	_ = r.Cancel(runID)
-	r.mu.Lock()
-	delete(r.allowSet, runID)
-	r.mu.Unlock()
 	run, proj, err := r.runAndProject(ctx, runID)
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(run.RunnerID) != "" {
+		if r.remote == nil || !r.remote.Online(run.RunnerID) {
+			return fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, run.RunnerID)
+		}
+		if err := r.remote.Delete(ctx, run, proj); err != nil {
+			return err
+		}
+		if err := r.st.DeleteRun(ctx, run.ID); err != nil {
+			return err
+		}
+		if issue, err := r.st.GetIssue(ctx, run.IssueID); err == nil {
+			hasActive := false
+			if runs, rerr := r.st.ListRuns(ctx, issue.ID); rerr == nil {
+				for _, rem := range runs {
+					if rem.Status == domain.RunQueued || rem.Status == domain.RunStarting || rem.Status == domain.RunRunning || rem.Status == domain.RunAwaiting {
+						hasActive = true
+						break
+					}
+				}
+			}
+			if !hasActive && (issue.Status == domain.IssueFailed || issue.Status == domain.IssueRunning) {
+				todo := domain.IssueTodo
+				if u, uerr := r.st.UpdateIssue(ctx, issue.ID, store.IssuePatch{Status: &todo}); uerr == nil {
+					issue = u
+				}
+			}
+			r.notify.BroadcastIssueUpdated(issue)
+			r.ExportIssueMarkdown(ctx, issue.ID)
+		}
+		return nil
+	}
+	r.mu.Lock()
+	delete(r.allowSet, runID)
+	r.mu.Unlock()
 	_, _ = r.ArchiveRun(ctx, run.ID)
 	r.cleanupRunWorkdir(ctx, run, proj)
 	if err := r.st.DeleteRun(ctx, run.ID); err != nil {

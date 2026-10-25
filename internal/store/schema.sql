@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS runs (
     pr_state      TEXT NOT NULL DEFAULT '',
     change_record TEXT NOT NULL DEFAULT '',
     auto_pr       INTEGER NOT NULL DEFAULT 0,
+    runner_id     TEXT NOT NULL DEFAULT '',
     input_tokens  INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
     total_tokens  INTEGER NOT NULL DEFAULT 0,

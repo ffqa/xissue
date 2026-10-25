@@ -476,6 +476,7 @@ export interface MonitorConfig {
   syncIssues: boolean;
   syncIntervalMin: number;
   autoDevelopIssues: boolean;
+  autoFixCIFailures?: boolean;
   notificationRoutes?: Record<string, string[]>;
 }
 

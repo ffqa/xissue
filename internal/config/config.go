@@ -54,6 +54,7 @@ type MonitorConfig struct {
 	SyncIssues        bool   `yaml:"syncIssues" json:"syncIssues"`                                 // 全局自动同步各项目的远程 Issue
 	SyncIntervalMin   int    `yaml:"syncIntervalMin" json:"syncIntervalMin"`                       // 自动同步间隔（分钟），默认 5
 	AutoDevelopIssues bool   `yaml:"autoDevelopIssues" json:"autoDevelopIssues"`                   // 全局自动开发判定为 Bug/需求的 Issue
+	AutoFixCIFailures bool   `yaml:"autoFixCIFailures" json:"autoFixCIFailures"`                   // 可选：PR CI 失败时在同一分支自动修复（最多 3 次）
 	// NotificationRoutes maps notification event kinds to external channels
 	// (browser/telegram/webhook). An empty map preserves legacy "send all".
 	NotificationRoutes map[string][]string `yaml:"notificationRoutes,omitempty" json:"notificationRoutes,omitempty"`
@@ -175,6 +176,7 @@ type MonitorPatch struct {
 	SyncIssues         *bool                `json:"syncIssues"`
 	SyncIntervalMin    *int                 `json:"syncIntervalMin"`
 	AutoDevelopIssues  *bool                `json:"autoDevelopIssues"`
+	AutoFixCIFailures  *bool                `json:"autoFixCIFailures"`
 	NotificationRoutes *map[string][]string `json:"notificationRoutes"`
 }
 
@@ -549,6 +551,9 @@ func (c *Config) PatchMonitor(p MonitorPatch) error {
 	}
 	if p.AutoDevelopIssues != nil {
 		m.AutoDevelopIssues = *p.AutoDevelopIssues
+	}
+	if p.AutoFixCIFailures != nil {
+		m.AutoFixCIFailures = *p.AutoFixCIFailures
 	}
 	if p.NotificationRoutes != nil {
 		m.NotificationRoutes = sanitizeNotificationRoutes(*p.NotificationRoutes)

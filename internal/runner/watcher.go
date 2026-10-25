@@ -781,6 +781,12 @@ func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watch
 					prsUpdated++
 				}
 			}
+			if prDetail.State == "open" {
+				runCopy := run
+				r.maybeAutoFixCI(ctx, issue, &runCopy, prDetail)
+			} else if prDetail.State == "merged" || prDetail.State == "closed" {
+				r.clearCIFix(run.ID)
+			}
 
 			st := prDetail.State
 			prTitle := prDetail.Title

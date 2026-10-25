@@ -56,7 +56,7 @@ func TestGiteaIssueAndPRFlow(t *testing.T) {
 					"number": 7, "title": "fix", "body": "body", "state": "closed", "merged": true, "merged_at": "2026-01-02T03:04:05Z",
 					"html_url": "https://gitea.test/acme/demo/pulls/7", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-02T00:00:00Z",
 					"user": map[string]any{"login": "alice"}, "labels": []map[string]any{{"id": 1, "name": "bug"}},
-					"head": map[string]any{"ref": "feat"}, "base": map[string]any{"ref": "main"},
+					"head": map[string]any{"ref": "feat", "sha": "abc123"}, "base": map[string]any{"ref": "main"},
 				},
 				{
 					"number": 8, "title": "wip", "state": "open",
@@ -161,8 +161,10 @@ func TestGiteaPRURLStatusAndDetails(t *testing.T) {
 			writeTestJSON(t, w, map[string]any{
 				"number": 7, "title": "fix", "state": "closed", "merged": true,
 				"html_url": "https://gitea.test/acme/demo/pulls/7", "user": map[string]any{"login": "alice"},
-				"head": map[string]any{"ref": "feat"}, "base": map[string]any{"ref": "main"},
+				"head": map[string]any{"ref": "feat", "sha": "abc123"}, "base": map[string]any{"ref": "main"},
 			})
+		case "/api/v1/repos/acme/demo/commits/abc123/status":
+			writeTestJSON(t, w, map[string]any{"state": "failure", "statuses": []map[string]any{{"status": "failure"}, {"status": "success"}}})
 		case "/api/v1/repos/acme/demo/issues/7/comments":
 			writeTestJSON(t, w, []map[string]any{{
 				"id": 21, "body": "LGTM", "created_at": "2026-01-02T03:04:05Z", "user": map[string]any{"login": "bob"},
@@ -188,11 +190,14 @@ func TestGiteaPRURLStatusAndDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.State != "merged" || detail.Author != "alice" || detail.HeadRefName != "feat" || detail.BaseRefName != "main" {
+	if detail.State != "merged" || detail.Author != "alice" || detail.HeadRefName != "feat" || detail.BaseRefName != "main" || detail.HeadSHA != "abc123" {
 		t.Fatalf("detail = %+v", detail)
 	}
 	if len(detail.Comments) != 1 || detail.Comments[0].Body != "LGTM" {
 		t.Fatalf("comments = %+v", detail.Comments)
+	}
+	if detail.CIState != "failure" || detail.CIFailed != 1 || detail.CIPassed != 1 {
+		t.Fatalf("ci = %s passed=%d failed=%d", detail.CIState, detail.CIPassed, detail.CIFailed)
 	}
 	if len(detail.LatestReviews) != 1 || detail.LatestReviews[0].State != "approved" {
 		t.Fatalf("reviews = %+v", detail.LatestReviews)

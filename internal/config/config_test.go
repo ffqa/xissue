@@ -134,6 +134,13 @@ func TestMonitorSecretsAreMaskedAndPreserved(t *testing.T) {
 	if !cfg.MonitorSnapshot().AutoDevelopIssues {
 		t.Fatalf("autoDevelopIssues not patched: %+v", cfg.MonitorSnapshot())
 	}
+	autoFix := true
+	if err := cfg.PatchMonitor(MonitorPatch{AutoFixCIFailures: &autoFix}); err != nil {
+		t.Fatalf("PatchMonitor autoFixCIFailures: %v", err)
+	}
+	if !cfg.MonitorSnapshot().AutoFixCIFailures {
+		t.Fatalf("autoFixCIFailures not patched: %+v", cfg.MonitorSnapshot())
+	}
 }
 
 func TestAgentSnapshotsAreDefensiveCopies(t *testing.T) {

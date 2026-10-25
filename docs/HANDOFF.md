@@ -195,13 +195,20 @@
 - **环境变量**: `XISSUE_GITEA_URL`（回退 `GITEA_URL`）填写实例根地址，例如 `https://gitea.example.com`；`XISSUE_GITEA_TOKEN`（回退 `GITEA_TOKEN` / `GITEA_ACCESS_TOKEN`）填写 API Token。Token 只存在进程环境，不写入 SQLite/配置文件/前端。
 - **安全**: Gitea Token 仅存在于 Server 进程环境；`acp.Start` 启动 Agent 时会剔除 `XISSUE_GITEA_TOKEN`/`GITEA_TOKEN`/`GITEA_ACCESS_TOKEN`/`XISSUE_TOKEN`，避免提示词注入读取 Token。需要给 Agent 的凭据应通过 `AgentConfig.Env` 显式传入或使用本机 git credential helper。
 - **限制**: 单进程配置一个 Gitea 实例；GitLab 仍按 plain Git 处理，需后续单独适配。
-- **CI 展示**: PR 列表新增 CI 汇总字段（`ciState`/`ciPassed`/`ciFailed`/`ciPending`）：GitHub 读 `statusCheckRollup`，Gitea 读每个 open PR head SHA 的 commit status；前端显示 `CI ✓/…/✗` 徽标。CI 失败自动修复仍未实现。
+- **CI 展示**: PR 列表与 PR 详情新增 CI 汇总字段（`ciState`/`ciPassed`/`ciFailed`/`ciPending`）：GitHub 读 `statusCheckRollup`，Gitea 读每个 open PR head SHA 的 commit status；前端显示 `CI ✓/…/✗` 徽标。PR 详情同时返回 `headSha`，供 CI 自动修复去重。
 - **测试**: `internal/provider/gitea_test.go` 使用本地 `httptest` 覆盖 Issue/评论/标签/PR/合并/关闭/CI 与 PR URL 详情，不依赖真实 Gitea。
 
 ### 2.18 自动开发安全默认值
 - **作者白名单**: 开启全局 `monitor.autoDevelopIssues` 后，项目未配置 `autoDevelopAuthors` 时直接跳过并写监控日志，避免公开仓库的任意作者触发本机 Agent。
 - **网络工具默认审批**: 默认 `permissions.autoAllowKinds` 从 `read/search/think/fetch/edit` 收紧为 `read/search/think/edit`；配置版本升到 3，旧配置迁移时移除 `fetch`。需要联网时由用户显式重新加入并承担提示词注入风险。
 - **提交完成状态**: `RunSubmitted` 现在写入 `ended_at`，使提交后的 Run 进入日志/工作区保留期统计。
+
+### 2.19 CI 失败自动修复（可选）
+- **开关**: `monitor.autoFixCIFailures`（默认 `false`），可在监控弹窗「策略与通知」中开启；只处理 open PR，且复用该 Run 已有的分支、工作区与 agent，不新建 PR、不合并。
+- **触发条件**: 每轮 PR 巡检读取 PR 详情 CI 汇总；仅当 `ciState=failure` 且拿到 `headSha` 时触发。同一 Run 的同一 `headSha` 只尝试一次；换新提交后可继续，最多 `3` 次，成功后清零。
+- **执行与推送**: 通过内部 `SendMessage(..., autoPush=true)` 排队一次修复 Turn；Turn 成功后由 Runner 调用 `Submit(mode="push")` 提交并推送原分支，避免 Agent 直接执行 `git push`。若 Agent 未产生改动或推送失败，只记录事件/通知，不改写 PR 状态。
+- **PR 元数据保护**: `Submit` 的 push-only 路径不再用空 `prUrl` 覆盖已有 PR URL/状态，并将已有 PR 的 Issue 保持为 `pr_open`；同时保留原 PR 目标分支。
+- **测试**: `internal/runner/cifix_test.go` 覆盖去重、3 次上限、成功清零与 push 保留 PR 元数据；`internal/provider/github_pr_ci_test.go` 与 Gitea 测试覆盖 CI 字段解析。
 
 ## 3. 核心架构与关键代码索引
 

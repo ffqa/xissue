@@ -118,6 +118,13 @@ type queuedTurn struct {
 	ac       config.AgentConfig
 	prompt   string
 	isResume bool
+	autoPush bool // CI auto-fix: push the existing branch after the turn
+}
+
+type ciFixAttempt struct {
+	head     string
+	attempts int
+	at       time.Time
 }
 
 // ErrQueueFull is returned when the configured pending-run limit is reached.
@@ -148,6 +155,8 @@ type Runner struct {
 	queue           []*queuedTurn
 	queueReserved   int
 	queueSignal     chan struct{}
+	ciFixMu         sync.Mutex
+	ciFixAttempts   map[int64]ciFixAttempt
 	mu              sync.Mutex
 	active          map[int64]*activeRun      // runID -> activeRun
 	warm            map[int64]*warmSession    // runID -> idle warm ACP process
@@ -174,19 +183,20 @@ type Runner struct {
 func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &Runner{
-		cfg:         cfg,
-		st:          st,
-		notify:      notify,
-		ctx:         ctx,
-		cancel:      cancel,
-		budget:      newBudget(cfg.Runner.MaxConcurrent, cfg.Runner.MemoryBudgetMB),
-		queueSignal: make(chan struct{}, 1),
-		active:      map[int64]*activeRun{},
-		warm:        map[int64]*warmSession{},
-		allowSet:    map[int64]map[string]bool{},
-		modelCache:  map[string]cachedAgentModels{},
-		monitorLogs: []MonitorLogEntry{},
-		automation:  automation.NewEngine(cfg.PluginsDir()),
+		cfg:           cfg,
+		st:            st,
+		notify:        notify,
+		ctx:           ctx,
+		cancel:        cancel,
+		budget:        newBudget(cfg.Runner.MaxConcurrent, cfg.Runner.MemoryBudgetMB),
+		queueSignal:   make(chan struct{}, 1),
+		ciFixAttempts: map[int64]ciFixAttempt{},
+		active:        map[int64]*activeRun{},
+		warm:          map[int64]*warmSession{},
+		allowSet:      map[int64]map[string]bool{},
+		modelCache:    map[string]cachedAgentModels{},
+		monitorLogs:   []MonitorLogEntry{},
+		automation:    automation.NewEngine(cfg.PluginsDir()),
 	}
 	// Mark any runs left active by a previous server process as failed and sync their parent issues.
 	if runs, err := st.ListActiveRuns(context.Background()); err == nil {
@@ -649,7 +659,7 @@ func (r *Runner) queueLoop() {
 		}
 		go func(t *queuedTurn, memMB int) {
 			defer r.budget.release(memMB)
-			r.executeTurn(t.act, t.proj, t.issue, t.ac, t.prompt, t.isResume)
+			r.executeTurn(t.act, t.proj, t.issue, t.ac, t.prompt, t.isResume, t.autoPush)
 		}(t, memMB)
 	}
 }
@@ -794,6 +804,10 @@ func (r *Runner) startRun(ctx context.Context, issueID int64, agentName, modelNa
 
 // SendMessage sends a follow-up instruction to a running or completed run (resuming in the same workdir).
 func (r *Runner) SendMessage(ctx context.Context, runID int64, text string) error {
+	return r.sendMessage(ctx, runID, text, false)
+}
+
+func (r *Runner) sendMessage(ctx context.Context, runID int64, text string, autoPush bool) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return errors.New("empty message")
@@ -842,6 +856,7 @@ func (r *Runner) SendMessage(ctx context.Context, runID int64, text string) erro
 		ac:       ac,
 		prompt:   text,
 		isResume: true,
+		autoPush: autoPush,
 	})
 	slotHeld = false
 	return nil
@@ -1038,11 +1053,12 @@ func (r *Runner) settleOpenTools(act *activeRun, finalStatus string) {
 
 // executeTurn runs one prepared turn. The caller (queueLoop) must already hold
 // a budget slot; the slot is released after executeTurn returns.
-func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain.Issue, ac config.AgentConfig, prompt string, isResume bool) {
+func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain.Issue, ac config.AgentConfig, prompt string, isResume, autoPush bool) {
 	runID := act.runID
 	issueID := act.issueID
 	ctx := act.ctx
 	autoSubmit := false
+	autoPushReady := false
 	defer func() {
 		r.flushStreams(act)
 		if rec := recover(); rec != nil {
@@ -1057,6 +1073,11 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 		close(act.done)
 		if autoSubmit && !isResume {
 			go r.autoSubmitPR(runID)
+		}
+		if autoPush && autoPushReady {
+			// Submit() refuses while the run is active, so wait until the defer
+			// has removed it from the active map.
+			go r.autoPushCIFix(runID)
 		}
 	}()
 
@@ -1265,6 +1286,7 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 		_, _ = r.ArchiveRun(context.Background(), run.ID)
 	}()
 	r.pushNotification("run_done", fmt.Sprintf("[%s] 执行完成，待验收", issue.Key), issue.Title, fmt.Sprintf("/issues/%d", issueID), "")
+	autoPushReady = true
 	go r.dispatchRunEvent(runID, automation.EventRunFinished)
 	if run.AutoPR {
 		autoSubmit = true
@@ -1591,6 +1613,9 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 			continue
 		}
 		targetBranch := strings.TrimSpace(req.TargetBranch)
+		if targetBranch == "" && strings.TrimSpace(run.TargetBranch) != "" {
+			targetBranch = run.TargetBranch
+		}
 		if targetBranch == "" {
 			targetBranch = proj.TargetBranch
 		}
@@ -1673,7 +1698,11 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 
 		prDisplay := res.PRURL
 		if prDisplay == "" && req.Mode == "push" {
-			prDisplay = "(仅推送分支，未提 PR)"
+			if run.PRURL != "" {
+				prDisplay = run.PRURL
+			} else {
+				prDisplay = "(仅推送分支，未提 PR)"
+			}
 		}
 		record := FormatChangeRecord(items, run.Branch, targetBranch, prDisplay, req.Remark)
 		res.ChangeRecord = record
@@ -1697,18 +1726,23 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 		if firstPRURL != "" {
 			prState = "open"
 		}
-		if u, err := r.st.UpdateRun(ctx, run.ID, store.RunUpdate{
+		upd := store.RunUpdate{
 			Status:       &st,
 			TargetBranch: &firstTargetBranch,
-			PRURL:        &firstPRURL,
-			PRState:      &prState,
 			ChangeRecord: &lastChangeRecord,
 			Ended:        true,
-		}); err == nil {
+		}
+		// A plain push (including CI fixes on an existing PR branch) must not
+		// clear the PR URL/state recorded by the earlier submission.
+		if firstPRURL != "" {
+			upd.PRURL = &firstPRURL
+			upd.PRState = &prState
+		}
+		if u, err := r.st.UpdateRun(ctx, run.ID, upd); err == nil {
 			r.notify.BroadcastRunUpdated(u)
 		}
 		ist := domain.IssueDone
-		if len(prLinks) > 0 {
+		if len(prLinks) > 0 || run.PRURL != "" {
 			ist = domain.IssuePROpen
 		}
 		if u, err := r.st.UpdateIssue(ctx, issue.ID, store.IssuePatch{Status: &ist}); err == nil {

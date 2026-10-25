@@ -226,7 +226,7 @@ func GetPRDetails(ctx context.Context, prURL string) (*PRDetailInfo, error) {
 	if _, _, _, _, ok := giteaPRFromURL(prURL); ok {
 		return giteaPRDetails(ctx, prURL)
 	}
-	b, err := gh(ctx, "pr", "view", prURL, "--json", "number,title,state,mergedAt,url,headRefName,baseRefName,author,comments,latestReviews")
+	b, err := gh(ctx, "pr", "view", prURL, "--json", "number,title,state,mergedAt,url,headRefName,headRefOid,baseRefName,author,comments,latestReviews,statusCheckRollup")
 	if err != nil {
 		return nil, err
 	}
@@ -237,6 +237,7 @@ func GetPRDetails(ctx context.Context, prURL string) (*PRDetailInfo, error) {
 		MergedAt    string `json:"mergedAt"`
 		URL         string `json:"url"`
 		HeadRefName string `json:"headRefName"`
+		HeadRefOid  string `json:"headRefOid"`
 		BaseRefName string `json:"baseRefName"`
 		Author      struct {
 			Login string `json:"login"`
@@ -258,6 +259,11 @@ func GetPRDetails(ctx context.Context, prURL string) (*PRDetailInfo, error) {
 				Login string `json:"login"`
 			} `json:"author"`
 		} `json:"latestReviews"`
+		StatusCheckRollup []struct {
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			State      string `json:"state"`
+		} `json:"statusCheckRollup"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return nil, err
@@ -272,16 +278,32 @@ func GetPRDetails(ctx context.Context, prURL string) (*PRDetailInfo, error) {
 		stateStr = "closed"
 	}
 
+	checkStates := make([]string, 0, len(raw.StatusCheckRollup))
+	for _, c := range raw.StatusCheckRollup {
+		if strings.TrimSpace(c.State) != "" {
+			checkStates = append(checkStates, c.State)
+		} else if strings.TrimSpace(c.Status) != "" && !strings.EqualFold(c.Status, "COMPLETED") {
+			checkStates = append(checkStates, "pending")
+		} else {
+			checkStates = append(checkStates, c.Conclusion)
+		}
+	}
+	ciState, ciPassed, ciFailed, ciPending := summarizeCheckStates(checkStates)
 	detail := &PRDetailInfo{
 		Number:        raw.Number,
 		Title:         raw.Title,
 		State:         stateStr,
 		URL:           raw.URL,
 		HeadRefName:   raw.HeadRefName,
+		HeadSHA:       raw.HeadRefOid,
 		BaseRefName:   raw.BaseRefName,
 		Author:        raw.Author.Login,
 		Comments:      []PRComment{},
 		LatestReviews: []PRReview{},
+		CIState:       ciState,
+		CIPassed:      ciPassed,
+		CIFailed:      ciFailed,
+		CIPending:     ciPending,
 	}
 
 	for _, c := range raw.Comments {

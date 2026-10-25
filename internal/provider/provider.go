@@ -77,10 +77,15 @@ type PRDetailInfo struct {
 	State         string      `json:"state"` // "open", "merged", "closed"
 	URL           string      `json:"url"`
 	HeadRefName   string      `json:"headRefName"`
+	HeadSHA       string      `json:"headSha"`
 	BaseRefName   string      `json:"baseRefName"`
 	Author        string      `json:"author"`
 	Comments      []PRComment `json:"comments"`
 	LatestReviews []PRReview  `json:"latestReviews"`
+	CIState       string      `json:"ciState,omitempty"`
+	CIPassed      int         `json:"ciPassed,omitempty"`
+	CIFailed      int         `json:"ciFailed,omitempty"`
+	CIPending     int         `json:"ciPending,omitempty"`
 }
 
 // Caps describes what a provider can do; missing features fall back to local handling.

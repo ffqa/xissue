@@ -42,6 +42,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
   const [cfgSyncIssues, setCfgSyncIssues] = useState(false);
   const [cfgSyncIntervalMin, setCfgSyncIntervalMin] = useState(5);
   const [cfgAutoDevelopIssues, setCfgAutoDevelopIssues] = useState(false);
+  const [cfgAutoFixCIFailures, setCfgAutoFixCIFailures] = useState(false);
 
   useEffect(() => {
     if (configQ.data) {
@@ -50,6 +51,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
       setCfgSyncIssues(configQ.data.syncIssues ?? false);
       setCfgSyncIntervalMin(configQ.data.syncIntervalMin || 5);
       setCfgAutoDevelopIssues(configQ.data.autoDevelopIssues ?? false);
+      setCfgAutoFixCIFailures(configQ.data.autoFixCIFailures ?? false);
     }
   }, [configQ.data]);
 
@@ -158,6 +160,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
       syncIssues: cfgSyncIssues,
       syncIntervalMin: cfgSyncIntervalMin,
       autoDevelopIssues: cfgAutoDevelopIssues,
+      autoFixCIFailures: cfgAutoFixCIFailures,
     });
   };
 
@@ -376,6 +379,19 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
                 <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
                   同步后先判定类型：Bug/需求自动打标并启动 Agent，完成后自动发 PR；建议只打标不开发。
                   全局开关要求每个项目配置作者白名单（autoDevelopAuthors），否则跳过该项目。
+                </span>
+              </label>
+              <label className="field" style={{ margin: 0 }}>
+                <span className="row" style={{ gap: 8, alignItems: 'center' }}>
+                  <input
+                    type="checkbox"
+                    checked={cfgAutoFixCIFailures}
+                    onChange={(e) => setCfgAutoFixCIFailures(e.target.checked)}
+                  />
+                  自动修复 PR CI 失败
+                </span>
+                <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
+                  仅对 open PR 生效：CI 失败时复用该 Run 的工作区分支进行修复并推送同一分支，不自动合并、不新建 PR；每个 PR 最多尝试 3 次。
                 </span>
               </label>
 

@@ -619,16 +619,25 @@ func giteaPRDetails(ctx context.Context, prURL string) (*PRDetailInfo, error) {
 		return nil, err
 	}
 	rp := "/repos/" + url.PathEscape(owner) + "/" + url.PathEscape(repo)
+	ciState, ciPassed, ciFailed, ciPending := "", 0, 0, 0
+	if pr.Head.SHA != "" {
+		ciState, ciPassed, ciFailed, ciPending = giteaCIStatus(ctx, api, rp, pr.Head.SHA)
+	}
 	detail := &PRDetailInfo{
 		Number:        pr.Number,
 		Title:         pr.Title,
 		State:         giteaPRState(pr),
 		URL:           pr.HTMLURL,
 		HeadRefName:   pr.Head.Ref,
+		HeadSHA:       pr.Head.SHA,
 		BaseRefName:   pr.Base.Ref,
 		Author:        pr.User.Login,
 		Comments:      []PRComment{},
 		LatestReviews: []PRReview{},
+		CIState:       ciState,
+		CIPassed:      ciPassed,
+		CIFailed:      ciFailed,
+		CIPending:     ciPending,
 	}
 	for page := 1; ; page++ {
 		var batch []giteaComment

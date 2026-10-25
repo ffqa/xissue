@@ -578,3 +578,9 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .modal.modal-fullscreen .modal-b { padding: 16px 18px; }
 .modal.modal-fullscreen .settings-layout { flex: 1; min-height: 0; height: 100%; }
 .modal.modal-fullscreen .settings-content { max-height: none; height: 100%; }
+
+/* ---- run terminal ---- */
+.terminal-shell { flex: 1; min-height: 0; height: 100%; padding: 8px; background: var(--bg); }
+.terminal-host { width: 100%; height: 100%; }
+.terminal-host .xterm { height: 100%; }
+.terminal-host .xterm-viewport { background: transparent !important; }

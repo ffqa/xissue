@@ -210,6 +210,13 @@
 - **PR 元数据保护**: `Submit` 的 push-only 路径不再用空 `prUrl` 覆盖已有 PR URL/状态，并将已有 PR 的 Issue 保持为 `pr_open`；同时保留原 PR 目标分支。
 - **测试**: `internal/runner/cifix_test.go` 覆盖去重、3 次上限、成功清零与 push 保留 PR 元数据；`internal/provider/github_pr_ci_test.go` 与 Gitea 测试覆盖 CI 字段解析。
 
+### 2.20 Run 工作区网页终端（PTY）
+- **入口**: Issue 页 Run 工具条新增「⌨️ 终端」，仅当 Run 有工作区时显示；弹窗默认 82vh，可重连、可关闭。
+- **后端**: `GET /api/runs/{id}/terminal` 升级为 WebSocket，用 `creack/pty` 在 `run.workdir` 启动用户 `$SHELL`；输入/尺寸/输出使用 JSON 帧（输出 base64，避免多字节字符截断）。非 Windows 实现；Windows 构建返回不支持，不影响交叉编译。
+- **安全边界**: 终端只能绑定数据库中的 Run 工作区，不能传任意目录；沿用现有 Host/Origin/Token 中间件与 WebSocket OriginPatterns；关闭浏览器或弹窗会关闭 PTY 并向 Shell 发送终止。
+- **前端**: `@xterm/xterm` + `@xterm/addon-fit`，通过 `React.lazy` 拆到独立 chunk，不影响首屏；支持窗口自适应、滚轮回看与 Shell 退出提示。
+- **测试**: `internal/server/terminal_unix_test.go` 实测 PTY 的 cwd 与命令输出；本地浏览器冒烟验证「已连接」、`echo PTY_SMOKE` 输出与工作区路径。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

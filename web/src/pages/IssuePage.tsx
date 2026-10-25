@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
@@ -15,6 +15,9 @@ import { EventStream } from '../components/EventStream';
 import { AgentManagerModal } from '../components/AgentManagerModal';
 import { formatChangeRecord } from '../components/CherryPickModal';
 import { LazyDiffEditor } from '../components/LazyDiffEditor';
+const TerminalModal = lazy(() =>
+  import('../components/TerminalModal').then((m) => ({ default: m.TerminalModal })),
+);
 import { languageOf } from '../language';
 import { fetchRunEvents } from '../realtime';
 import { useTheme } from '../theme';
@@ -71,6 +74,7 @@ export default function IssuePage() {
   const [newOpen, setNewOpen] = useState(false);
   const [agentMgrOpen, setAgentMgrOpen] = useState(false);
   const [archiveModalData, setArchiveModalData] = useState<{ dir: string; analysis: string; events: string } | null>(null);
+  const [terminalRun, setTerminalRun] = useState<Run | null>(null);
   const [archiveTab, setArchiveTab] = useState<'analysis' | 'events'>('analysis');
 
   useEffect(() => {
@@ -446,6 +450,16 @@ export default function IssuePage() {
                     }}
                   >
                     📁 文本复盘归档
+                  </button>
+                )}
+                {currentRun?.workdir && (
+                  <button
+                    type="button"
+                    className="sm ghost"
+                    title="在 Run 工作区打开交互式 Shell"
+                    onClick={() => setTerminalRun(currentRun)}
+                  >
+                    ⌨️ 终端
                   </button>
                 )}
                 {currentRun?.workdir && healthQ.data?.editorUrlTemplate && (
@@ -829,6 +843,15 @@ export default function IssuePage() {
             </div>
           </div>
         </Modal>
+      )}
+      {terminalRun && (
+        <Suspense fallback={null}>
+          <TerminalModal
+            runId={terminalRun.id}
+            workdir={terminalRun.workdir}
+            onClose={() => setTerminalRun(null)}
+          />
+        </Suspense>
       )}
     </div>
   );

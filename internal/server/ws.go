@@ -75,16 +75,8 @@ func (h *Hub) BroadcastNotification(n *domain.Notification) {
 	})
 }
 
-// BroadcastStatus pushes the live system status over the existing WebSocket,
-// so the status bar does not need to poll HTTP while connected.
-func (h *Hub) BroadcastStatus(st SystemStatus) {
-	h.broadcast(map[string]any{
-		"type":   "status",
-		"status": st,
-	})
-}
-
-func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
+// websocketOriginPatterns restricts WebSocket upgrades to same-host pages.
+func websocketOriginPatterns(r *http.Request) []string {
 	patterns := []string{
 		"127.0.0.1:*",
 		"localhost:*",
@@ -95,9 +87,21 @@ func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
 	} else if r.Host != "" {
 		patterns = append(patterns, r.Host+":*", r.Host)
 	}
+	return patterns
+}
 
+// BroadcastStatus pushes the live system status over the existing WebSocket,
+// so the status bar does not need to poll HTTP while connected.
+func (h *Hub) BroadcastStatus(st SystemStatus) {
+	h.broadcast(map[string]any{
+		"type":   "status",
+		"status": st,
+	})
+}
+
+func (h *Hub) serveWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{
-		OriginPatterns: patterns,
+		OriginPatterns: websocketOriginPatterns(r),
 	})
 	if err != nil {
 		return

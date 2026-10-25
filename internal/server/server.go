@@ -234,6 +234,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/runs/{id}", s.handleGetRun)
 	m.HandleFunc("DELETE /api/runs/{id}", s.handleDeleteRun)
 	m.HandleFunc("GET /api/runs/{id}/events", s.handleListEvents)
+	m.HandleFunc("GET /api/runs/{id}/terminal", s.handleRunTerminal)
 	m.HandleFunc("POST /api/runs/{id}/message", s.handleSendMessage)
 	m.HandleFunc("POST /api/runs/{id}/permissions/{requestId}", s.handlePermission)
 	m.HandleFunc("POST /api/runs/{id}/cancel", s.handleCancelRun)

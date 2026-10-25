@@ -7,6 +7,7 @@ import { Toaster } from './toast';
 import { useTheme } from './theme';
 import { AgentManagerModal } from './components/AgentManagerModal';
 import { MonitorModal } from './components/MonitorModal';
+import { UsageModal } from './components/UsageModal';
 import { PluginManagerModal } from './components/PluginManagerModal';
 import { StatusBar } from './components/StatusBar';
 import { SettingsModal } from './components/SettingsModal';
@@ -223,6 +224,7 @@ function SystemMenu({
   onPlugins,
   onAgents,
   onMCP,
+  onUsage,
 }: {
   onSettings: () => void;
   onAutomation: () => void;
@@ -230,6 +232,7 @@ function SystemMenu({
   onPlugins: () => void;
   onAgents: () => void;
   onMCP: () => void;
+  onUsage: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -272,6 +275,7 @@ function SystemMenu({
         <div className="dropdown-menu" style={{ minWidth: 190 }}>
           {item('⚙️ 全局设置', onSettings, '通知、浏览器提醒、更新与自动化概览')}
           {item('📡 监控中心', onMonitor, '查看监控状态、日志与通知配置')}
+          {item('📊 用量统计', onUsage, '查看 Agent Token、上下文与费用汇总')}
           {item('🧩 插件管理', onPlugins, '启停插件、查看 README 与 config.json')}
           {item('🤖 Agent 管理', onAgents, '管理 Agent、默认模型与运行参数')}
           {item('🔌 MCP 接入', onMCP, '安装 MCP 到 IDE / Agent，选择 Stdio 或 HTTP')}
@@ -301,6 +305,7 @@ export default function App() {
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [pluginsOpen, setPluginsOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [usageOpen, setUsageOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'general' | 'channels' | 'routes' | 'automation'>('general');
   const [settingsFromMonitor, setSettingsFromMonitor] = useState(false);
@@ -335,6 +340,7 @@ export default function App() {
           onPlugins={() => setPluginsOpen(true)}
           onAgents={() => setAgentMgrOpen(true)}
           onMCP={() => setMcpOpen(true)}
+          onUsage={() => setUsageOpen(true)}
         />
         <button
           className="ghost sm"
@@ -358,6 +364,7 @@ export default function App() {
       <StatusBar />
       {agentMgrOpen && <AgentManagerModal onClose={() => setAgentMgrOpen(false)} />}
       {mcpOpen && <MCPModal onClose={() => setMcpOpen(false)} />}
+      {usageOpen && <UsageModal onClose={() => setUsageOpen(false)} />}
       {monitorOpen && (
         <MonitorModal
           onClose={() => setMonitorOpen(false)}

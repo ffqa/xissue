@@ -100,6 +100,16 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_authors TEXT NOT NULL DEFAULT '[]'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_develop_daily_limit INTEGER NOT NULL DEFAULT 5`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN auto_pr INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN context_used INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN context_size INTEGER NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN cost_amount REAL NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN cost_currency TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN usage_cumulative_cost REAL NOT NULL DEFAULT 0`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN usage_json TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN usage_updated_at TEXT`)
 	_, _ = db.Exec(`ALTER TABLE comments ADD COLUMN remote_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE comments ADD COLUMN remote_url TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_comments_remote ON comments(issue_id, remote_id) WHERE remote_id <> ''`)
@@ -834,14 +844,15 @@ func (s *Store) UpsertRemoteComment(ctx context.Context, issueID int64, remoteID
 
 // ---------- Runs ----------
 
-const runCols = `id, issue_id, agent, model, status, branch, target_branch, workdir, session_id, summary, error, pr_url, pr_state, change_record, auto_pr, created_at, started_at, ended_at`
+const runCols = `id, issue_id, agent, model, status, branch, target_branch, workdir, session_id, summary, error, pr_url, pr_state, change_record, auto_pr, input_tokens, output_tokens, total_tokens, context_used, context_size, cost_amount, cost_currency, usage_cumulative_cost, usage_json, usage_updated_at, created_at, started_at, ended_at`
 
 func scanRun(sc interface{ Scan(...any) error }) (domain.Run, error) {
 	var r domain.Run
 	var c string
-	var st, en sql.NullString
-	err := sc.Scan(&r.ID, &r.IssueID, &r.Agent, &r.Model, &r.Status, &r.Branch, &r.TargetBranch, &r.Workdir, &r.SessionID, &r.Summary, &r.Error, &r.PRURL, &r.PRState, &r.ChangeRecord, &r.AutoPR, &c, &st, &en)
+	var st, en, usageAt sql.NullString
+	err := sc.Scan(&r.ID, &r.IssueID, &r.Agent, &r.Model, &r.Status, &r.Branch, &r.TargetBranch, &r.Workdir, &r.SessionID, &r.Summary, &r.Error, &r.PRURL, &r.PRState, &r.ChangeRecord, &r.AutoPR, &r.InputTokens, &r.OutputTokens, &r.TotalTokens, &r.ContextUsed, &r.ContextSize, &r.CostAmount, &r.CostCurrency, &r.UsageCumulativeCost, &r.UsageJSON, &usageAt, &c, &st, &en)
 	r.CreatedAt, r.StartedAt, r.EndedAt = parseTime(c), parseTimePtr(st), parseTimePtr(en)
+	r.UsageUpdatedAt = parseTimePtr(usageAt)
 	return r, err
 }
 
@@ -931,21 +942,31 @@ func (s *Store) ListOpenPRRuns(ctx context.Context) ([]domain.Run, error) {
 
 // RunUpdate holds optional fields to change on a run.
 type RunUpdate struct {
-	Status       *domain.RunStatus
-	Model        *string
-	Branch       *string
-	TargetBranch *string
-	Workdir      *string
-	SessionID    *string
-	Summary      *string
-	Error        *string
-	PRURL        *string
-	PRState      *string
-	ChangeRecord *string
-	AutoPR       *bool
-	Started      bool
-	Ended        bool
-	Reopen       bool // clear ended_at when a completed run is queued for a follow-up
+	Status              *domain.RunStatus
+	Model               *string
+	Branch              *string
+	TargetBranch        *string
+	Workdir             *string
+	SessionID           *string
+	Summary             *string
+	Error               *string
+	PRURL               *string
+	PRState             *string
+	ChangeRecord        *string
+	AutoPR              *bool
+	InputTokens         *int64
+	OutputTokens        *int64
+	TotalTokens         *int64
+	ContextUsed         *int64
+	ContextSize         *int64
+	CostAmount          *float64
+	CostCurrency        *string
+	UsageCumulativeCost *float64
+	UsageJSON           *string
+	UsageUpdatedAt      *time.Time
+	Started             bool
+	Ended               bool
+	Reopen              bool // clear ended_at when a completed run is queued for a follow-up
 }
 
 func (s *Store) UpdateRun(ctx context.Context, id int64, u RunUpdate) (*domain.Run, error) {
@@ -986,6 +1007,36 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, u RunUpdate) (*domain.R
 	}
 	if u.AutoPR != nil {
 		add("auto_pr", *u.AutoPR)
+	}
+	if u.InputTokens != nil {
+		add("input_tokens", *u.InputTokens)
+	}
+	if u.OutputTokens != nil {
+		add("output_tokens", *u.OutputTokens)
+	}
+	if u.TotalTokens != nil {
+		add("total_tokens", *u.TotalTokens)
+	}
+	if u.ContextUsed != nil {
+		add("context_used", *u.ContextUsed)
+	}
+	if u.ContextSize != nil {
+		add("context_size", *u.ContextSize)
+	}
+	if u.CostAmount != nil {
+		add("cost_amount", *u.CostAmount)
+	}
+	if u.CostCurrency != nil {
+		add("cost_currency", *u.CostCurrency)
+	}
+	if u.UsageCumulativeCost != nil {
+		add("usage_cumulative_cost", *u.UsageCumulativeCost)
+	}
+	if u.UsageJSON != nil {
+		add("usage_json", *u.UsageJSON)
+	}
+	if u.UsageUpdatedAt != nil {
+		add("usage_updated_at", u.UsageUpdatedAt.UTC().Format(time.RFC3339Nano))
 	}
 	if u.Started {
 		add("started_at", now())

@@ -183,6 +183,16 @@ export interface Run {
   prUrl: string;
   prState: string;
   changeRecord: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  contextUsed: number;
+  contextSize: number;
+  costAmount: number;
+  costCurrency: string;
+  usageCumulativeCost: number;
+  usageJson?: string;
+  usageUpdatedAt: string | null;
   createdAt: string;
   startedAt: string | null;
   endedAt: string | null;
@@ -199,6 +209,7 @@ export type RunEventType =
   | 'status'
   | 'stderr'
   | 'system'
+  | 'usage'
   | 'user';
 
 export interface RunEvent {
@@ -599,4 +610,27 @@ export interface SystemStatus {
     maxConcurrent: number;
     maxQueued: number;
   };
+}
+
+export interface UsageDay {
+  date: string;
+  runs: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  costByCurrency: Record<string, number>;
+}
+
+export interface UsageReport {
+  since: string;
+  until: string;
+  totals: {
+    runs: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    costByCurrency: Record<string, number>;
+  };
+  daily: UsageDay[];
+  topRuns: Run[];
 }

@@ -395,6 +395,15 @@ export default function IssuePage() {
                 </select>
                 {currentRun && <RunStatusTag status={currentRun.status} />}
                 {currentRun?.model && <span className="badge mono" title="使用的模型">{currentRun.model}</span>}
+                {currentRun && (currentRun.totalTokens > 0 || currentRun.costAmount > 0) && (
+                  <span
+                    className="badge mono"
+                    title={`输入 ${currentRun.inputTokens} / 输出 ${currentRun.outputTokens} tokens；上下文 ${currentRun.contextUsed}/${currentRun.contextSize || '?'}；费用 ${currentRun.costCurrency || 'USD'} ${currentRun.costAmount.toFixed(4)}`}
+                  >
+                    ⛽ {currentRun.totalTokens.toLocaleString()} tok
+                    {currentRun.costAmount > 0 ? ` · ${currentRun.costCurrency || 'USD'} ${currentRun.costAmount.toFixed(4)}` : ''}
+                  </span>
+                )}
                 {currentRun?.branch && (
                   <span className="badge mono">
                     {currentRun.branch}

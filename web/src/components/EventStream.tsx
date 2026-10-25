@@ -97,6 +97,14 @@ export function buildView(events: RunEvent[]): BuiltView {
       case 'system':
         items.push({ kind: 'system', key: `e${ev.seq}`, text: asText(d.text) });
         break;
+      case 'usage': {
+        const bits = [];
+        if (d.used != null) bits.push(`context ${d.used}${d.size ? `/${d.size}` : ''}`);
+        const cost = d.cost as { amount?: number; currency?: string } | undefined;
+        if (cost?.amount != null) bits.push(`${cost.currency || 'USD'} ${Number(cost.amount).toFixed(4)}`);
+        if (bits.length) items.push({ kind: 'system', key: `e${ev.seq}`, text: `⛽ ${bits.join(' · ')}` });
+        break;
+      }
       case 'status': {
         const st = asText(d.status);
         if (TERMINAL_RUN_STATUSES.has(st)) {

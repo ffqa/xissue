@@ -41,6 +41,7 @@ import type {
   DocItem,
   DocDetail,
   DocSearchResult,
+  UsageReport,
 } from './types';
 
 export class ApiError extends Error {
@@ -274,6 +275,7 @@ export const api = {
   settings: () => get<AppSettings>('/api/settings'),
   patchSettings: (b: Partial<AppSettings>) => patch<AppSettings>('/api/settings', b),
   monitorConfig: () => get<MonitorConfig>('/api/monitor/config'),
+  usage: (days = 30) => get<UsageReport>(`/api/usage?days=${days}`),
   patchMonitorConfig: (b: Partial<MonitorConfig>) => patch<MonitorConfig>('/api/monitor/config', b),
   testNotify: () => post<{ ok: boolean; message: string }>('/api/monitor/test-notify'),
   monitorLogs: (hours = 8) => get<MonitorLogEntry[]>(`/api/monitor/logs?hours=${hours}`),
@@ -304,6 +306,7 @@ export const qk = {
   monitorStatus: ['monitorStatus'] as const,
   settings: ['settings'] as const,
   monitorConfig: ['monitorConfig'] as const,
+  usage: (days: number) => ['usage', days] as const,
   monitorLogs: (hours?: number) => ['monitorLogs', hours ?? 8] as const,
   agents: ['agents'] as const,
   agentModels: (name: string) => ['agentModels', name] as const,

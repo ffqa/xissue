@@ -182,24 +182,36 @@ func (s RunStatus) Active() bool {
 }
 
 type Run struct {
-	ID           int64      `json:"id"`
-	IssueID      int64      `json:"issueId"`
-	Agent        string     `json:"agent"`
-	Model        string     `json:"model"`
-	Status       RunStatus  `json:"status"`
-	Branch       string     `json:"branch"`
-	TargetBranch string     `json:"targetBranch"`
-	Workdir      string     `json:"workdir"`
-	SessionID    string     `json:"sessionId"`
-	Summary      string     `json:"summary"`
-	Error        string     `json:"error"`
-	PRURL        string     `json:"prUrl"`
-	PRState      string     `json:"prState"`
-	ChangeRecord string     `json:"changeRecord"`
-	AutoPR       bool       `json:"autoPr"` // 自动预开发产生的 run，完成后自动发 PR（不合并）
-	CreatedAt    time.Time  `json:"createdAt"`
-	StartedAt    *time.Time `json:"startedAt"`
-	EndedAt      *time.Time `json:"endedAt"`
+	ID           int64     `json:"id"`
+	IssueID      int64     `json:"issueId"`
+	Agent        string    `json:"agent"`
+	Model        string    `json:"model"`
+	Status       RunStatus `json:"status"`
+	Branch       string    `json:"branch"`
+	TargetBranch string    `json:"targetBranch"`
+	Workdir      string    `json:"workdir"`
+	SessionID    string    `json:"sessionId"`
+	Summary      string    `json:"summary"`
+	Error        string    `json:"error"`
+	PRURL        string    `json:"prUrl"`
+	PRState      string    `json:"prState"`
+	ChangeRecord string    `json:"changeRecord"`
+	AutoPR       bool      `json:"autoPr"` // 自动预开发产生的 run，完成后自动发 PR（不合并）
+	// Usage is populated from ACP usage_update / prompt usage. CostAmount is
+	// attributed to this run (deltas of the session's cumulative cost).
+	InputTokens         int64      `json:"inputTokens"`
+	OutputTokens        int64      `json:"outputTokens"`
+	TotalTokens         int64      `json:"totalTokens"`
+	ContextUsed         int64      `json:"contextUsed"`
+	ContextSize         int64      `json:"contextSize"`
+	CostAmount          float64    `json:"costAmount"`
+	CostCurrency        string     `json:"costCurrency"`
+	UsageCumulativeCost float64    `json:"usageCumulativeCost"`
+	UsageJSON           string     `json:"usageJson,omitempty"`
+	UsageUpdatedAt      *time.Time `json:"usageUpdatedAt"`
+	CreatedAt           time.Time  `json:"createdAt"`
+	StartedAt           *time.Time `json:"startedAt"`
+	EndedAt             *time.Time `json:"endedAt"`
 }
 
 type RunEvent struct {

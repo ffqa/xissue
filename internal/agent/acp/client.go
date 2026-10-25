@@ -24,8 +24,32 @@ const ProtocolVersion = 1
 
 // Event is a normalized session update forwarded to the runner.
 type Event struct {
-	Type string         // message | thought | tool_call | tool_call_update | plan | stderr
+	Type string         // message | thought | tool_call | tool_call_update | plan | usage | stderr
 	Data map[string]any // payload, see docs/api.md
+}
+
+// Cost is a currency-tagged amount reported by ACP.
+type Cost struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+}
+
+// Usage is the optional end-of-turn token usage object (ACP RFD).
+// Agents that do not report it leave all fields at zero.
+type Usage struct {
+	TotalTokens       int64 `json:"totalTokens"`
+	InputTokens       int64 `json:"inputTokens"`
+	OutputTokens      int64 `json:"outputTokens"`
+	ThoughtTokens     int64 `json:"thoughtTokens"`
+	CachedReadTokens  int64 `json:"cachedReadTokens"`
+	CachedWriteTokens int64 `json:"cachedWriteTokens"`
+	Cost              *Cost `json:"cost,omitempty"`
+}
+
+// PromptResult is the session/prompt response.
+type PromptResult struct {
+	StopReason string `json:"stopReason"`
+	Usage      *Usage `json:"usage,omitempty"`
 }
 
 // PermissionOption mirrors ACP's PermissionOption.
@@ -274,16 +298,14 @@ func (c *Client) SetModel(ctx context.Context, model string) error {
 	return nil
 }
 
-// Prompt sends a user turn and blocks until the agent finishes. Returns the stop reason.
-func (c *Client) Prompt(ctx context.Context, text string) (string, error) {
-	var res struct {
-		StopReason string `json:"stopReason"`
-	}
+// Prompt sends a user turn and blocks until the agent finishes.
+func (c *Client) Prompt(ctx context.Context, text string) (PromptResult, error) {
+	var res PromptResult
 	err := c.call(ctx, "session/prompt", map[string]any{
 		"sessionId": c.SessionID,
 		"prompt":    []any{map[string]any{"type": "text", "text": text}},
 	}, &res)
-	return res.StopReason, err
+	return res, err
 }
 
 // SetHandlers updates the event and permission callbacks (used when reusing a warm Client across turns).
@@ -560,6 +582,13 @@ func (c *Client) handleNotification(m rpcMsg) {
 		h.OnEvent(Event{Type: "tool_call_update", Data: u})
 	case "plan":
 		h.OnEvent(Event{Type: "plan", Data: map[string]any{"entries": u["entries"]}})
+	case "usage_update":
+		// Stable ACP session usage: context window utilization + cumulative cost.
+		h.OnEvent(Event{Type: "usage", Data: map[string]any{
+			"used": u["used"],
+			"size": u["size"],
+			"cost": u["cost"],
+		}})
 	}
 }
 

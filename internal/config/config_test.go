@@ -237,3 +237,107 @@ func TestAgentRolesRoundTrip(t *testing.T) {
 		t.Fatalf("roles = %+v, want %+v", got, roles)
 	}
 }
+
+func TestLoadMigratesIssueSyncDefaults(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	raw := "monitor:\n  enabled: false\n  syncIssues: false\n  syncIntervalMin: 10\n"
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Monitor.SyncIssues || cfg.Monitor.SyncIntervalMin != 10 {
+		t.Fatalf("migration overrode explicit values: syncIssues:%v interval:%d", cfg.Monitor.SyncIssues, cfg.Monitor.SyncIntervalMin)
+	}
+	if cfg.ConfigVersion != CurrentConfigVersion {
+		t.Fatalf("configVersion = %d", cfg.ConfigVersion)
+	}
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Monitor.SyncIssues || reloaded.Monitor.SyncIntervalMin != 10 {
+		t.Fatalf("reload lost explicit values: %+v", reloaded.Monitor)
+	}
+}
+
+func TestLoadKeepsIssueSyncDefaultsOnlyWhenAbsent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("monitor:\n  enabled: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Monitor.SyncIssues || cfg.Monitor.SyncIntervalMin != 5 {
+		t.Fatalf("missing fields did not receive defaults: %+v", cfg.Monitor)
+	}
+}
+
+func TestRunnerRetentionDefaultsAndExplicitDisable(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "missing.yaml")
+	if err := os.WriteFile(missing, []byte("runner:\n  maxConcurrent: 2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(missing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runner.EventRetentionDays != 7 || cfg.Runner.WorkspaceRetentionDays != 7 {
+		t.Fatalf("missing retention defaults = %+v", cfg.Runner)
+	}
+	if cfg.Runner.MaxQueuedRuns != 100 {
+		t.Fatalf("missing queue default = %+v", cfg.Runner)
+	}
+	disabled := filepath.Join(dir, "disabled.yaml")
+	if err := os.WriteFile(disabled, []byte("runner:\n  eventRetentionDays: 0\n  workspaceRetentionDays: 0\n  maxQueuedRuns: 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(disabled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Runner.EventRetentionDays != 0 || cfg.Runner.WorkspaceRetentionDays != 0 || cfg.Runner.MaxQueuedRuns != 0 {
+		t.Fatalf("explicit disable was overwritten: %+v", cfg.Runner)
+	}
+}
+
+func TestLegacyConfigRemovesFetchFromAutoAllow(t *testing.T) {
+	dir := t.TempDir()
+	legacy := filepath.Join(dir, "legacy.yaml")
+	body := "configVersion: 2\npermissions:\n  autoAllowKinds: [read, search, fetch, edit]\n"
+	if err := os.WriteFile(legacy, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConfigVersion != CurrentConfigVersion {
+		t.Fatalf("configVersion = %d", cfg.ConfigVersion)
+	}
+	for _, kind := range cfg.Permissions.AutoAllowKinds {
+		if kind == "fetch" {
+			t.Fatalf("legacy fetch auto-allow survived migration: %+v", cfg.Permissions.AutoAllowKinds)
+		}
+	}
+
+	explicit := filepath.Join(dir, "explicit.yaml")
+	body = "configVersion: 3\npermissions:\n  autoAllowKinds: [fetch]\n"
+	if err := os.WriteFile(explicit, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(explicit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Permissions.AutoAllowKinds) != 1 || cfg.Permissions.AutoAllowKinds[0] != "fetch" {
+		t.Fatalf("explicit fetch setting was overwritten: %+v", cfg.Permissions.AutoAllowKinds)
+	}
+}

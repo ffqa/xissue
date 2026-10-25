@@ -1,5 +1,13 @@
 import type { Repo } from './types';
 
+function remoteOrigin(remote: string): string | null {
+  const https = remote.match(/^https?:\/\/([^/]+)/i);
+  if (https) return https[0].replace(/\/$/, '');
+  const ssh = remote.match(/^(?:ssh:\/\/)?[^@/]+@([^:/]+)[:/]/i);
+  if (ssh) return `https://${ssh[1]}`;
+  return null;
+}
+
 function repoPath(ownerRepo: string): string {
   return ownerRepo
     .split('/')
@@ -13,14 +21,15 @@ export function getCommitWebUrl(repo?: Repo, sha?: string): string | null {
   const ownerRepo = repo.ownerRepo?.trim();
   const remote = repo.remoteUrl?.trim() || '';
 
+  const base = remoteOrigin(remote);
   if (repo.provider === 'github' && ownerRepo) {
-    return `https://github.com/${repoPath(ownerRepo)}/commit/${encodeURIComponent(sha)}`;
+    return `${base || 'https://github.com'}/${repoPath(ownerRepo)}/commit/${encodeURIComponent(sha)}`;
   }
   if (repo.provider === 'gitlab' && ownerRepo) {
-    return `https://gitlab.com/${repoPath(ownerRepo)}/-/commit/${encodeURIComponent(sha)}`;
+    return `${base || 'https://gitlab.com'}/${repoPath(ownerRepo)}/-/commit/${encodeURIComponent(sha)}`;
   }
   if (repo.provider === 'gitea' && ownerRepo) {
-    return `https://gitea.com/${repoPath(ownerRepo)}/commit/${encodeURIComponent(sha)}`;
+    return `${base || 'https://gitea.com'}/${repoPath(ownerRepo)}/commit/${encodeURIComponent(sha)}`;
   }
 
   const match = remote.match(/(?:https?:\/\/|git@)([^/:]+)[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);
@@ -38,14 +47,15 @@ export function getBranchWebUrl(repo?: Repo, branch?: string): string | null {
   const ownerRepo = repo.ownerRepo?.trim();
   const remote = repo.remoteUrl?.trim() || '';
 
+  const base = remoteOrigin(remote);
   if (repo.provider === 'github' && ownerRepo) {
-    return `https://github.com/${repoPath(ownerRepo)}/tree/${encodeURIComponent(branch)}`;
+    return `${base || 'https://github.com'}/${repoPath(ownerRepo)}/tree/${encodeURIComponent(branch)}`;
   }
   if (repo.provider === 'gitlab' && ownerRepo) {
-    return `https://gitlab.com/${repoPath(ownerRepo)}/-/tree/${encodeURIComponent(branch)}`;
+    return `${base || 'https://gitlab.com'}/${repoPath(ownerRepo)}/-/tree/${encodeURIComponent(branch)}`;
   }
   if (repo.provider === 'gitea' && ownerRepo) {
-    return `https://gitea.com/${repoPath(ownerRepo)}/src/branch/${encodeURIComponent(branch)}`;
+    return `${base || 'https://gitea.com'}/${repoPath(ownerRepo)}/src/branch/${encodeURIComponent(branch)}`;
   }
 
   const match = remote.match(/(?:https?:\/\/|git@)([^/:]+)[:/]([^/]+)\/([^/]+?)(?:\.git)?$/);

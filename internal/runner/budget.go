@@ -13,6 +13,7 @@ type budget struct {
 	maxMem   int // MB, 0 = unlimited
 	count    int
 	mem      int
+	waiting  int
 }
 
 func newBudget(maxCount, maxMem int) *budget {
@@ -43,8 +44,22 @@ func (b *budget) acquire(ctx context.Context, memMB int) error {
 			b.mem += memMB
 			return nil
 		}
+		b.waiting++
 		b.cond.Wait()
+		b.waiting--
 	}
+}
+
+func (b *budget) running() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.count
+}
+
+func (b *budget) waitingCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.waiting
 }
 
 func (b *budget) release(memMB int) {

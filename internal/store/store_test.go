@@ -3,6 +3,8 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -184,6 +186,40 @@ func TestProjectPullBranches(t *testing.T) {
 	}
 }
 
+func TestCreateLocalIssueInRepo(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	p, err := st.CreateProject(ctx, "multi", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := st.CreateRepo(ctx, domain.Repo{
+		ProjectID: p.ID, Name: "api", Provider: "github",
+		RemoteURL: "https://github.com/example/api", DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, err := st.CreateLocalIssueInRepo(ctx, p.ID, &repo.ID, "scoped", "body", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if iss.RepoID == nil || *iss.RepoID != repo.ID {
+		t.Fatalf("repoId = %v, want %d", iss.RepoID, repo.ID)
+	}
+	got, err := st.GetIssue(ctx, iss.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RepoID == nil || *got.RepoID != repo.ID {
+		t.Fatalf("persisted repoId = %v, want %d", got.RepoID, repo.ID)
+	}
+}
+
 func TestUpsertRemoteCommentIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -299,5 +335,197 @@ func TestOpenMigratesLegacyCommentsTable(t *testing.T) {
 	}
 	if !cols["remote_id"] || !cols["remote_url"] {
 		t.Fatalf("legacy comments columns = %+v", cols)
+	}
+}
+
+func TestDeleteRepoBlockedWhileIssuesReferenceIt(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	p, err := st.CreateProject(ctx, "Guard", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := st.CreateRepo(ctx, domain.Repo{ProjectID: p.ID, Name: "repo", RemoteURL: "https://example.com/repo", DefaultBranch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, p.ID, "Linked", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.MarkIssuePublished(ctx, issue.ID, repo.ID, 7, "acme/repo#7", "https://example.com/repo/issues/7"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteRepo(ctx, p.ID, repo.ID); !errors.Is(err, store.ErrRepoInUse) {
+		t.Fatalf("DeleteRepo = %v, want ErrRepoInUse", err)
+	}
+	other, err := st.CreateProject(ctx, "Other", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteRepo(ctx, other.ID, repo.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("DeleteRepo wrong project = %v, want ErrNotFound", err)
+	}
+	if got, err := st.GetIssue(ctx, issue.ID); err != nil || got.RepoID == nil || *got.RepoID != repo.ID {
+		t.Fatalf("issue lost repo scope after blocked delete: %#v, %v", got, err)
+	}
+	if err := st.DeleteIssue(ctx, issue.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteRepo(ctx, p.ID, repo.ID); err != nil {
+		t.Fatalf("DeleteRepo after removing issues: %v", err)
+	}
+}
+
+func TestCreateRepoRejectsUnsafeNames(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	p, err := st.CreateProject(ctx, "Names", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"../escape", "a/b", `a\b`, ".git", ".hidden"} {
+		if _, err := st.CreateRepo(ctx, domain.Repo{ProjectID: p.ID, Name: name, RemoteURL: "https://example.com/x"}); err == nil {
+			t.Fatalf("CreateRepo accepted unsafe name %q", name)
+		}
+	}
+	repo, err := st.CreateRepo(ctx, domain.Repo{ProjectID: p.ID, Name: " Repo Two ", RemoteURL: "https://example.com/x"})
+	if err != nil || repo.Name != "Repo Two" {
+		t.Fatalf("CreateRepo valid name = %#v, %v", repo, err)
+	}
+	if _, err := st.CreateRepo(ctx, domain.Repo{ProjectID: p.ID, Name: "前端 服务", RemoteURL: "https://example.com/x"}); err != nil {
+		t.Fatalf("CreateRepo unicode name: %v", err)
+	}
+}
+
+func TestListEventsTailAndLookupIndexes(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "test.db")
+	st, err := store.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	p, _ := st.CreateProject(ctx, "Events", "")
+	issue, _ := st.CreateLocalIssue(ctx, p.ID, "event tail", "", nil)
+	run, _ := st.CreateRun(ctx, issue.ID, "test", "")
+	for i := 0; i < 7; i++ {
+		if _, err := st.AppendEvent(ctx, run.ID, "stderr", map[string]any{"text": "line"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tail, err := st.ListEventsTail(ctx, run.ID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tail) != 3 || tail[0].Seq != 5 || tail[2].Seq != 7 {
+		t.Fatalf("tail = %+v, want seq 5..7", tail)
+	}
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer raw.Close()
+	for table, index := range map[string]string{"comments": "idx_comments_issue", "issues": "idx_issues_repo"} {
+		rows, err := raw.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name=? AND name=?`, table, index)
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := rows.Next()
+		rows.Close()
+		if !found {
+			t.Fatalf("missing index %s on %s", index, table)
+		}
+	}
+}
+
+func TestUpdateRunReopenClearsEndedAt(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	p, err := st.CreateProject(ctx, "Queue", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	iss, err := st.CreateLocalIssue(ctx, p.ID, "issue", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.CreateRun(ctx, iss.ID, "agent", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := domain.RunCompleted
+	run, err = st.UpdateRun(ctx, run.ID, store.RunUpdate{Status: &done, Ended: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.EndedAt == nil {
+		t.Fatal("completed run has no ended_at")
+	}
+	queued := domain.RunQueued
+	run, err = st.UpdateRun(ctx, run.ID, store.RunUpdate{Status: &queued, Reopen: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.EndedAt != nil || run.Status != domain.RunQueued {
+		t.Fatalf("reopened run = %+v", run)
+	}
+}
+
+func TestConcurrentLocalIssueTransactionsUseImmediateLock(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	p, err := st.CreateProject(ctx, "Concurrent", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const workers = 8
+	const perWorker = 10
+	errCh := make(chan error, workers)
+	for i := range workers {
+		go func(worker int) {
+			for j := range perWorker {
+				if _, err := st.CreateLocalIssue(ctx, p.ID, fmt.Sprintf("issue-%d-%d", worker, j), "", nil); err != nil {
+					errCh <- err
+					return
+				}
+			}
+			errCh <- nil
+		}(i)
+	}
+	for range workers {
+		if err := <-errCh; err != nil {
+			t.Fatalf("concurrent CreateLocalIssue: %v", err)
+		}
+	}
+	issues, err := st.ListIssues(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(issues) != workers*perWorker {
+		t.Fatalf("issues = %d, want %d", len(issues), workers*perWorker)
+	}
+	seen := map[string]bool{}
+	for _, issue := range issues {
+		if seen[issue.Key] {
+			t.Fatalf("duplicate local issue key %q", issue.Key)
+		}
+		seen[issue.Key] = true
 	}
 }

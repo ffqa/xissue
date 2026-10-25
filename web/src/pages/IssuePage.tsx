@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { DiffEditor } from '@monaco-editor/react';
 import { api, qk } from '../api';
 import {
   Crumbs,
@@ -15,7 +14,8 @@ import {
 import { EventStream } from '../components/EventStream';
 import { AgentManagerModal } from '../components/AgentManagerModal';
 import { formatChangeRecord } from '../components/CherryPickModal';
-import { languageOf } from '../monaco';
+import { LazyDiffEditor } from '../components/LazyDiffEditor';
+import { languageOf } from '../language';
 import { fetchRunEvents } from '../realtime';
 import { useTheme } from '../theme';
 import { copyText } from '../clipboard';
@@ -1197,7 +1197,7 @@ function ReviewPane({
                 )}
               </div>
               <div className="diff-editor">
-                <DiffEditor
+                <LazyDiffEditor
                   theme={theme === 'dark' ? 'vs-dark' : 'light'}
                   language={languageOf(sel.path)}
                   original={baseQ.data?.content ?? ''}

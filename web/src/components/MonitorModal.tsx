@@ -40,7 +40,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
   const [cfgEnabled, setCfgEnabled] = useState(true);
   const [cfgActiveHours, setCfgActiveHours] = useState('');
   const [cfgSyncIssues, setCfgSyncIssues] = useState(false);
-  const [cfgSyncIntervalMin, setCfgSyncIntervalMin] = useState(10);
+  const [cfgSyncIntervalMin, setCfgSyncIntervalMin] = useState(5);
   const [cfgAutoDevelopIssues, setCfgAutoDevelopIssues] = useState(false);
 
   useEffect(() => {
@@ -48,7 +48,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
       setCfgEnabled(configQ.data.enabled ?? true);
       setCfgActiveHours(configQ.data.activeHours || '');
       setCfgSyncIssues(configQ.data.syncIssues ?? false);
-      setCfgSyncIntervalMin(configQ.data.syncIntervalMin || 10);
+      setCfgSyncIntervalMin(configQ.data.syncIntervalMin || 5);
       setCfgAutoDevelopIssues(configQ.data.autoDevelopIssues ?? false);
     }
   }, [configQ.data]);
@@ -356,11 +356,11 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
                   min={1}
                   max={1440}
                   value={cfgSyncIntervalMin}
-                  onChange={(e) => setCfgSyncIntervalMin(Math.max(1, Number(e.target.value) || 10))}
+                  onChange={(e) => setCfgSyncIntervalMin(Math.max(1, Number(e.target.value) || 5))}
                   disabled={!cfgSyncIssues}
                 />
                 <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
-                  默认 10 分钟；仅监控总开关开启时生效。也可随时点上方「同步全部 Issue」立即执行。
+                  默认 5 分钟；仅监控总开关开启时生效。也可随时点上方「同步全部 Issue」立即执行。
                 </span>
               </label>
 
@@ -375,7 +375,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
                 </span>
                 <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
                   同步后先判定类型：Bug/需求自动打标并启动 Agent，完成后自动发 PR；建议只打标不开发。
-                  仍需项目配置了可用 Agent，并受项目每日配额限制。
+                  全局开关要求每个项目配置作者白名单（autoDevelopAuthors），否则跳过该项目。
                 </span>
               </label>
 
@@ -488,7 +488,7 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
 
         {status?.issueSyncEnabled && (
           <div className="row small muted" style={{ flexWrap: 'wrap', gap: 10, flex: 'none' }}>
-            <span>🔄 Issue 自动同步：每 {status.issueSyncIntervalMin || 10} 分钟</span>
+            <span>🔄 Issue 自动同步：每 {status.issueSyncIntervalMin || 5} 分钟</span>
             <span>
               上次：{status.lastIssueSyncTime ? new Date(status.lastIssueSyncTime).toLocaleString() : '尚未执行'}
             </span>

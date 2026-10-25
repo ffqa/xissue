@@ -16,6 +16,7 @@
 
 ```ts
 type Provider = "github" | "gitlab" | "gitea" | "plain";
+// github 与 gitea 实现了 Issue/PR API；gitlab 选项目前按 plain Git 处理。
 
 interface Repo {
   id: number; projectId: number;
@@ -107,7 +108,7 @@ interface RunEvent {
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/health` | `{ ok, version, editorUrlTemplate }`。`editorUrlTemplate` 如 `vscode://file{path}`，前端替换 `{path}` 为绝对路径 |
-| GET | `/api/status` | 实时运行状态：版本、PID、uptime、堆内存、进程 CPU、磁盘、GC、goroutine、自动更新状态 |
+| GET | `/api/status` | 实时运行状态：版本、PID、uptime、堆内存、进程 CPU、磁盘、`dataUsed`/`runWorkspaces`/`database`、`queue.pending/running/maxConcurrent/maxQueued`、GC、goroutine、自动更新状态；WebSocket 每 2 秒推送同结构 |
 | GET / PATCH | `/api/settings` | 全局设置；PATCH `{ autoUpdate?, defaultAgent?, agentRoles?, globalAutomationRules? }`。`agentRoles` 为 Agent 身份分配 `{ issueReview?, issueDevelop?, prReview?, autoMerge? }`（留空跟随 `defaultAgent`；全局自动化规则支持 `projectIds` 限定项目，空数组表示全部项目） |
 | GET / PUT / PATCH | `/api/monitor/config` | 监控与通知配置；`notificationRoutes` 为按事件分通道的路由表 |
 | GET | `/api/plugins` | 已安装插件 → `PluginInfo[]`（`apiVersion`、`events`、`permissions`、`enabled`、`hasReadme`、`hasConfig`、`error`）；CLI 为 `xissue plugin list` |
@@ -119,36 +120,37 @@ interface RunEvent {
 | GET | `/api/projects` | `Project[]` |
 | POST | `/api/projects` | `{ name, description }` → `Project` |
 | GET / PATCH / DELETE | `/api/projects/{id}` | PATCH `{ name?, description? }` |
-| POST | `/api/projects/{id}/repos` | `{ name, provider, remoteUrl, ownerRepo, defaultBranch, testCommand }` → `Repo` |
-| DELETE | `/api/projects/{id}/repos/{repoId}` | |
+| POST | `/api/projects/{id}/repos` | `{ name, provider, remoteUrl, ownerRepo, defaultBranch, testCommand }` → `Repo`；`name` 会去除首尾空白，必须是单个目录名（字母数字开头，可含空格、`.`、`-`、`_`，禁止 `/`、`\`、`..`、`.git`） |
+| DELETE | `/api/projects/{id}/repos/{repoId}` | 仓库仍被 Issue 引用时返回 409，避免 `repo_id` 被置空后执行范围丢失 |
 | POST | `/api/projects/{id}/sync` | 从平台导入 open issues → `{ imported: number }` |
-| POST | `/api/projects/{id}/pull` | 拉取远端所有仓库最新代码并同步到本地工作区与镜像 → `{ ok, pulledRepos, message }` |
-| GET | `/api/projects/{id}/prs` | 查询项目 PR 列表（`?state=open\|merged\|closed\|all`）→ `RemotePR[]` |
-| POST | `/api/projects/{id}/prs/{number}/merge` | 在项目中直接合并 PR 并自动 pull 同步本地代码 → `{ ok, merged, message }` |
+| POST | `/api/projects/{id}/pull` | 刷新所有仓库镜像；仅当本地当前分支等于目标分支且工作区干净时执行 `git pull --ff-only origin <target>`。返回 `{ ok, pulledRepos, repos, message }`，`repos[]` 逐仓说明 `mirrorUpdated`、`localUpdated`、`reason`、`error`；任一仓库 Git 失败返回 502 |
+| GET | `/api/projects/{id}/prs` | 查询项目 PR 列表（`?state=open\|merged\|closed\|all`）→ `RemotePR[]`；含可选 CI 汇总 `ciState`/`ciPassed`/`ciFailed`/`ciPending` |
+| POST | `/api/projects/{id}/prs/{number}/merge` | 合并项目内仓库的 PR，刷新镜像并尝试快进本地目标分支；`message` 包含逐仓本地更新结果。`repoId` 必须属于路径中的项目，否则 400 → `{ ok, merged, message }` |
 | POST | `/api/projects/{id}/prs/{number}/close` | 在项目中直接关闭 PR → `{ ok, closed }` |
 | GET | `/api/repos/{repoId}/commits/{sha}` | 单个 Commit 详情：元信息、文件增删统计、统一 diff（超过 512KB 截断） |
 | GET | `/api/monitor/status` | 获取监控服务状态、上次检查耗时、监控分支与 PR 数 → `MonitorStatus` |
 | GET | `/api/monitor/logs` | 查询监控与执行日志（`?hours=8` 默认最近8小时）→ `MonitorLogEntry[]` |
 | POST | `/api/monitor/trigger` | 立即触发一次全分支与 PR 状态检查 → `{ ok, watchesTriggered, prsUpdated, message }` |
 | POST | `/api/monitor/sync` | 立即同步所有项目的远程 Issue → `{ ok, projects, imported, errors?, message }` |
-| POST | `/api/monitor/prune` | 立即裁剪旧日志（`?hours=8`）保留最近指定时间 → `{ ok, prunedCount, message }` |
+| POST | `/api/monitor/prune` | 立即裁剪旧监控日志（`?hours=8`）→ `{ ok, prunedCount, message }` |
+| POST | `/api/maintenance/prune` | 立即执行 Run 归档/日志清理/工作区清理（按 `runner.eventRetentionDays` 与 `runner.workspaceRetentionDays`）→ `{ ok, stats }` |
 | POST | `/api/mcp` | MCP Streamable HTTP JSON-RPC（`Accept: application/json` 或 `text/event-stream`）；无状态，所有客户端共享一个服务 |
 | DELETE | `/api/mcp` | 无状态 MCP 会话终止，返回 204 |
 | GET | `/api/projects/{id}/issues` | `Issue[]` |
 | POST | `/api/projects/{id}/issues` | `{ title, body, labels? }` → `Issue`（本地 Issue，status=todo） |
 | GET / PATCH | `/api/issues/{id}` | PATCH `{ title?, body?, status? }` |
-| POST | `/api/issues/{id}/publish` | `{ repoId }` 把本地 Issue 发布到平台 → `Issue` |
+| POST | `/api/issues/{id}/publish` | `{ repoId }` 把本地 Issue 发布到平台 → `Issue`；`repoId` 必须属于 Issue 所在项目，否则 400 |
 | GET / POST | `/api/issues/{id}/comments` | POST `{ body }` |
 | GET | `/api/issues/{id}/runs` | `Run[]`（新的在前） |
 | POST | `/api/issues/{id}/runs` | `{ agent?, prompt? }` 启动 Run → `Run`。`agent` 留空时使用 `agentRoles.issueDevelop`（其次 `defaultAgent`）；`prompt` 为额外说明 |
 | GET | `/api/runs/{id}` | `Run` |
-| GET | `/api/runs/{id}/events?after=<seq>` | `RunEvent[]` |
+| GET | `/api/runs/{id}/events?after=<seq>` | `RunEvent[]`；首次（`after=0`）最多返回最近 500 条，之后用 `after=seq` 增量补齐；完整历史在归档 `events.log` |
 | POST | `/api/runs/{id}/message` | `{ text }` 追加指令 / 打回反馈（会话结束后会自动恢复会话） |
 | POST | `/api/runs/{id}/permissions/{requestId}` | `{ optionId }` |
 | POST | `/api/runs/{id}/cancel` | |
 | GET | `/api/runs/{id}/changes` | `[{ repoId, repoName, branch, files: [{ path, status, additions, deletions }] }]`，status 为 `M/A/D/R/?` |
-| GET | `/api/runs/{id}/file?repoId=&path=&side=base\|work` | `{ content: string }`，base 为默认分支版本 |
-| PUT | `/api/runs/{id}/file?repoId=&path=` | `{ content }` 保存到工作区 |
+| GET | `/api/runs/{id}/file?repoId=&path=&side=base\|work` | `{ content: string }`，base 为默认分支版本；路径必须位于仓库 worktree 内 |
+| PUT | `/api/runs/{id}/file?repoId=&path=` | `{ content }` 保存到工作区；拒绝绝对路径、`..` 与逃逸 worktree 的符号链接 |
 | POST | `/api/runs/{id}/submit` | `{ mode: "merge_local" \| "pr" \| "push", title?, body?, commitMessage?, targetBranch?, changeItems?, remark? }` → `{ results: [{ repoId, repoName, branch, targetBranch, commit, prUrl, changeRecord, error }] }` |
 | POST | `/api/runs/{id}/discard` | 删除 worktree 与分支 |
 

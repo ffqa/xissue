@@ -136,7 +136,7 @@
   - Agent 管理面板新增「🔗 HTTP 复用安装」与「复制 HTTP JSON」，可一键把 OpenCode、Claude Code、Cursor、Windsurf 改写为 `type: remote/http` + `url` 配置；Qoder 因远端 schema 不稳定仍保留 stdio；
   - CLI：`xissue mcp install --http` 写入 HTTP 配置，`xissue mcp http` 只打印当前 HTTP endpoint。
 - **全局 Issue 自动同步**:
-  - `monitor.syncIssues`（默认关闭）与 `monitor.syncIntervalMin`（默认 10 分钟）加入全局配置与 `~/.xissue/config.yaml`；
+  - `monitor.syncIssues`（默认开启）与 `monitor.syncIntervalMin`（默认 5 分钟）加入全局配置与 `~/.xissue/config.yaml`；自动同步同时受监控总开关约束；迁移不覆盖显式关闭值；
   - 监控总开关开启时，后台每 30 秒检查一次到期时间，按间隔遍历所有项目、拉取支持 Issue 的仓库并 upsert；单个仓库失败只记录错误，不中断其它项目；
   - 新增 `POST /api/monitor/sync` 手动全量同步；监控弹窗「⚙️ 策略与通知」中可启停、设置间隔、立即同步，并显示上次同步时间/新增数/错误；
   - 新导入的 Issue 先做三分类：`bug` / 需求（`enhancement`）/ 建议（`suggestion`）。Bug 与需求自动打标，建议只打标并留本地评论、等待作者补充；
@@ -174,6 +174,34 @@
 
 
 ---
+
+### 2.15 存储生命周期与首屏性能
+- **Run 日志合并**: Agent 的 `message` / `stderr` 小块先按 150ms 或 8KB 合并，再写 `run_events`，避免一次执行写入数千条碎片。
+- **自动归档与清理**: `runner.eventRetentionDays`（默认 7，0=永久保留）到期后先调用 `ArchiveRun` 写 `events.log`/`analysis.md`，再删除数据库事件行。`runner.workspaceRetentionDays`（默认 7，0=永久保留）只清理 `failed`/`cancelled`/`discarded` 的工作区；`completed` 表示尚未审核，`submitted` 可能包含部分仓库未推送的改动，二者工作区都保留。后台每 6 小时执行一次，也可 `POST /api/maintenance/prune` 手动触发。
+- **状态栏容量**: `/api/status` 新增 `disk.dataUsed`、`disk.runWorkspaces`、`disk.database`（60 秒缓存），前端状态栏显示 `DATA` 占总量的数值。
+- **首屏体积**: Monaco 改为按需加载，移除 TS/CSS/HTML/JSON 语言服务 worker，仅保留通用 editor worker；构建产物的首屏 JS 从约 4MB 降至约 0.7MB，`dist` 从约 13MB 降至约 3.8MB（Monaco 约 2.3MB 仅在打开 Diff 时加载）。
+- **静态压缩**: 内嵌资源对 `js/css/html/json/svg/map/txt/wasm/xml` 按 `Accept-Encoding: gzip` 压缩并缓存，减少传输体积。
+- **并发与索引**: SQLite WAL 下连接池从 1 提升到 8（写仍由 SQLite 串行化），补充 `comments(issue_id)`、`issues(repo_id)` 索引；首次打开历史 Run 只取最近 500 条事件。
+
+### 2.16 显式 FIFO 运行队列
+- **调度模型**: `StartRun` / `SendMessage` 只创建 `queued` 状态的 Run 并进入单调度器队列；`runner.queueLoop` 按 FIFO 取队首，拿到 count/memory 预算后才启动 ACP 进程。不再由大量 goroutine 在 `budget.acquire` 上无序竞争。
+- **容量上限**: `runner.maxQueuedRuns`（默认 100，0=不限）限制待执行队列；队列满时 API 返回 `run queue is full`，不会无限堆积 Run 记录。
+- **状态语义**: 排队中的 Run 保持 `queued`，对应 Issue 不再提前改成 `running`；真正获得执行槽后才切换 Issue/Run 状态。
+- **可观测性**: `/api/status` 新增 `queue.pending/running/maxConcurrent/maxQueued`，状态栏显示 `RUN running/max` 与 `+Qn`。
+- **重启限制**: 队列是进程内 FIFO；服务重启时仍按既有恢复逻辑把未完成的 queued Run 标记为失败。需要跨重启恢复时，后续应把 prompt/模型/autoPR 等调度参数持久化后再重新入队。
+
+### 2.17 Gitea / Forgejo 适配
+- **Provider**: `provider.For(ProviderGitea)` 现已返回真实 API 适配器，覆盖 Issue 列表/创建/评论/标签，PR 列表/创建/合并/关闭，以及 PR URL 的状态与详情（评论、review）。
+- **环境变量**: `XISSUE_GITEA_URL`（回退 `GITEA_URL`）填写实例根地址，例如 `https://gitea.example.com`；`XISSUE_GITEA_TOKEN`（回退 `GITEA_TOKEN` / `GITEA_ACCESS_TOKEN`）填写 API Token。Token 只存在进程环境，不写入 SQLite/配置文件/前端。
+- **安全**: Gitea Token 仅存在于 Server 进程环境；`acp.Start` 启动 Agent 时会剔除 `XISSUE_GITEA_TOKEN`/`GITEA_TOKEN`/`GITEA_ACCESS_TOKEN`/`XISSUE_TOKEN`，避免提示词注入读取 Token。需要给 Agent 的凭据应通过 `AgentConfig.Env` 显式传入或使用本机 git credential helper。
+- **限制**: 单进程配置一个 Gitea 实例；GitLab 仍按 plain Git 处理，需后续单独适配。
+- **CI 展示**: PR 列表新增 CI 汇总字段（`ciState`/`ciPassed`/`ciFailed`/`ciPending`）：GitHub 读 `statusCheckRollup`，Gitea 读每个 open PR head SHA 的 commit status；前端显示 `CI ✓/…/✗` 徽标。CI 失败自动修复仍未实现。
+- **测试**: `internal/provider/gitea_test.go` 使用本地 `httptest` 覆盖 Issue/评论/标签/PR/合并/关闭/CI 与 PR URL 详情，不依赖真实 Gitea。
+
+### 2.18 自动开发安全默认值
+- **作者白名单**: 开启全局 `monitor.autoDevelopIssues` 后，项目未配置 `autoDevelopAuthors` 时直接跳过并写监控日志，避免公开仓库的任意作者触发本机 Agent。
+- **网络工具默认审批**: 默认 `permissions.autoAllowKinds` 从 `read/search/think/fetch/edit` 收紧为 `read/search/think/edit`；配置版本升到 3，旧配置迁移时移除 `fetch`。需要联网时由用户显式重新加入并承担提示词注入风险。
+- **提交完成状态**: `RunSubmitted` 现在写入 `ended_at`，使提交后的 Run 进入日志/工作区保留期统计。
 
 ## 3. 核心架构与关键代码索引
 

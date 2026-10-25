@@ -22,6 +22,11 @@ var schemaSQL string
 
 var ErrNotFound = errors.New("not found")
 
+// ErrRepoInUse prevents deleting a repository while issues still reference it.
+// SQLite would otherwise null issues.repo_id via ON DELETE SET NULL, leaving
+// runs and issues with an empty repository scope.
+var ErrRepoInUse = errors.New("repository still has linked issues")
+
 type Store struct {
 	db *sql.DB
 
@@ -64,12 +69,16 @@ func (s *Store) emitIssueStatusChanged(issue *domain.Issue, previous domain.Issu
 }
 
 func Open(path string) (*Store, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)", path)
+	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_txlock=immediate", path)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1) // single writer keeps SQLite simple and safe
+	// WAL allows readers while a writer is active. Keep one writer in practice
+	// (SQLite serializes writes) but let board/event reads use separate
+	// connections instead of queueing behind the agent's event inserts.
+	db.SetMaxOpenConns(8)
+	db.SetMaxIdleConns(8)
 	if _, err := db.Exec(schemaSQL); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
@@ -442,6 +451,10 @@ func (s *Store) GetRepo(ctx context.Context, id int64) (*domain.Repo, error) {
 }
 
 func (s *Store) CreateRepo(ctx context.Context, r domain.Repo) (*domain.Repo, error) {
+	r.Name = strings.TrimSpace(r.Name)
+	if err := domain.ValidateRepoName(r.Name); err != nil {
+		return nil, err
+	}
 	if r.DefaultBranch == "" {
 		r.DefaultBranch = "main"
 	}
@@ -455,6 +468,10 @@ func (s *Store) CreateRepo(ctx context.Context, r domain.Repo) (*domain.Repo, er
 }
 
 func (s *Store) UpdateRepo(ctx context.Context, r domain.Repo) (*domain.Repo, error) {
+	r.Name = strings.TrimSpace(r.Name)
+	if err := domain.ValidateRepoName(r.Name); err != nil {
+		return nil, err
+	}
 	_, err := s.db.ExecContext(ctx, `UPDATE repos SET name=?, provider=?, remote_url=?, owner_repo=?, default_branch=?, test_command=? WHERE id=? AND project_id=?`,
 		r.Name, r.Provider, r.RemoteURL, r.OwnerRepo, r.DefaultBranch, r.TestCommand, r.ID, r.ProjectID)
 	if err != nil {
@@ -464,8 +481,27 @@ func (s *Store) UpdateRepo(ctx context.Context, r domain.Repo) (*domain.Repo, er
 }
 
 func (s *Store) DeleteRepo(ctx context.Context, projectID, repoID int64) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM repos WHERE id=? AND project_id=?`, repoID, projectID)
-	return err
+	res, err := s.db.ExecContext(ctx, `DELETE FROM repos WHERE id=? AND project_id=? AND NOT EXISTS (SELECT 1 FROM issues WHERE repo_id=?)`, repoID, projectID, repoID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	repo, err := s.GetRepo(ctx, repoID)
+	if err != nil {
+		return err
+	}
+	if repo.ProjectID != projectID {
+		return ErrNotFound
+	}
+	var count int
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues WHERE repo_id=?`, repoID).Scan(&count)
+	return fmt.Errorf("%w（%d 个 Issue 仍在引用）", ErrRepoInUse, count)
 }
 
 // ---------- Issues ----------
@@ -564,6 +600,12 @@ func (s *Store) AddIssueLabels(ctx context.Context, id int64, add ...string) (*d
 
 // CreateLocalIssue allocates the next LOCAL-n key for the project.
 func (s *Store) CreateLocalIssue(ctx context.Context, projectID int64, title, body string, labels []string) (*domain.Issue, error) {
+	return s.CreateLocalIssueInRepo(ctx, projectID, nil, title, body, labels)
+}
+
+// CreateLocalIssueInRepo creates a local issue optionally scoped to one repo.
+// A nil repoID means the issue is project-wide and the agent may choose.
+func (s *Store) CreateLocalIssueInRepo(ctx context.Context, projectID int64, repoID *int64, title, body string, labels []string) (*domain.Issue, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -581,8 +623,12 @@ func (s *Store) CreateLocalIssue(ctx context.Context, projectID int64, title, bo
 	}
 	lb, _ := json.Marshal(labels)
 	t := now()
-	res, err := tx.ExecContext(ctx, `INSERT INTO issues(project_id, key, source, title, body, labels, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)`,
-		projectID, fmt.Sprintf("LOCAL-%d", seq), "local", title, body, string(lb), domain.IssueTodo, t, t)
+	var repoArg any
+	if repoID != nil {
+		repoArg = *repoID
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO issues(project_id, key, source, repo_id, title, body, labels, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		projectID, fmt.Sprintf("LOCAL-%d", seq), "local", repoArg, title, body, string(lb), domain.IssueTodo, t, t)
 	if err != nil {
 		return nil, err
 	}
@@ -899,6 +945,7 @@ type RunUpdate struct {
 	AutoPR       *bool
 	Started      bool
 	Ended        bool
+	Reopen       bool // clear ended_at when a completed run is queued for a follow-up
 }
 
 func (s *Store) UpdateRun(ctx context.Context, id int64, u RunUpdate) (*domain.Run, error) {
@@ -946,6 +993,9 @@ func (s *Store) UpdateRun(ctx context.Context, id int64, u RunUpdate) (*domain.R
 	if u.Ended {
 		add("ended_at", now())
 	}
+	if u.Reopen {
+		add("ended_at", nil)
+	}
 	if len(sets) > 0 {
 		args = append(args, id)
 		if _, err := s.db.ExecContext(ctx, `UPDATE runs SET `+strings.Join(sets, ",")+` WHERE id=?`, args...); err != nil {
@@ -974,11 +1024,7 @@ func (s *Store) AppendEvent(ctx context.Context, runID int64, typ string, data a
 	return &ev, nil
 }
 
-func (s *Store) ListEvents(ctx context.Context, runID, afterSeq int64) ([]domain.RunEvent, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, seq, type, data, created_at FROM run_events WHERE run_id=? AND seq>? ORDER BY seq`, runID, afterSeq)
-	if err != nil {
-		return nil, err
-	}
+func scanEvents(rows *sql.Rows) ([]domain.RunEvent, error) {
 	defer rows.Close()
 	out := []domain.RunEvent{}
 	for rows.Next() {
@@ -991,6 +1037,54 @@ func (s *Store) ListEvents(ctx context.Context, runID, afterSeq int64) ([]domain
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListEvents(ctx context.Context, runID, afterSeq int64) ([]domain.RunEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, seq, type, data, created_at FROM run_events WHERE run_id=? AND seq>? ORDER BY seq`, runID, afterSeq)
+	if err != nil {
+		return nil, err
+	}
+	return scanEvents(rows)
+}
+
+// ListEventsTail returns at most limit newest events, restored to ascending seq
+// order. It keeps opening a long historical run from loading every event row.
+func (s *Store) ListEventsTail(ctx context.Context, runID int64, limit int) ([]domain.RunEvent, error) {
+	if limit <= 0 || limit > 2000 {
+		limit = 500
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, run_id, seq, type, data, created_at FROM (SELECT id, run_id, seq, type, data, created_at FROM run_events WHERE run_id=? ORDER BY seq DESC LIMIT ?) ORDER BY seq`, runID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanEvents(rows)
+}
+
+// ListEndedRunsBefore returns terminal runs whose effective end time is older
+// than cutoff, for retention cleanup.
+func (s *Store) ListEndedRunsBefore(ctx context.Context, cutoff time.Time) ([]domain.Run, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+runCols+` FROM runs WHERE status IN ('completed','submitted','failed','cancelled','discarded') AND ended_at != '' AND ended_at < ? ORDER BY id`, cutoff.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.Run{}
+	for rows.Next() {
+		r, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteRunEvents(ctx context.Context, runID int64) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM run_events WHERE run_id=?`, runID)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // ---------- Branch Watches ----------

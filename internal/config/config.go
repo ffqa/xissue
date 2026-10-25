@@ -34,10 +34,13 @@ type PermissionPolicy struct {
 
 // RunnerConfig controls local execution.
 type RunnerConfig struct {
-	MaxConcurrent  int  `yaml:"maxConcurrent"`
-	MemoryBudgetMB int  `yaml:"memoryBudgetMB"` // 0 = unlimited
-	UseSystemdRun  bool `yaml:"useSystemdRun"`  // Linux: wrap agents with systemd-run --user --scope
-	IdleTimeoutSec int  `yaml:"idleTimeoutSec"` // stop idle agent process while waiting for review
+	MaxConcurrent          int  `yaml:"maxConcurrent"`
+	MaxQueuedRuns          int  `yaml:"maxQueuedRuns"`          // 0 = unlimited pending queue
+	MemoryBudgetMB         int  `yaml:"memoryBudgetMB"`         // 0 = unlimited
+	UseSystemdRun          bool `yaml:"useSystemdRun"`          // Linux: wrap agents with systemd-run --user --scope
+	IdleTimeoutSec         int  `yaml:"idleTimeoutSec"`         // stop idle agent process while waiting for review
+	EventRetentionDays     int  `yaml:"eventRetentionDays"`     // 0 = keep run_events forever
+	WorkspaceRetentionDays int  `yaml:"workspaceRetentionDays"` // 0 = keep run workdirs forever
 }
 
 // MonitorConfig controls branch and PR background monitoring and external notifications.
@@ -49,7 +52,7 @@ type MonitorConfig struct {
 	TelegramChatID    string `yaml:"telegramChatId,omitempty" json:"telegramChatId,omitempty"`     // Telegram Chat ID
 	WebhookURL        string `yaml:"webhookUrl,omitempty" json:"webhookUrl,omitempty"`             // 通用 Webhook (飞书/企微/钉钉/Slack)
 	SyncIssues        bool   `yaml:"syncIssues" json:"syncIssues"`                                 // 全局自动同步各项目的远程 Issue
-	SyncIntervalMin   int    `yaml:"syncIntervalMin" json:"syncIntervalMin"`                       // 自动同步间隔（分钟），默认 10
+	SyncIntervalMin   int    `yaml:"syncIntervalMin" json:"syncIntervalMin"`                       // 自动同步间隔（分钟），默认 5
 	AutoDevelopIssues bool   `yaml:"autoDevelopIssues" json:"autoDevelopIssues"`                   // 全局自动开发判定为 Bug/需求的 Issue
 	// NotificationRoutes maps notification event kinds to external channels
 	// (browser/telegram/webhook). An empty map preserves legacy "send all".
@@ -65,9 +68,12 @@ type AgentRolesConfig struct {
 }
 
 // Config is the root configuration.
+const CurrentConfigVersion = 3
+
 type Config struct {
 	mu                    sync.RWMutex
 	Path                  string                  `yaml:"-" json:"-"`
+	ConfigVersion         int                     `yaml:"configVersion,omitempty" json:"configVersion,omitempty"`
 	Listen                string                  `yaml:"listen"`
 	Token                 string                  `yaml:"token"`
 	DataDir               string                  `yaml:"dataDir"`
@@ -287,6 +293,7 @@ func DefaultDataDir() string {
 // Default returns a config with sensible defaults.
 func Default() *Config {
 	return &Config{
+		ConfigVersion:     CurrentConfigVersion,
 		Listen:            "127.0.0.1:7789",
 		DataDir:           DefaultDataDir(),
 		EditorURLTemplate: "vscode://file{path}",
@@ -298,19 +305,25 @@ func Default() *Config {
 			"codex":    {Command: "npx", Args: []string{"-y", "@agentclientprotocol/codex-acp"}, MemoryMB: 200},
 		},
 		Permissions: PermissionPolicy{
-			AutoAllowKinds:    []string{"read", "search", "think", "fetch", "edit"},
+			// fetch is intentionally not auto-approved: a prompt-injected issue
+			// could otherwise read a secret and send it to an attacker.
+			AutoAllowKinds:    []string{"read", "search", "think", "edit"},
 			AlwaysAskPatterns: []string{"git push", "rm -rf", "sudo", "npm publish", "pnpm publish"},
 		},
 		Runner: RunnerConfig{
-			MaxConcurrent:  2,
-			MemoryBudgetMB: 0,
-			UseSystemdRun:  false,
-			IdleTimeoutSec: 600,
+			MaxConcurrent:          2,
+			MaxQueuedRuns:          100,
+			MemoryBudgetMB:         0,
+			UseSystemdRun:          false,
+			IdleTimeoutSec:         600,
+			EventRetentionDays:     7,
+			WorkspaceRetentionDays: 7,
 		},
 		Monitor: MonitorConfig{
 			Enabled:         true,
 			ActiveHours:     "", // empty = all day; avoids silently pausing overnight after upgrades
-			SyncIntervalMin: 10,
+			SyncIssues:      true,
+			SyncIntervalMin: 5,
 		},
 	}
 }
@@ -335,10 +348,22 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.ConfigVersion = 0
 	if err := yaml.Unmarshal(b, cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	cfg.Path = path
+	migrated := false
+	if cfg.ConfigVersion < CurrentConfigVersion {
+		// Issue sync defaults (enabled, 5 min) come from Default() and therefore
+		// only apply when a field is absent. Explicit syncIssues: false and
+		// syncIntervalMin values must survive the migration unchanged.
+		if cfg.ConfigVersion < 3 {
+			cfg.Permissions.AutoAllowKinds = removeAutoAllowKind(cfg.Permissions.AutoAllowKinds, "fetch")
+		}
+		cfg.ConfigVersion = CurrentConfigVersion
+		migrated = true
+	}
 	if cfg.DataDir == "" {
 		cfg.DataDir = DefaultDataDir()
 	}
@@ -348,8 +373,20 @@ func Load(path string) (*Config, error) {
 	if cfg.Runner.MaxConcurrent <= 0 {
 		cfg.Runner.MaxConcurrent = 1
 	}
+	if cfg.Runner.MaxQueuedRuns < 0 {
+		cfg.Runner.MaxQueuedRuns = 0
+	}
+	if cfg.Runner.EventRetentionDays < 0 {
+		cfg.Runner.EventRetentionDays = 0
+	}
+	if cfg.Runner.WorkspaceRetentionDays < 0 {
+		cfg.Runner.WorkspaceRetentionDays = 0
+	}
 	cfg.Monitor.SyncIntervalMin = normalizeSyncInterval(cfg.Monitor.SyncIntervalMin)
 	cfg.Monitor.NotificationRoutes = sanitizeNotificationRoutes(cfg.Monitor.NotificationRoutes)
+	if migrated {
+		_ = cfg.Save()
+	}
 	return cfg, nil
 }
 
@@ -374,9 +411,20 @@ func migrateDeprecatedAgents(agents map[string]AgentConfig) {
 	}
 }
 
+func removeAutoAllowKind(kinds []string, drop string) []string {
+	out := make([]string, 0, len(kinds))
+	for _, kind := range kinds {
+		if strings.EqualFold(strings.TrimSpace(kind), drop) {
+			continue
+		}
+		out = append(out, kind)
+	}
+	return out
+}
+
 func normalizeSyncInterval(v int) int {
 	if v <= 0 {
-		return 10
+		return 5
 	}
 	if v > 24*60 {
 		return 24 * 60

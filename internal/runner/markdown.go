@@ -98,10 +98,12 @@ func buildWorkspaceAGENTS(proj *domain.Project, issue *domain.Issue) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Project: %s\n\n", proj.Name)
 	if desc := workspaceDescription(proj.Description); desc != "" {
+		b.WriteString("## Project Description\n\n")
 		b.WriteString(desc + "\n\n")
 	}
 	b.WriteString("## Repositories in this Workspace\n\n")
-	for _, repo := range proj.Repos {
+	repos := reposForIssue(proj, issue)
+	for _, repo := range repos {
 		fmt.Fprintf(&b, "- `./%s/` (default branch `%s`", repo.Name, repo.DefaultBranch)
 		if repo.TestCommand != "" {
 			fmt.Fprintf(&b, ", test command: `%s`", repo.TestCommand)
@@ -110,6 +112,9 @@ func buildWorkspaceAGENTS(proj *domain.Project, issue *domain.Issue) string {
 	}
 	b.WriteString("\nYour current working directory is the workspace root. Work only inside the repository subdirectories listed above (for example `./ide/`). The project description is free-form text, not a filesystem path; do not `cd` to a path found there.\n")
 	fmt.Fprintf(&b, "\n## Active Issue: [%s] %s\n\n", issue.Key, issue.Title)
+	if issue.RepoID != nil && len(repos) == 1 {
+		fmt.Fprintf(&b, "This issue is scoped to `./%s/`; do not modify other repositories.\n\n", repos[0].Name)
+	}
 	if strings.TrimSpace(issue.Body) != "" {
 		b.WriteString(issue.Body + "\n\n")
 	}

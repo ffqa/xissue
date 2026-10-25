@@ -82,6 +82,7 @@ chmod +x ~/.local/bin/xissue
 
 ## ✨ 核心特性
 
+- **Git 平台适配**：GitHub 复用本机 `gh`；Gitea/Forgejo 使用 REST API（Issue/评论/标签/PR 创建/合并/关闭/状态同步）。Gitea 连接信息只从环境变量读取：`XISSUE_GITEA_URL`（或 `GITEA_URL`）与 `XISSUE_GITEA_TOKEN`（或 `GITEA_TOKEN` / `GITEA_ACCESS_TOKEN`），Token 不写入数据库或 Web UI，也不会传给 Agent 子进程。PR 列表会展示 CI 汇总徽标；GitLab 暂按 plain Git 处理。
 - **单仓 / 多仓统一模型**：一个 Project 包含 `1..N` 个 Git 仓库。每次 Run 为各仓库从本地 bare mirror 创建独立 `git worktree` 放在同一父目录下，Agent 可跨仓库修改；提交时按仓库分别 commit / push / 提 PR。
 - **精简四列拖拽流转看板**：
   - 看板卡片仅展示**标题**与**两行摘要**，干净清爽；完整描述、评论、状态下拉与代码审查均在详情页内操作。

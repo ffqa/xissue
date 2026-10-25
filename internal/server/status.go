@@ -1,9 +1,12 @@
 package server
 
 import (
+	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -22,6 +25,7 @@ type SystemStatus struct {
 	CPU           CPUStatus    `json:"cpu"`
 	Disk          DiskStatus   `json:"disk"`
 	GC            GCStatus     `json:"gc"`
+	Queue         QueueStatus  `json:"queue"`
 }
 
 type MemoryStatus struct {
@@ -38,11 +42,21 @@ type CPUStatus struct {
 }
 
 type DiskStatus struct {
-	Path        string  `json:"path"`
-	Total       uint64  `json:"total"`
-	Free        uint64  `json:"free"`
-	UsedPercent float64 `json:"usedPercent"`
-	Error       string  `json:"error,omitempty"`
+	Path          string  `json:"path"`
+	Total         uint64  `json:"total"`
+	Free          uint64  `json:"free"`
+	UsedPercent   float64 `json:"usedPercent"`
+	DataUsed      uint64  `json:"dataUsed"`      // entire data dir, including archives and mirrors
+	RunWorkspaces uint64  `json:"runWorkspaces"` // ~/.xissue/runs
+	Database      uint64  `json:"database"`      // xissue.db + WAL/SHM
+	Error         string  `json:"error,omitempty"`
+}
+
+type QueueStatus struct {
+	Pending       int `json:"pending"`
+	Running       int `json:"running"`
+	MaxConcurrent int `json:"maxConcurrent"`
+	MaxQueued     int `json:"maxQueued"`
 }
 
 type GCStatus struct {
@@ -90,6 +104,14 @@ func (s *Server) collectSystemStatus() SystemStatus {
 	}
 	total, free, diskErr := diskUsage(s.cfg.DataDir)
 	disk := DiskStatus{Path: s.cfg.DataDir, Total: total, Free: free}
+	s.statusMu.Lock()
+	if s.dataSizeAt.IsZero() || time.Since(s.dataSizeAt) > 60*time.Second {
+		s.dataUsed, s.runsUsed = dirUsage(s.cfg.DataDir)
+		s.dbUsed = databaseUsage(s.cfg.DataDir)
+		s.dataSizeAt = now
+	}
+	disk.DataUsed, disk.RunWorkspaces, disk.Database = s.dataUsed, s.runsUsed, s.dbUsed
+	s.statusMu.Unlock()
 	if diskErr != nil {
 		disk.Error = diskErr.Error()
 	}
@@ -105,6 +127,10 @@ func (s *Server) collectSystemStatus() SystemStatus {
 	latest := s.latestUpdate
 	s.updateMu.Unlock()
 
+	queue := QueueStatus{}
+	if s.runner != nil {
+		queue.Pending, queue.Running, queue.MaxConcurrent, queue.MaxQueued = s.runner.QueueStats()
+	}
 	return SystemStatus{
 		Version:       Version,
 		GoVersion:     runtime.Version(),
@@ -131,6 +157,7 @@ func (s *Server) collectSystemStatus() SystemStatus {
 			EstimatedSec: estimated,
 			PauseTotalMs: float64(m.PauseTotalNs) / 1e6,
 		},
+		Queue: queue,
 	}
 }
 
@@ -153,4 +180,36 @@ func (s *Server) statusLoop() {
 		}
 		s.hub.BroadcastStatus(s.collectSystemStatus())
 	}
+}
+
+// dirUsage returns total bytes and the subset under runs/. It intentionally
+// does not follow symlinks. Values are cached by collectSystemStatus.
+func dirUsage(root string) (total, runs uint64) {
+	runsRoot := filepath.Join(root, "runs") + string(filepath.Separator)
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		info, ierr := d.Info()
+		if ierr != nil {
+			return nil
+		}
+		total += uint64(info.Size())
+		if strings.HasPrefix(path, runsRoot) || path == strings.TrimSuffix(runsRoot, string(filepath.Separator)) {
+			runs += uint64(info.Size())
+		}
+		return nil
+	})
+	return total, runs
+}
+
+func databaseUsage(root string) uint64 {
+	var total uint64
+	matches, _ := filepath.Glob(filepath.Join(root, "*.db*"))
+	for _, path := range matches {
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() {
+			total += uint64(info.Size())
+		}
+	}
+	return total
 }

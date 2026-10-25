@@ -1,6 +1,28 @@
 // 与 docs/api.md 保持一致
 export type Provider = 'github' | 'gitlab' | 'gitea' | 'plain';
 
+export interface RepoPullResult {
+  repoId: number;
+  repoName: string;
+  branch: string;
+  targetBranch: string;
+  mirrorUpdated: boolean;
+  localUpdated: boolean;
+  reason?: string;
+  error?: string;
+}
+
+export interface RepoPullStatus {
+  repoId: number;
+  repoName: string;
+  local: boolean;
+  branch: string;
+  targetBranch: string;
+  clean: boolean;
+  canPull: boolean;
+  reason: string;
+}
+
 export interface Repo {
   id: number;
   projectId: number;
@@ -423,6 +445,10 @@ export interface RemotePR {
   mergedAt?: string;
   repoId: number;
   repoName: string;
+  ciState?: 'success' | 'failure' | 'pending' | 'unknown';
+  ciPassed?: number;
+  ciFailed?: number;
+  ciPending?: number;
 }
 
 export type WsMessage =
@@ -554,6 +580,9 @@ export interface SystemStatus {
     total: number;
     free: number;
     usedPercent: number;
+    dataUsed: number;
+    runWorkspaces: number;
+    database: number;
     error?: string;
   };
   gc: {
@@ -562,5 +591,11 @@ export interface SystemStatus {
     nextGCBytes: number;
     estimatedSec: number;
     pauseTotalMs: number;
+  };
+  queue: {
+    pending: number;
+    running: number;
+    maxConcurrent: number;
+    maxQueued: number;
   };
 }

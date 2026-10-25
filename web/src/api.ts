@@ -18,6 +18,7 @@ import type {
   Issue,
   IssueStatus,
   MCPStatus,
+  RepoPullResult,
   MonitorLogEntry,
   MonitorStatus,
   MonitorConfig,
@@ -29,6 +30,7 @@ import type {
   ProjectReadme,
   RemotePR,
   Repo,
+  RepoPullStatus,
   RepoChanges,
   RepoInput,
   Run,
@@ -189,7 +191,10 @@ export const api = {
   syncProject: (id: number) => post<{ imported: number }>(`/api/projects/${id}/sync`),
   refreshRepos: (id: number) => post<Project>(`/api/projects/${id}/repos/refresh`),
   pullProject: (id: number) =>
-    post<{ ok: boolean; pulledRepos: string[]; message: string }>(`/api/projects/${id}/pull`),
+    post<{ ok: boolean; pulledRepos: string[]; repos: RepoPullResult[]; message: string }>(
+      `/api/projects/${id}/pull`,
+    ),
+  pullStatus: (id: number) => get<RepoPullStatus[]>(`/api/projects/${id}/pull-status`),
 
   detectHooks: (projectId: number) => get<HookStatus[]>(`/api/projects/${projectId}/hooks`),
   plugins: () => get<PluginInfo[]>('/api/plugins'),
@@ -233,7 +238,7 @@ export const api = {
     get<CommitDetail>(`/api/repos/${repoId}/commits/${encodeURIComponent(sha)}`),
 
   issues: (projectId: number) => get<Issue[]>(`/api/projects/${projectId}/issues`),
-  createIssue: (projectId: number, b: { title: string; body: string; labels?: string[] }) =>
+  createIssue: (projectId: number, b: { title: string; body: string; labels?: string[]; repoId?: number | null }) =>
     post<Issue>(`/api/projects/${projectId}/issues`, b),
   issue: (id: number) => get<Issue>(`/api/issues/${id}`),
   updateIssue: (id: number, b: { title?: string; body?: string; status?: IssueStatus }) =>
@@ -311,6 +316,7 @@ export const qk = {
   pluginReadme: (id: string) => ['pluginReadme', id] as const,
   pluginConfig: (id: string) => ['pluginConfig', id] as const,
   projectPRs: (projectId: number, state?: string) => ['projectPRs', projectId, state ?? 'open'] as const,
+  projectPullStatus: (projectId: number) => ['projectPullStatus', projectId] as const,
   projectDocs: (projectId: number) => ['projectDocs', projectId] as const,
   projectReadmes: (projectId: number) => ['projectReadmes', projectId] as const,
   docDetail: (projectId: number, docId: string) => ['docDetail', projectId, docId] as const,

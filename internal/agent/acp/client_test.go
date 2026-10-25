@@ -30,3 +30,19 @@ func TestRememberStderrIsBounded(t *testing.T) {
 		t.Fatalf("stderr tail not bounded: lines=%d bytes=%d", len(c.stderrTail), c.stderrSize)
 	}
 }
+
+func TestEnvWithoutDropsPlatformTokens(t *testing.T) {
+	env := []string{"PATH=/bin", "GITEA_TOKEN=secret", "XISSUE_GITEA_TOKEN=x", "GITEA_ACCESS_TOKEN=a", "XISSUE_TOKEN=s", "OPENAI_API_KEY=ok", "NO_EQUALS"}
+	got := envWithout(env, "XISSUE_GITEA_TOKEN", "GITEA_TOKEN", "GITEA_ACCESS_TOKEN", "XISSUE_TOKEN")
+	joined := strings.Join(got, "\n")
+	for _, leaked := range []string{"GITEA_TOKEN", "XISSUE_GITEA_TOKEN", "GITEA_ACCESS_TOKEN", "XISSUE_TOKEN"} {
+		if strings.Contains(joined, leaked+"=") {
+			t.Fatalf("env leaked %s: %v", leaked, got)
+		}
+	}
+	for _, kept := range []string{"PATH=/bin", "OPENAI_API_KEY=ok", "NO_EQUALS"} {
+		if !strings.Contains(joined, kept) {
+			t.Fatalf("env dropped %s: %v", kept, got)
+		}
+	}
+}

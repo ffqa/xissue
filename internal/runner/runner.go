@@ -90,20 +90,42 @@ type SubmitResult struct {
 }
 
 type activeRun struct {
-	runID     int64
-	issueID   int64
-	clientMu  sync.Mutex
-	client    *acp.Client
-	ctx       context.Context
-	cancel    context.CancelFunc
-	done      chan struct{}
-	permMu    sync.Mutex
-	perms     map[string]chan string // requestID -> optionID
-	toolMu    sync.Mutex
-	openTools map[string]string // toolCallId -> last non-terminal status
-	reqSeq    atomic.Int64
-	msgMu     sync.Mutex
-	msgBuf    strings.Builder
+	runID       int64
+	issueID     int64
+	clientMu    sync.Mutex
+	client      *acp.Client
+	ctx         context.Context
+	cancel      context.CancelFunc
+	done        chan struct{}
+	permMu      sync.Mutex
+	perms       map[string]chan string // requestID -> optionID
+	toolMu      sync.Mutex
+	openTools   map[string]string // toolCallId -> last non-terminal status
+	reqSeq      atomic.Int64
+	msgMu       sync.Mutex
+	msgBuf      strings.Builder
+	streamMu    sync.Mutex
+	streams     map[string]*streamBuffer
+	streamTimer *time.Timer
+}
+
+// queuedTurn is a prepared agent turn waiting for a concurrency/memory slot.
+// Turns are dispatched FIFO by a single scheduler goroutine.
+type queuedTurn struct {
+	act      *activeRun
+	proj     *domain.Project
+	issue    *domain.Issue
+	ac       config.AgentConfig
+	prompt   string
+	isResume bool
+}
+
+// ErrQueueFull is returned when the configured pending-run limit is reached.
+var ErrQueueFull = errors.New("run queue is full")
+
+type streamBuffer struct {
+	data map[string]any
+	text strings.Builder
 }
 
 type warmSession struct {
@@ -122,6 +144,10 @@ type Runner struct {
 	st              *store.Store
 	notify          Notifier
 	budget          *budget
+	queueMu         sync.Mutex
+	queue           []*queuedTurn
+	queueReserved   int
+	queueSignal     chan struct{}
 	mu              sync.Mutex
 	active          map[int64]*activeRun      // runID -> activeRun
 	warm            map[int64]*warmSession    // runID -> idle warm ACP process
@@ -130,9 +156,12 @@ type Runner struct {
 	cancel          context.CancelFunc
 	stopOnce        sync.Once
 	watchMu         sync.Mutex
+	watchWG         sync.WaitGroup
+	retentionMu     sync.Mutex
 	modelMu         sync.Mutex
 	modelCache      map[string]cachedAgentModels
 	monitorMu       sync.RWMutex
+	logMu           sync.Mutex
 	monitorLogs     []MonitorLogEntry
 	lastCheckTime   time.Time
 	nextCheckTime   time.Time
@@ -151,6 +180,7 @@ func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 		ctx:         ctx,
 		cancel:      cancel,
 		budget:      newBudget(cfg.Runner.MaxConcurrent, cfg.Runner.MemoryBudgetMB),
+		queueSignal: make(chan struct{}, 1),
 		active:      map[int64]*activeRun{},
 		warm:        map[int64]*warmSession{},
 		allowSet:    map[int64]map[string]bool{},
@@ -173,7 +203,12 @@ func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 			}
 		}
 	}
-	go r.startWatcherLoop()
+	go r.queueLoop()
+	r.watchWG.Add(1)
+	go func() {
+		defer r.watchWG.Done()
+		r.startWatcherLoop()
+	}()
 	r.setupLifecycleObservers()
 	return r
 }
@@ -506,6 +541,170 @@ func (r *Runner) ListAgentModels(ctx context.Context, agentName string, refresh 
 	return res, nil
 }
 
+// reserveQueueSlot reserves capacity for one pending turn. It is separate
+// from commitQueueSlot so StartRun can create the run row without racing the
+// configured queue limit.
+func (r *Runner) reserveQueueSlot() bool {
+	r.queueMu.Lock()
+	defer r.queueMu.Unlock()
+	if r.ctx != nil && r.ctx.Err() != nil {
+		return false
+	}
+	limit := r.cfg.Runner.MaxQueuedRuns
+	pending := len(r.queue) + r.queueReserved
+	if r.budget != nil {
+		pending += r.budget.waitingCount()
+	}
+	if limit > 0 && pending >= limit {
+		return false
+	}
+	r.queueReserved++
+	return true
+}
+
+func (r *Runner) releaseQueueSlot() {
+	r.queueMu.Lock()
+	if r.queueReserved > 0 {
+		r.queueReserved--
+	}
+	r.queueMu.Unlock()
+}
+
+func (r *Runner) commitQueueSlot(t *queuedTurn) {
+	r.queueMu.Lock()
+	if r.queueReserved > 0 {
+		r.queueReserved--
+	}
+	r.queue = append(r.queue, t)
+	r.queueMu.Unlock()
+	r.signalQueue()
+}
+
+func (r *Runner) signalQueue() {
+	if r.queueSignal == nil {
+		return
+	}
+	select {
+	case r.queueSignal <- struct{}{}:
+	default:
+	}
+}
+
+func (r *Runner) nextQueuedTurn() *queuedTurn {
+	r.queueMu.Lock()
+	defer r.queueMu.Unlock()
+	if len(r.queue) == 0 {
+		return nil
+	}
+	t := r.queue[0]
+	r.queue[0] = nil
+	r.queue = r.queue[1:]
+	return t
+}
+
+func (r *Runner) pendingTurns() int {
+	r.queueMu.Lock()
+	n := len(r.queue)
+	r.queueMu.Unlock()
+	// The dispatcher pops a turn before blocking on the budget, so include
+	// that head-of-line turn while it waits for a slot.
+	if r.budget == nil {
+		return n
+	}
+	return n + r.budget.waitingCount()
+}
+
+// queueLoop is the single dispatcher: it pops turns FIFO and only starts an
+// ACP process after the count/memory budget admits it. This makes concurrency
+// limits a real queue instead of an arbitrary goroutine race.
+func (r *Runner) queueLoop() {
+	for {
+		if r.ctx != nil && r.ctx.Err() != nil {
+			r.drainQueue()
+			return
+		}
+		t := r.nextQueuedTurn()
+		if t == nil {
+			if r.queueSignal == nil {
+				return
+			}
+			select {
+			case <-r.queueSignal:
+				continue
+			case <-r.ctx.Done():
+				r.drainQueue()
+				return
+			}
+		}
+		memMB := t.ac.MemoryMB
+		if memMB <= 0 {
+			memMB = 400
+		}
+		if err := r.budget.acquire(t.act.ctx, memMB); err != nil {
+			r.abortQueuedTurn(t)
+			continue
+		}
+		if !t.isResume {
+			go r.dispatchRunEvent(t.act.runID, automation.EventRunStarted)
+		}
+		go func(t *queuedTurn, memMB int) {
+			defer r.budget.release(memMB)
+			r.executeTurn(t.act, t.proj, t.issue, t.ac, t.prompt, t.isResume)
+		}(t, memMB)
+	}
+}
+
+func (r *Runner) drainQueue() {
+	for {
+		t := r.nextQueuedTurn()
+		if t == nil {
+			break
+		}
+		r.abortQueuedTurn(t)
+	}
+	r.queueMu.Lock()
+	r.queueReserved = 0
+	r.queueMu.Unlock()
+}
+
+// abortQueuedTurn finishes a turn that was cancelled before its agent process
+// was launched. executeTurn never runs, so its normal cleanup is done here.
+func (r *Runner) abortQueuedTurn(t *queuedTurn) {
+	act := t.act
+	act.cancel()
+	st := domain.RunCancelled
+	if u, err := r.st.UpdateRun(context.Background(), act.runID, store.RunUpdate{Status: &st, Ended: true}); err == nil {
+		r.emitEvent(act.runID, act.issueID, "status", map[string]any{"status": st})
+		r.notify.BroadcastRunUpdated(u)
+	}
+	if issue, err := r.st.GetIssue(context.Background(), act.issueID); err == nil {
+		r.notify.BroadcastIssueUpdated(issue)
+	}
+	r.mu.Lock()
+	delete(r.active, act.runID)
+	delete(r.allowSet, act.runID)
+	r.mu.Unlock()
+	close(act.done)
+	go r.dispatchRunEvent(act.runID, automation.EventRunFinished)
+	if r.st != nil {
+		go func() {
+			time.Sleep(300 * time.Millisecond)
+			_, _ = r.ArchiveRun(context.Background(), act.runID)
+		}()
+	}
+}
+
+// QueueStats reports scheduler state for the status bar.
+func (r *Runner) QueueStats() (pending, running, maxConcurrent, maxQueued int) {
+	pending = r.pendingTurns()
+	if r.budget != nil {
+		running = r.budget.running()
+	}
+	maxConcurrent = r.cfg.Runner.MaxConcurrent
+	maxQueued = r.cfg.Runner.MaxQueuedRuns
+	return
+}
+
 // StartRun creates a new Run record and launches the agent asynchronously.
 func (r *Runner) StartRun(ctx context.Context, issueID int64, agentName, modelName, extraPrompt string) (*domain.Run, error) {
 	return r.startRun(ctx, issueID, agentName, modelName, extraPrompt, false)
@@ -547,6 +746,15 @@ func (r *Runner) startRun(ctx context.Context, issueID int64, agentName, modelNa
 	if err != nil {
 		return nil, err
 	}
+	if !r.reserveQueueSlot() {
+		return nil, ErrQueueFull
+	}
+	slotHeld := true
+	defer func() {
+		if slotHeld {
+			r.releaseQueueSlot()
+		}
+	}()
 	run, err := r.st.CreateRun(ctx, issueID, agentName, modelName)
 	if err != nil {
 		return nil, err
@@ -567,18 +775,20 @@ func (r *Runner) startRun(ctx context.Context, issueID int64, agentName, modelNa
 		return nil, errors.New("run is already active")
 	}
 
-	running := domain.IssueRunning
-	if u, err := r.st.UpdateIssue(ctx, issueID, store.IssuePatch{Status: &running}); err == nil {
-		r.notify.BroadcastIssueUpdated(u)
-	}
 	r.notify.BroadcastRunUpdated(run)
 
 	prompt := buildInitialPrompt(proj, issue, extraPrompt)
 	if strings.TrimSpace(extraPrompt) != "" {
 		r.emitEvent(run.ID, issue.ID, "user", map[string]any{"text": extraPrompt})
 	}
-	go r.executeTurn(act, proj, issue, ac, prompt, false)
-	go r.dispatchRunEvent(run.ID, automation.EventRunStarted)
+	r.commitQueueSlot(&queuedTurn{
+		act:    act,
+		proj:   proj,
+		issue:  issue,
+		ac:     ac,
+		prompt: prompt,
+	})
+	slotHeld = false
 	return run, nil
 }
 
@@ -604,6 +814,15 @@ func (r *Runner) SendMessage(ctx context.Context, runID int64, text string) erro
 	if !ok {
 		return fmt.Errorf("unknown agent %q", run.Agent)
 	}
+	if !r.reserveQueueSlot() {
+		return ErrQueueFull
+	}
+	slotHeld := true
+	defer func() {
+		if slotHeld {
+			r.releaseQueueSlot()
+		}
+	}()
 
 	act, reserved := r.reserveActiveRun(run.ID, issue.ID)
 	if !reserved {
@@ -611,11 +830,20 @@ func (r *Runner) SendMessage(ctx context.Context, runID int64, text string) erro
 	}
 
 	r.emitEvent(run.ID, issue.ID, "user", map[string]any{"text": text})
-	running := domain.IssueRunning
-	if u, err := r.st.UpdateIssue(ctx, issue.ID, store.IssuePatch{Status: &running}); err == nil {
-		r.notify.BroadcastIssueUpdated(u)
+	queued := domain.RunQueued
+	if u, err := r.st.UpdateRun(ctx, run.ID, store.RunUpdate{Status: &queued, Reopen: true}); err == nil {
+		r.emitEvent(run.ID, issue.ID, "status", map[string]any{"status": queued})
+		r.notify.BroadcastRunUpdated(u)
 	}
-	go r.executeTurn(act, proj, issue, ac, text, true)
+	r.commitQueueSlot(&queuedTurn{
+		act:      act,
+		proj:     proj,
+		issue:    issue,
+		ac:       ac,
+		prompt:   text,
+		isResume: true,
+	})
+	slotHeld = false
 	return nil
 }
 
@@ -719,6 +947,9 @@ func (r *Runner) Shutdown() {
 	for _, id := range warmIDs {
 		r.closeWarmClient(id)
 	}
+	// Let watcher children exit before the caller removes the data directory
+	// (also keeps tests and shutdown free of late monitor.log writes).
+	r.watchWG.Wait()
 }
 
 // RespondPermission delivers the user's permission decision to a waiting run.
@@ -805,12 +1036,15 @@ func (r *Runner) settleOpenTools(act *activeRun, finalStatus string) {
 	}
 }
 
+// executeTurn runs one prepared turn. The caller (queueLoop) must already hold
+// a budget slot; the slot is released after executeTurn returns.
 func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain.Issue, ac config.AgentConfig, prompt string, isResume bool) {
 	runID := act.runID
 	issueID := act.issueID
 	ctx := act.ctx
 	autoSubmit := false
 	defer func() {
+		r.flushStreams(act)
 		if rec := recover(); rec != nil {
 			r.settleOpenTools(act, "failed")
 			r.failRun(runID, issueID, fmt.Sprintf("agent runner panic: %v", rec))
@@ -826,20 +1060,14 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 		}
 	}()
 
-	memMB := ac.MemoryMB
-	if memMB <= 0 {
-		memMB = 400
-	}
-	if err := r.budget.acquire(ctx, memMB); err != nil {
+	if err := ctx.Err(); err != nil {
 		r.setRunStatus(runID, issueID, domain.RunCancelled, false, true)
-		todo := domain.IssueTodo
-		if u, err := r.st.UpdateIssue(context.Background(), issueID, store.IssuePatch{Status: &todo}); err == nil {
-			r.notify.BroadcastIssueUpdated(u)
-		}
 		return
 	}
-	defer r.budget.release(memMB)
-
+	running := domain.IssueRunning
+	if u, err := r.st.UpdateIssue(context.Background(), issueID, store.IssuePatch{Status: &running}); err == nil {
+		r.notify.BroadcastIssueUpdated(u)
+	}
 	r.setRunStatus(runID, issueID, domain.RunStarting, true, false)
 
 	run, err := r.st.GetRun(ctx, runID)
@@ -874,7 +1102,14 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 					act.msgBuf.WriteString(t)
 					act.msgMu.Unlock()
 				}
+				r.queueStreamEvent(act, ev.Type, ev.Data)
+				return
 			}
+			if ev.Type == "stderr" {
+				r.queueStreamEvent(act, ev.Type, ev.Data)
+				return
+			}
+			r.flushStreams(act)
 			r.trackToolEvent(act, ev)
 			r.emitEvent(runID, issueID, ev.Type, ev.Data)
 		},
@@ -988,16 +1223,19 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 	_, promptErr := client.Prompt(ctx, sessPrompt)
 	if ctx.Err() != nil {
 		r.settleOpenTools(act, "failed")
+		r.flushStreams(act)
 		r.setRunStatus(runID, issueID, domain.RunCancelled, false, true)
 		return
 	}
 	if promptErr != nil {
 		r.settleOpenTools(act, "failed")
+		r.flushStreams(act)
 		r.failRun(runID, issueID, promptErr.Error())
 		return
 	}
 
 	r.settleOpenTools(act, "completed")
+	r.flushStreams(act)
 	keepWarm = true
 
 	act.msgMu.Lock()
@@ -1020,7 +1258,7 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 		r.notify.BroadcastIssueUpdated(u)
 	}
 
-	r.writeRunSummaryComment(context.Background(), proj, issueID, run, summary)
+	r.writeRunSummaryComment(context.Background(), proj, issue, run, summary)
 	r.ExportIssueMarkdown(context.Background(), issueID)
 	go func() {
 		time.Sleep(300 * time.Millisecond)
@@ -1033,11 +1271,25 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 	}
 }
 
+// repoWorktreePath joins a repository name to a run workspace after validating
+// that the result stays a direct child of the run directory.
+func repoWorktreePath(runDir, repoName string) (string, error) {
+	if err := domain.ValidateRepoName(repoName); err != nil {
+		return "", err
+	}
+	base := filepath.Clean(runDir)
+	path := filepath.Clean(filepath.Join(base, strings.TrimSpace(repoName)))
+	if path == base || !strings.HasPrefix(path, base+string(filepath.Separator)) {
+		return "", fmt.Errorf("repository %q escapes run workspace", repoName)
+	}
+	return path, nil
+}
+
 func (r *Runner) prepareWorkspace(ctx context.Context, run *domain.Run, proj *domain.Project, issue *domain.Issue) error {
 	if err := os.MkdirAll(run.Workdir, 0o755); err != nil {
 		return err
 	}
-	for _, repo := range proj.Repos {
+	for _, repo := range reposForIssue(proj, issue) {
 		r.emitEvent(run.ID, issue.ID, "system", map[string]any{
 			"text": fmt.Sprintf("Preparing repository %s (%s @ %s)…", repo.Name, repo.RemoteURL, repo.DefaultBranch),
 		})
@@ -1045,7 +1297,10 @@ func (r *Runner) prepareWorkspace(ctx context.Context, run *domain.Run, proj *do
 		if err := gitx.EnsureMirror(ctx, repo.RemoteURL, mirror); err != nil {
 			return fmt.Errorf("mirror %s: %w", repo.Name, err)
 		}
-		wtDir := filepath.Join(run.Workdir, repo.Name)
+		wtDir, err := repoWorktreePath(run.Workdir, repo.Name)
+		if err != nil {
+			return fmt.Errorf("repository %s: %w", repo.Name, err)
+		}
 		if _, err := os.Stat(wtDir); err == nil {
 			continue
 		}
@@ -1190,10 +1445,13 @@ func (r *Runner) autoApproveOption(runID int64, kind, title string, tc map[strin
 	return ""
 }
 
-func (r *Runner) writeRunSummaryComment(ctx context.Context, proj *domain.Project, issueID int64, run *domain.Run, summary string) {
+func (r *Runner) writeRunSummaryComment(ctx context.Context, proj *domain.Project, issue *domain.Issue, run *domain.Run, summary string) {
 	var changed []string
-	for _, repo := range proj.Repos {
-		wt := filepath.Join(run.Workdir, repo.Name)
+	for _, repo := range reposForIssue(proj, issue) {
+		wt, err := repoWorktreePath(run.Workdir, repo.Name)
+		if err != nil {
+			continue
+		}
 		if files, err := gitx.Changes(ctx, wt, repo.DefaultBranch); err == nil && len(files) > 0 {
 			changed = append(changed, fmt.Sprintf("`%s` (%d files)", repo.Name, len(files)))
 		}
@@ -1208,7 +1466,7 @@ func (r *Runner) writeRunSummaryComment(ctx context.Context, proj *domain.Projec
 	if summary != "" {
 		b.WriteString(summary)
 	}
-	_, _ = r.st.AddComment(ctx, issueID, "agent", b.String())
+	_, _ = r.st.AddComment(ctx, issue.ID, "agent", b.String())
 }
 
 // ---------- Diff & Submit ----------
@@ -1218,9 +1476,17 @@ func (r *Runner) Changes(ctx context.Context, runID int64) ([]RepoChanges, error
 	if err != nil {
 		return nil, err
 	}
-	out := make([]RepoChanges, 0, len(proj.Repos))
-	for _, repo := range proj.Repos {
-		wt := filepath.Join(run.Workdir, repo.Name)
+	issue, err := r.st.GetIssue(ctx, run.IssueID)
+	if err != nil {
+		return nil, err
+	}
+	repos := reposForIssue(proj, issue)
+	out := make([]RepoChanges, 0, len(repos))
+	for _, repo := range repos {
+		wt, err := repoWorktreePath(run.Workdir, repo.Name)
+		if err != nil {
+			continue
+		}
 		files, err := gitx.Changes(ctx, wt, repo.DefaultBranch)
 		if err != nil || files == nil {
 			files = []gitx.FileChange{}
@@ -1236,7 +1502,7 @@ func (r *Runner) Changes(ctx context.Context, runID int64) ([]RepoChanges, error
 }
 
 func (r *Runner) ReadFile(ctx context.Context, runID, repoID int64, relPath, side string) (string, error) {
-	run, repo, wt, abs, err := r.resolveRepoFile(ctx, runID, repoID, relPath)
+	run, repo, wt, _, err := r.resolveRepoFile(ctx, runID, repoID, relPath)
 	if err != nil {
 		return "", err
 	}
@@ -1244,7 +1510,12 @@ func (r *Runner) ReadFile(ctx context.Context, runID, repoID int64, relPath, sid
 	if side == "base" {
 		return gitx.ShowBase(ctx, wt, repo.DefaultBranch, relPath)
 	}
-	b, err := os.ReadFile(abs)
+	root, err := os.OpenRoot(wt)
+	if err != nil {
+		return "", err
+	}
+	defer root.Close()
+	b, err := root.ReadFile(filepath.FromSlash(relPath))
 	if errors.Is(err, os.ErrNotExist) {
 		return "", nil
 	}
@@ -1252,14 +1523,28 @@ func (r *Runner) ReadFile(ctx context.Context, runID, repoID int64, relPath, sid
 }
 
 func (r *Runner) WriteFile(ctx context.Context, runID, repoID int64, relPath, content string) error {
-	_, _, _, abs, err := r.resolveRepoFile(ctx, runID, repoID, relPath)
+	_, _, wt, _, err := r.resolveRepoFile(ctx, runID, repoID, relPath)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	root, err := os.OpenRoot(wt)
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(abs, []byte(content), 0o644)
+	defer root.Close()
+	rel := filepath.FromSlash(relPath)
+	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
+		return err
+	}
+	f, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]SubmitResult, error) {
@@ -1295,8 +1580,12 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 	var lastChangeRecord string
 	anyPushed := false
 
-	for _, repo := range proj.Repos {
-		wt := filepath.Join(run.Workdir, repo.Name)
+	for _, repo := range reposForIssue(proj, issue) {
+		wt, pathErr := repoWorktreePath(run.Workdir, repo.Name)
+		if pathErr != nil {
+			results = append(results, SubmitResult{RepoName: repo.Name, Error: pathErr.Error()})
+			continue
+		}
 		files, err := gitx.Changes(ctx, wt, repo.DefaultBranch)
 		if err != nil || len(files) == 0 {
 			continue
@@ -1414,6 +1703,7 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 			PRURL:        &firstPRURL,
 			PRState:      &prState,
 			ChangeRecord: &lastChangeRecord,
+			Ended:        true,
 		}); err == nil {
 			r.notify.BroadcastRunUpdated(u)
 		}
@@ -1467,7 +1757,11 @@ func (r *Runner) cleanupSpecificRepoWorktrees(ctx context.Context, run *domain.R
 	for _, repo := range proj.Repos {
 		if targetRepos[repo.Name] {
 			mirror := filepath.Join(r.cfg.MirrorsDir(), fmt.Sprintf("repo-%d.git", repo.ID))
-			wt := filepath.Join(run.Workdir, repo.Name)
+			wt, err := repoWorktreePath(run.Workdir, repo.Name)
+			if err != nil {
+				r.LogMonitor("WARN", "cleanup", fmt.Sprintf("跳过非法仓库工作区 %q: %v", repo.Name, err))
+				continue
+			}
 			_ = gitx.RemoveWorktree(cctx, mirror, wt, run.Branch)
 			_ = os.RemoveAll(wt)
 		}
@@ -1475,17 +1769,36 @@ func (r *Runner) cleanupSpecificRepoWorktrees(ctx context.Context, run *domain.R
 }
 
 func (r *Runner) cleanupRunWorkdir(ctx context.Context, run *domain.Run, proj *domain.Project) {
+	_ = r.removeRunWorkdir(ctx, run, proj)
+}
+
+// removeRunWorkdir removes a run worktree tree only when it is inside the
+// configured runs directory. It returns an error instead of clearing the DB
+// pointer when the filesystem still holds data.
+func (r *Runner) removeRunWorkdir(ctx context.Context, run *domain.Run, proj *domain.Project) error {
+	if run.Workdir == "" {
+		return nil
+	}
+	runsRoot := filepath.Clean(r.cfg.RunsDir())
+	workdir := filepath.Clean(run.Workdir)
+	if workdir == runsRoot || !strings.HasPrefix(workdir, runsRoot+string(filepath.Separator)) {
+		return fmt.Errorf("workdir %q is not inside %q", run.Workdir, runsRoot)
+	}
 	cctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_ = ctx
-	for _, repo := range proj.Repos {
-		mirror := filepath.Join(r.cfg.MirrorsDir(), fmt.Sprintf("repo-%d.git", repo.ID))
-		wt := filepath.Join(run.Workdir, repo.Name)
-		_ = gitx.RemoveWorktree(cctx, mirror, wt, run.Branch)
+	if proj != nil {
+		for _, repo := range proj.Repos {
+			mirror := filepath.Join(r.cfg.MirrorsDir(), fmt.Sprintf("repo-%d.git", repo.ID))
+			wt, err := repoWorktreePath(run.Workdir, repo.Name)
+			if err != nil {
+				r.LogMonitor("WARN", "cleanup", fmt.Sprintf("跳过非法仓库工作区 %q: %v", repo.Name, err))
+				continue
+			}
+			_ = gitx.RemoveWorktree(cctx, mirror, wt, run.Branch)
+		}
 	}
-	if run.Workdir != "" {
-		_ = os.RemoveAll(run.Workdir)
-	}
+	return os.RemoveAll(workdir)
 }
 
 func (r *Runner) Discard(ctx context.Context, runID int64) error {
@@ -1582,33 +1895,28 @@ func (r *Runner) resolveRepoFile(ctx context.Context, runID, repoID int64, relPa
 	if repo.ProjectID != issue.ProjectID {
 		return nil, nil, "", "", errors.New("repository does not belong to this project")
 	}
+	if filepath.IsAbs(relPath) || filepath.VolumeName(relPath) != "" || strings.ContainsRune(relPath, 0) {
+		return nil, nil, "", "", errors.New("invalid file path")
+	}
 	for _, seg := range strings.Split(filepath.ToSlash(relPath), "/") {
 		if seg == ".git" || seg == ".." {
 			return nil, nil, "", "", errors.New("invalid file path")
 		}
 	}
-	wt := filepath.Clean(filepath.Join(run.Workdir, repo.Name))
+	wt, err := repoWorktreePath(run.Workdir, repo.Name)
+	if err != nil {
+		return nil, nil, "", "", err
+	}
 	abs := filepath.Clean(filepath.Join(wt, relPath))
 	if abs != wt && !strings.HasPrefix(abs, wt+string(filepath.Separator)) {
 		return nil, nil, "", "", errors.New("invalid file path")
-	}
-	if realWT, err := filepath.EvalSymlinks(wt); err == nil {
-		if realAbs, err := filepath.EvalSymlinks(abs); err == nil {
-			if realAbs != realWT && !strings.HasPrefix(realAbs, realWT+string(filepath.Separator)) {
-				return nil, nil, "", "", errors.New("symlink escapes repository worktree")
-			}
-		} else if realParent, err := filepath.EvalSymlinks(filepath.Dir(abs)); err == nil {
-			if realParent != realWT && !strings.HasPrefix(realParent, realWT+string(filepath.Separator)) {
-				return nil, nil, "", "", errors.New("symlink escapes repository worktree")
-			}
-		}
 	}
 	return run, repo, wt, abs, nil
 }
 
 func (r *Runner) emitEvent(runID, issueID int64, typ string, data any) {
 	ev, err := r.st.AppendEvent(context.Background(), runID, typ, data)
-	if err == nil {
+	if err == nil && r.notify != nil {
 		r.notify.BroadcastRunEvent(runID, issueID, ev)
 	}
 }
@@ -1654,6 +1962,20 @@ func sanitizeBranch(s string) string {
 	return strings.Trim(s, "-")
 }
 
+// reposForIssue narrows the workspace to the issue's selected repository.
+// A nil repoID keeps the historical project-wide behavior.
+func reposForIssue(proj *domain.Project, issue *domain.Issue) []domain.Repo {
+	if issue == nil || issue.RepoID == nil {
+		return proj.Repos
+	}
+	for _, repo := range proj.Repos {
+		if repo.ID == *issue.RepoID {
+			return []domain.Repo{repo}
+		}
+	}
+	return proj.Repos
+}
+
 func buildInitialPrompt(proj *domain.Project, issue *domain.Issue, extra string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Please resolve issue [%s]: %s\n\n", issue.Key, issue.Title)
@@ -1662,12 +1984,16 @@ func buildInitialPrompt(proj *domain.Project, issue *domain.Issue, extra string)
 		b.WriteString(issue.Body + "\n\n")
 	}
 	b.WriteString("## Workspace Repositories\n\n")
-	for _, repo := range proj.Repos {
+	repos := reposForIssue(proj, issue)
+	for _, repo := range repos {
 		fmt.Fprintf(&b, "- `./%s/` (base branch `%s`", repo.Name, repo.DefaultBranch)
 		if repo.TestCommand != "" {
 			fmt.Fprintf(&b, ", test command: `%s`", repo.TestCommand)
 		}
 		b.WriteString(")\n")
+	}
+	if issue.RepoID != nil && len(repos) == 1 {
+		fmt.Fprintf(&b, "\nThis issue is scoped to `./%s/`; do not modify other repositories.\n", repos[0].Name)
 	}
 	if strings.TrimSpace(extra) != "" {
 		b.WriteString("\n## Additional Instructions\n\n" + extra + "\n")

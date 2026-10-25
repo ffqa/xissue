@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/xpier/xissue/internal/domain"
@@ -48,6 +49,11 @@ type RemotePR struct {
 	MergedAt   string   `json:"mergedAt,omitempty"`
 	RepoID     int64    `json:"repoId"`
 	RepoName   string   `json:"repoName"`
+	// CI rollup for the PR head. Empty means the provider did not report checks.
+	CIState   string `json:"ciState,omitempty"` // success | failure | pending | unknown
+	CIPassed  int    `json:"ciPassed,omitempty"`
+	CIFailed  int    `json:"ciFailed,omitempty"`
+	CIPending int    `json:"ciPending,omitempty"`
 }
 
 type PRComment struct {
@@ -102,13 +108,46 @@ func For(p domain.Provider) Provider {
 	switch p {
 	case domain.ProviderGitHub:
 		return github{}
+	case domain.ProviderGitea:
+		return gitea{}
 	default:
-		// gitlab / gitea adapters land in M2; until then they behave like plain git.
+		// gitlab adapter lands in M2; until then it behaves like plain git.
 		return plain{}
 	}
 }
 
 // IssueKey formats the display key for a remote issue.
+// summarizeCheckStates folds provider-specific CI states into one rollup.
+// Unknown/neutral values are handled conservatively: only explicit failures or
+// pending states override success.
+func summarizeCheckStates(states []string) (state string, passed, failed, pending int) {
+	seen := false
+	for _, raw := range states {
+		st := strings.ToLower(strings.TrimSpace(raw))
+		switch st {
+		case "success", "successful", "passed", "neutral", "skipped":
+			passed++
+			seen = true
+		case "failure", "failed", "error", "timed_out", "cancelled", "canceled", "action_required", "stale":
+			failed++
+			seen = true
+		case "pending", "queued", "in_progress", "expected", "waiting", "requested":
+			pending++
+			seen = true
+		}
+	}
+	switch {
+	case failed > 0:
+		return "failure", passed, failed, pending
+	case pending > 0:
+		return "pending", passed, failed, pending
+	case seen:
+		return "success", passed, failed, pending
+	default:
+		return "unknown", 0, 0, 0
+	}
+}
+
 func IssueKey(repo domain.Repo, number int64) string {
 	name := repo.OwnerRepo
 	if name == "" {

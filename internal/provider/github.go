@@ -191,6 +191,9 @@ func CheckPRStatus(ctx context.Context, prURL string) (state string, title strin
 	if prURL == "" {
 		return "", "", fmt.Errorf("empty pr url")
 	}
+	if _, _, _, _, ok := giteaPRFromURL(prURL); ok {
+		return giteaCheckPRStatus(ctx, prURL)
+	}
 	b, err := gh(ctx, "pr", "view", prURL, "--json", "state,mergedAt,title")
 	if err != nil {
 		return "", "", err
@@ -219,6 +222,9 @@ func GetPRDetails(ctx context.Context, prURL string) (*PRDetailInfo, error) {
 	prURL = strings.TrimSpace(prURL)
 	if prURL == "" {
 		return nil, fmt.Errorf("empty pr url")
+	}
+	if _, _, _, _, ok := giteaPRFromURL(prURL); ok {
+		return giteaPRDetails(ctx, prURL)
 	}
 	b, err := gh(ctx, "pr", "view", prURL, "--json", "number,title,state,mergedAt,url,headRefName,baseRefName,author,comments,latestReviews")
 	if err != nil {
@@ -335,8 +341,13 @@ func (github) ListPRs(ctx context.Context, repo domain.Repo, state string) ([]Re
 		Labels []struct {
 			Name string `json:"name"`
 		} `json:"labels"`
-		CreatedAt string `json:"createdAt"`
-		UpdatedAt string `json:"updatedAt"`
+		CreatedAt         string `json:"createdAt"`
+		UpdatedAt         string `json:"updatedAt"`
+		StatusCheckRollup []struct {
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+			State      string `json:"state"`
+		} `json:"statusCheckRollup"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return nil, err
@@ -347,6 +358,17 @@ func (github) ListPRs(ctx context.Context, repo domain.Repo, state string) ([]Re
 		for _, l := range r.Labels {
 			labels = append(labels, l.Name)
 		}
+		checkStates := make([]string, 0, len(r.StatusCheckRollup))
+		for _, c := range r.StatusCheckRollup {
+			if strings.TrimSpace(c.State) != "" {
+				checkStates = append(checkStates, c.State)
+			} else if strings.TrimSpace(c.Status) != "" && !strings.EqualFold(c.Status, "COMPLETED") {
+				checkStates = append(checkStates, "pending")
+			} else {
+				checkStates = append(checkStates, c.Conclusion)
+			}
+		}
+		ciState, ciPassed, ciFailed, ciPending := summarizeCheckStates(checkStates)
 		st := strings.ToLower(strings.TrimSpace(r.State))
 		out = append(out, RemotePR{
 			Number:     r.Number,
@@ -362,6 +384,10 @@ func (github) ListPRs(ctx context.Context, repo domain.Repo, state string) ([]Re
 			UpdatedAt:  r.UpdatedAt,
 			RepoID:     repo.ID,
 			RepoName:   repo.Name,
+			CIState:    ciState,
+			CIPassed:   ciPassed,
+			CIFailed:   ciFailed,
+			CIPending:  ciPending,
 		})
 	}
 	return out, nil

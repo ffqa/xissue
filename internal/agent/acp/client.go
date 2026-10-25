@@ -116,7 +116,10 @@ func Start(ctx context.Context, o Options, h Handlers) (*Client, error) {
 	cctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(cctx, argv[0], argv[1:]...)
 	cmd.Dir = o.Dir
-	cmd.Env = os.Environ()
+	// Never leak platform API tokens into an agent process. The provider reads
+	// these in the xIssue server; an agent only needs credentials passed
+	// explicitly through AgentConfig.Env or the user's git credential helper.
+	cmd.Env = envWithout(os.Environ(), "XISSUE_GITEA_TOKEN", "GITEA_TOKEN", "GITEA_ACCESS_TOKEN", "XISSUE_TOKEN")
 	for k, v := range o.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
@@ -570,4 +573,20 @@ func contentText(v any) string {
 		return s
 	}
 	return ""
+}
+
+func envWithout(environ []string, names ...string) []string {
+	drop := make(map[string]bool, len(names))
+	for _, name := range names {
+		drop[name] = true
+	}
+	out := make([]string, 0, len(environ))
+	for _, entry := range environ {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && drop[key] {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
 }

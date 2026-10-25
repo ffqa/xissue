@@ -84,7 +84,22 @@ func (r *Runner) ArchiveRun(ctx context.Context, runID int64) (string, error) {
 		return "", err
 	}
 
-	events, _ := r.st.ListEvents(ctx, runID, 0)
+	events, err := r.st.ListEvents(ctx, runID, 0)
+	if err != nil {
+		return "", err
+	}
+	analysisFile := filepath.Join(runDir, "analysis.md")
+	eventsFile := filepath.Join(runDir, "events.log")
+	if len(events) == 0 {
+		// Event rows may already have been pruned by retention. Keep the richer
+		// archive created earlier instead of overwriting it with empty files.
+		if _, aerr := os.Stat(analysisFile); aerr == nil {
+			if _, eerr := os.Stat(eventsFile); eerr == nil {
+				r.updateTaskArchiveIndex(ctx, taskDir, issue, proj)
+				return runDir, nil
+			}
+		}
+	}
 
 	// 1. Build analysis.md
 	var b strings.Builder
@@ -177,8 +192,9 @@ func (r *Runner) ArchiveRun(ctx context.Context, runID int64) (string, error) {
 	}
 
 	// Write analysis.md atomically
-	analysisFile := filepath.Join(runDir, "analysis.md")
-	writeAtomic(analysisFile, []byte(b.String()))
+	if err := writeAtomic(analysisFile, []byte(b.String())); err != nil {
+		return "", err
+	}
 
 	// 2. Build events.log (Plain text event stream)
 	var el strings.Builder
@@ -190,8 +206,9 @@ func (r *Runner) ArchiveRun(ctx context.Context, runID int64) (string, error) {
 		line := formatEventLine(ev, m)
 		el.WriteString(line + "\n")
 	}
-	eventsFile := filepath.Join(runDir, "events.log")
-	writeAtomic(eventsFile, []byte(el.String()))
+	if err := writeAtomic(eventsFile, []byte(el.String())); err != nil {
+		return "", err
+	}
 
 	// 3. Update task README.md index
 	r.updateTaskArchiveIndex(ctx, taskDir, issue, proj)
@@ -252,14 +269,19 @@ func (r *Runner) updateTaskArchiveIndex(ctx context.Context, taskDir string, iss
 		fmt.Fprintf(&b, "| #%d | `%s` | `%s` | `%s` | %s | [analysis.md](%s/analysis.md) | [events.log](%s/events.log) |\n",
 			run.ID, run.Agent, run.Model, run.Status, run.CreatedAt.Format("01-02 15:04"), relDir, relDir)
 	}
-	b.WriteString("\n> 说明：每次 Run 完成或提交后，工作区自动归档至此目录并安全清理工作树，方便轻量化复盘回顾，不占用大量磁盘空间与数据库存储。\n")
+	b.WriteString("\n> 说明：Run 完成后归档至此目录；`failed`/`cancelled`/`discarded` 的工作区会按保留策略清理，`completed`（待审核）与 `submitted`（可能部分推送失败）工作区保留以免丢失未提交的 diff。\n")
 	readmePath := filepath.Join(taskDir, "README.md")
-	writeAtomic(readmePath, []byte(b.String()))
+	_ = writeAtomic(readmePath, []byte(b.String()))
 }
 
-func writeAtomic(target string, data []byte) {
+func writeAtomic(target string, data []byte) error {
 	tmp := fmt.Sprintf("%s.tmp.%d", target, time.Now().UnixNano())
-	if err := os.WriteFile(tmp, data, 0o644); err == nil {
-		_ = os.Rename(tmp, target)
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
 	}
+	if err := os.Rename(tmp, target); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }

@@ -4,7 +4,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { Crumbs, Modal, fmtTime } from '../components/common';
 import { LocalDirPickerModal } from '../components/LocalDirPicker';
-import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { toast } from '../toast';
 import type { InspectedRepo, InspectResult, Provider } from '../types';
 
@@ -20,7 +19,6 @@ export default function ProjectsPage() {
   const [desc, setDesc] = useState('');
   const [pickedRepos, setPickedRepos] = useState<InspectedRepo[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [projectToDelete, setProjectToDelete] = useState<{ id: number; name: string } | null>(null);
 
   const handlePickedDir = (res: InspectResult) => {
     setPickerOpen(false);
@@ -134,18 +132,6 @@ export default function ProjectsPage() {
           >
             <div className="row" style={{ alignItems: 'center' }}>
               <h2 className="grow ellipsis">{p.name}</h2>
-              <button
-                className="ghost sm"
-                title="删除项目"
-                style={{ padding: '2px 6px', color: '#ef4444', opacity: 0.7 }}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setProjectToDelete({ id: p.id, name: p.name });
-                }}
-              >
-                🗑️
-              </button>
               <span className="dim small" style={{ marginLeft: 6 }}>{fmtTime(p.updatedAt)}</span>
             </div>
             <div className="muted small" style={{ minHeight: 18 }}>
@@ -255,13 +241,6 @@ export default function ProjectsPage() {
       )}
 
       {pickerOpen && <LocalDirPickerModal onClose={() => setPickerOpen(false)} onPick={handlePickedDir} />}
-
-      {projectToDelete && (
-        <DeleteProjectModal
-          project={projectToDelete}
-          onClose={() => setProjectToDelete(null)}
-        />
-      )}
     </div>
   );
 }

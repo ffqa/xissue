@@ -13,6 +13,7 @@ import (
 
 	"github.com/xpier/xissue/internal/config"
 	"github.com/xpier/xissue/internal/domain"
+	"github.com/xpier/xissue/internal/runner"
 	"github.com/xpier/xissue/internal/store"
 )
 
@@ -104,6 +105,10 @@ printf '%s' '[{"number":9,"title":"Crash on launch","body":"error","labels":[],"
 		OwnerRepo:     "acme/global-auto",
 		DefaultBranch: "main",
 	}); err != nil {
+		t.Fatal(err)
+	}
+	authors := []string{"carol"}
+	if _, err := st.UpdateProject(t.Context(), proj.ID, store.ProjectPatch{AutoDevelopAuthors: &authors}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -380,5 +385,67 @@ esac
 	}
 	if len(comments) != 1 {
 		t.Fatalf("second sync duplicated comments: %+v", comments)
+	}
+}
+
+func TestGlobalAutoDevelopRequiresProjectAuthorAllowlist(t *testing.T) {
+	srv, st, _ := newTestServer(t)
+	if err := srv.cfg.UpdateMonitor(config.MonitorConfig{
+		Enabled:           true,
+		AutoDevelopIssues: true,
+		SyncIntervalMin:   10,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	proj, err := st.CreateProject(t.Context(), "GlobalAutoAuthors", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(t.Context(), proj.ID, "Crash", "error", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	triage := runner.TriageResult{Kind: runner.IssueKindBug, Actionable: true}
+
+	// Empty allowlist: global auto-develop must not start an agent for an
+	// arbitrary author.
+	srv.maybeAutoDevelop(t.Context(), proj, issue.Key, "mallory", triage)
+	comments, err := st.ListComments(t.Context(), issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range comments {
+		if strings.Contains(c.Body, "未配置任何 Agent") {
+			t.Fatalf("global auto-develop ran without an author allowlist: %+v", comments)
+		}
+	}
+
+	// With an allowlist, the existing gate is reached and reports the missing
+	// agent configuration; a different author is still ignored.
+	authors := []string{"carol"}
+	if _, err := st.UpdateProject(t.Context(), proj.ID, store.ProjectPatch{AutoDevelopAuthors: &authors}); err != nil {
+		t.Fatal(err)
+	}
+	proj, err = st.GetProject(t.Context(), proj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.maybeAutoDevelop(t.Context(), proj, issue.Key, "mallory", triage)
+	comments, _ = st.ListComments(t.Context(), issue.ID)
+	for _, c := range comments {
+		if strings.Contains(c.Body, "未配置任何 Agent") {
+			t.Fatal("non-allowlisted author triggered auto-develop")
+		}
+	}
+	srv.maybeAutoDevelop(t.Context(), proj, issue.Key, "carol", triage)
+	comments, _ = st.ListComments(t.Context(), issue.ID)
+	found := false
+	for _, c := range comments {
+		if strings.Contains(c.Body, "未配置任何 Agent") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("allowlisted author did not reach the agent gate: %+v", comments)
 	}
 }

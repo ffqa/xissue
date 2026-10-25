@@ -44,7 +44,7 @@ type Project struct {
 	AutoDevelopAgent      string           `json:"autoDevelopAgent"`      // 预开发使用的 agent，空则取默认
 	AutoDevelopLabels     []string         `json:"autoDevelopLabels"`     // 视为需求/Bug 的标签（useText 时也作为正文关键字）
 	AutoDevelopText       bool             `json:"autoDevelopText"`       // 是否同时匹配标题/正文关键字（公开仓库应关闭）
-	AutoDevelopAuthors    []string         `json:"autoDevelopAuthors"`    // 仅响应这些作者创建的 issue，空=不限
+	AutoDevelopAuthors    []string         `json:"autoDevelopAuthors"`    // 仅响应这些作者创建的 issue；全局自动开发模式下空=拒绝
 	AutoDevelopDailyLimit int              `json:"autoDevelopDailyLimit"` // 每项目每日自动预开发 run 上限，0=使用默认 5
 	AutomationRules       []AutomationRule `json:"automationRules"`
 	PullBranches          []string         `json:"pullBranches"` // 手动/自动拉取时只更新这些分支，空=全部

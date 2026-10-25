@@ -81,8 +81,12 @@ function handleMessage(qc: QueryClient, msg: WsMessage) {
     case 'run_updated': {
       const run: Run = msg.run;
       qc.setQueryData(qk.run(run.id), run);
-      qc.setQueryData<Run[]>(qk.runs(run.issueId), (old) => upsertById(old, run, true));
-      qc.invalidateQueries({ queryKey: qk.runs(run.issueId) });
+      const runsKey = qk.runs(run.issueId);
+      if (qc.getQueryData<Run[]>(runsKey)) {
+        qc.setQueryData<Run[]>(runsKey, (old) => upsertById(old, run, true));
+      } else {
+        qc.invalidateQueries({ queryKey: runsKey });
+      }
       if (!['queued', 'starting', 'running', 'awaiting_permission'].includes(run.status)) {
         // 结束后补齐尾部事件并刷新变更
         qc.invalidateQueries({ queryKey: qk.events(run.id) });
@@ -94,8 +98,12 @@ function handleMessage(qc: QueryClient, msg: WsMessage) {
     case 'issue_updated': {
       const issue: Issue = msg.issue;
       qc.setQueryData(qk.issue(issue.id), issue);
-      qc.setQueryData<Issue[]>(qk.issues(issue.projectId), (old) => upsertById(old, issue));
-      qc.invalidateQueries({ queryKey: qk.issues(issue.projectId) });
+      const issuesKey = qk.issues(issue.projectId);
+      if (qc.getQueryData<Issue[]>(issuesKey)) {
+        qc.setQueryData<Issue[]>(issuesKey, (old) => upsertById(old, issue));
+      } else {
+        qc.invalidateQueries({ queryKey: issuesKey });
+      }
       break;
     }
     case 'notification': {

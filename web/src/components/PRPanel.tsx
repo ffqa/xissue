@@ -31,12 +31,13 @@ export function PRPanel({ projectId }: { projectId: number }) {
   const mergeMut = useMutation({
     mutationFn: ({ repoId, number, method }: { repoId: number; number: number; method: 'squash' | 'merge' | 'rebase' }) =>
       api.mergeProjectPR(projectId, number, { repoId, method }),
-    onSuccess: (_res, vars) => {
+    onSuccess: (res, vars) => {
       qc.invalidateQueries({ queryKey: qk.projectPRs(projectId) });
       qc.invalidateQueries({ queryKey: qk.issues(projectId) });
       qc.invalidateQueries({ queryKey: qk.watches(projectId) });
       qc.invalidateQueries({ queryKey: qk.project(projectId) });
-      toast.success(`PR #${vars.number} 已合并，且本地代码已自动同步拉取为最新版本！`);
+      qc.invalidateQueries({ queryKey: qk.projectPullStatus(projectId) });
+      toast.success(res.message || `PR #${vars.number} 已合并`);
     },
     onError: (e) => toast.error(`合并 PR 失败: ${(e as Error).message}`),
   });
@@ -138,6 +139,21 @@ export function PRPanel({ projectId }: { projectId: number }) {
                   <span className="repo-chip" style={{ margin: 0, padding: '2px 6px', fontSize: 11 }}>
                     📦 {pr.repoName}
                   </span>
+                  {pr.ciState && pr.ciState !== 'unknown' && (
+                    <span
+                      className="tag"
+                      title={`CI: ${pr.ciPassed ?? 0} 通过 · ${pr.ciFailed ?? 0} 失败 · ${pr.ciPending ?? 0} 进行中`}
+                      style={{
+                        margin: 0,
+                        padding: '2px 6px',
+                        fontSize: 11,
+                        color: pr.ciState === 'failure' ? 'var(--red, #ef4444)' : pr.ciState === 'pending' ? 'var(--yellow, #eab308)' : 'var(--green, #22c55e)',
+                        borderColor: 'currentColor',
+                      }}
+                    >
+                      CI {pr.ciState === 'failure' ? '✗' : pr.ciState === 'pending' ? '…' : '✓'}
+                    </span>
+                  )}
                   <span style={{ fontWeight: 600, fontSize: 14, flex: 1, lineHeight: 1.4 }}>{pr.title}</span>
                   <a
                     href={pr.url}
@@ -166,11 +182,11 @@ export function PRPanel({ projectId }: { projectId: number }) {
                 {pr.body && <div className="pr-body">{pr.body}</div>}
 
                 {isOpen && (
-                  <div className="row pr-actions" style={{ gap: 8 }}>
+                  <div className="row pr-actions" style={{ gap: 8, alignItems: 'center' }}>
                     <span className="small muted">合并方式:</span>
                     <select
                       className="sm"
-                      style={{ height: 26, fontSize: 12 }}
+                      style={{ height: 26, fontSize: 12, width: 210, flex: 'none' }}
                       value={mergeMethods[pr.number] || 'squash'}
                       onChange={(e) =>
                         setMergeMethods((prev) => ({
@@ -187,9 +203,9 @@ export function PRPanel({ projectId }: { projectId: number }) {
                       className="primary sm"
                       disabled={mergeMut.isPending}
                       onClick={() => handleMerge(pr)}
-                      title="合并此 PR，并在合并后自动同步 pull 代码到本地"
+                      title="合并此 PR，并刷新镜像/尝试快进本地目标分支"
                     >
-                      {mergeMut.isPending ? '合并中…' : '⚡ 合并并拉取本地'}
+                      {mergeMut.isPending ? '合并中…' : '⚡ 合并并刷新本地'}
                     </button>
                     <button
                       className="danger sm"

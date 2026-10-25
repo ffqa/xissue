@@ -3,7 +3,6 @@ package runner
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -189,7 +188,10 @@ func (r *Runner) autoSubmitPR(runID int64) {
 
 	hasChanges := false
 	for _, repo := range proj.Repos {
-		wt := filepath.Join(run.Workdir, repo.Name)
+		wt, err := repoWorktreePath(run.Workdir, repo.Name)
+		if err != nil {
+			continue
+		}
 		files, err := gitx.Changes(ctx, wt, repo.DefaultBranch)
 		if err == nil && len(files) > 0 {
 			hasChanges = true

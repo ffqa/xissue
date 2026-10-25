@@ -44,6 +44,7 @@ export function StatusBar() {
     onError: (e) => toast.error((e as Error).message),
   });
   const st = q.data;
+  const queue = st?.queue ?? { pending: 0, running: 0, maxConcurrent: 0, maxQueued: 0 };
   const wsLabel = wsState === 'open' ? 'WS 实时' : wsState === 'connecting' ? 'WS 连接中…' : 'HTTP 兜底';
   if (!st) {
     return (
@@ -93,12 +94,25 @@ export function StatusBar() {
       <span className="status-item" title={`进程 CPU 占单核百分比，${st.cpu.cores} 核`}>
         CPU {st.cpu.processPercent.toFixed(1)}%
       </span>
+      <span
+        className="status-item"
+        title={`${st.disk.error || st.disk.path}\n数据库 ${fmtBytes(st.disk.database)} · 工作区 ${fmtBytes(st.disk.runWorkspaces)}`}
+      >
+        DATA {fmtBytes(st.disk.dataUsed)}
+      </span>
       <span className="status-item" title={st.disk.error || st.disk.path}>
         DISK {fmtBytes(st.disk.free)} free
         {st.disk.total > 0 ? ` · ${st.disk.usedPercent.toFixed(0)}% used` : ''}
       </span>
       <span className="status-item" title={`下次 GC 堆目标 ${fmtBytes(st.memory.nextGC)} · 已 GC ${st.gc.numGC} 次`}>
         {gc}
+      </span>
+      <span
+        className="status-item"
+        title={`Agent 运行 ${queue.running}/${queue.maxConcurrent} · 排队 ${queue.pending}${queue.maxQueued > 0 ? ` · 队列上限 ${queue.maxQueued}` : ' · 队列不限'}`}
+      >
+        RUN {queue.running}/{queue.maxConcurrent}
+        {queue.pending > 0 ? ` +Q${queue.pending}` : ''}
       </span>
       <span className="status-item">G {st.goroutines}</span>
       <span className="grow" />

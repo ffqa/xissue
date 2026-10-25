@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS run_events (
     UNIQUE(run_id, seq)
 );
 
+CREATE INDEX IF NOT EXISTS idx_comments_issue ON comments(issue_id);
+CREATE INDEX IF NOT EXISTS idx_issues_repo ON issues(repo_id);
+
 CREATE TABLE IF NOT EXISTS branch_watches (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id   INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

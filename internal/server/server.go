@@ -56,6 +56,10 @@ type Server struct {
 	lastCPUAt      time.Time
 	lastHeapAlloc  uint64
 	lastHeapAt     time.Time
+	dataSizeAt     time.Time
+	dataUsed       uint64
+	runsUsed       uint64
+	dbUsed         uint64
 }
 
 func New(cfg *config.Config, st *store.Store) *Server {
@@ -259,6 +263,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/projects/{id}/prs/{number}/merge", s.handleMergeProjectPR)
 	m.HandleFunc("POST /api/projects/{id}/prs/{number}/close", s.handleCloseProjectPR)
 	m.HandleFunc("POST /api/projects/{id}/pull", s.handlePullProjectRepos)
+	m.HandleFunc("GET /api/projects/{id}/pull-status", s.handlePullProjectStatus)
 	m.HandleFunc("GET /api/projects/{id}/hooks", s.handleDetectProjectHooks)
 	m.HandleFunc("GET /api/plugins", s.handleListPlugins)
 	m.HandleFunc("PATCH /api/plugins/{id}", s.handlePatchPlugin)
@@ -285,6 +290,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/monitor/trigger", s.handleMonitorTrigger)
 	m.HandleFunc("POST /api/monitor/sync", s.handleSyncAllIssues)
 	m.HandleFunc("POST /api/monitor/prune", s.handleMonitorPrune)
+	m.HandleFunc("POST /api/maintenance/prune", s.handlePruneRunStorage)
 
 	m.HandleFunc("GET /api/repos/{repoId}/branches", s.handleRepoBranches)
 	m.HandleFunc("GET /api/repos/{repoId}/commits", s.handleRepoCommits)
@@ -553,8 +559,13 @@ func (s *Server) handleAddRepo(w http.ResponseWriter, r *http.Request) {
 	body.ProjectID = projectID
 	body.Name = strings.TrimSpace(body.Name)
 	body.RemoteURL = strings.TrimSpace(body.RemoteURL)
+	body.Name = strings.TrimSpace(body.Name)
 	if body.Name == "" || body.RemoteURL == "" {
 		writeErr(w, http.StatusBadRequest, errors.New("name and remoteUrl are required"))
+		return
+	}
+	if err := domain.ValidateRepoName(body.Name); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
 	repo, err := s.st.CreateRepo(r.Context(), body)
@@ -575,7 +586,11 @@ func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.st.DeleteRepo(r.Context(), projectID, repoID); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
+		if errors.Is(err, store.ErrRepoInUse) {
+			writeErr(w, http.StatusConflict, err)
+			return
+		}
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -842,7 +857,7 @@ func (s *Server) issueSyncLoop() {
 		}
 		interval := mon.SyncIntervalMin
 		if interval <= 0 {
-			interval = 10
+			interval = 5
 		}
 		s.syncMu.Lock()
 		last := s.lastIssueSync
@@ -873,6 +888,13 @@ func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key, a
 	}
 	globalAuto := s.cfg.MonitorSnapshot().AutoDevelopIssues
 	if !p.AutoDevelop && !globalAuto {
+		return
+	}
+	// Global auto-develop is a fleet-wide switch. Require an explicit author
+	// allowlist per project before letting arbitrary public issue authors start
+	// agents on this machine.
+	if globalAuto && len(p.AutoDevelopAuthors) == 0 {
+		s.runner.LogMonitor("WARN", "auto-develop", fmt.Sprintf("跳过 %s：全局自动开发要求项目配置作者白名单（autoDevelopAuthors）", key))
 		return
 	}
 	if len(p.AutoDevelopAuthors) > 0 {
@@ -946,6 +968,7 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		Title  string   `json:"title"`
 		Body   string   `json:"body"`
 		Labels []string `json:"labels"`
+		RepoID *int64   `json:"repoId"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -955,7 +978,20 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("title is required"))
 		return
 	}
-	issue, err := s.st.CreateLocalIssue(r.Context(), projectID, strings.TrimSpace(body.Title), body.Body, body.Labels)
+	var repoID *int64
+	if body.RepoID != nil && *body.RepoID > 0 {
+		repo, err := s.st.GetRepo(r.Context(), *body.RepoID)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		if repo.ProjectID != projectID {
+			writeErr(w, http.StatusBadRequest, errors.New("repo does not belong to this project"))
+			return
+		}
+		repoID = &repo.ID
+	}
+	issue, err := s.st.CreateLocalIssueInRepo(r.Context(), projectID, repoID, strings.TrimSpace(body.Title), body.Body, body.Labels)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -1060,6 +1096,10 @@ func (s *Server) handlePublishIssue(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	if repo.ProjectID != issue.ProjectID {
+		writeErr(w, http.StatusBadRequest, errors.New("repository does not belong to this issue's project"))
+		return
+	}
 	p := provider.For(repo.Provider)
 	if !p.Caps().Issues {
 		writeErr(w, http.StatusBadRequest, provider.ErrUnsupported)
@@ -1151,6 +1191,10 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	}
 	run, err := s.runner.StartRun(r.Context(), issueID, agent, body.Model, body.Prompt)
 	if err != nil {
+		if errors.Is(err, runner.ErrQueueFull) {
+			writeErr(w, http.StatusTooManyRequests, err)
+			return
+		}
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
@@ -1176,7 +1220,15 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-	list, err := s.st.ListEvents(r.Context(), id, after)
+	var list []domain.RunEvent
+	var err error
+	if after == 0 {
+		// Opening a historical run must not pull thousands of rows into the
+		// browser. Live runs still append through the WS and use after=seq.
+		list, err = s.st.ListEventsTail(r.Context(), id, 500)
+	} else {
+		list, err = s.st.ListEvents(r.Context(), id, after)
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -1197,6 +1249,10 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.runner.SendMessage(r.Context(), id, body.Text); err != nil {
+		if errors.Is(err, runner.ErrQueueFull) {
+			writeErr(w, http.StatusTooManyRequests, err)
+			return
+		}
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
@@ -1716,6 +1772,15 @@ func (s *Server) handleMergeProjectPR(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
+	repo, err := s.st.GetRepo(r.Context(), body.RepoID)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if repo.ProjectID != projectID {
+		writeErr(w, http.StatusBadRequest, errors.New("repository does not belong to this project"))
+		return
+	}
 	msg, err := s.runner.MergeProjectPR(r.Context(), projectID, body.RepoID, number, body.Method)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
@@ -1742,6 +1807,15 @@ func (s *Server) handleCloseProjectPR(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
+	repo, err := s.st.GetRepo(r.Context(), body.RepoID)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if repo.ProjectID != projectID {
+		writeErr(w, http.StatusBadRequest, errors.New("repository does not belong to this project"))
+		return
+	}
 	if err := s.runner.CloseProjectPR(r.Context(), projectID, body.RepoID, number); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -1749,17 +1823,52 @@ func (s *Server) handleCloseProjectPR(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "closed": true})
 }
 
+func (s *Server) handlePullProjectStatus(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	status, err := s.runner.PullProjectStatus(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
 func (s *Server) handlePullProjectRepos(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "id")
 	if !ok {
 		return
 	}
-	updated, err := s.runner.PullProjectRepos(r.Context(), id)
+	results, err := s.runner.PullProjectRepos(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pulledRepos": updated, "message": "已从远端成功拉取最新代码"})
+	pulled := make([]string, 0, len(results))
+	failed := false
+	for _, res := range results {
+		if res.LocalUpdated {
+			pulled = append(pulled, res.RepoName)
+		}
+		if res.Error != "" {
+			failed = true
+		}
+	}
+	message := "没有可更新的本地仓库（当前分支不是目标分支、工作区不干净或未启用拉取）"
+	if len(pulled) > 0 {
+		message = fmt.Sprintf("已更新 %d 个本地仓库", len(pulled))
+	}
+	if failed {
+		message = "部分仓库拉取失败"
+	}
+	body := map[string]any{"ok": !failed && len(pulled) > 0, "pulledRepos": pulled, "repos": results, "message": message}
+	if failed {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": message + "：" + runner.FormatPullResults(results), "ok": false, "pulledRepos": pulled, "repos": results})
+		return
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func (s *Server) handleMonitorStatus(w http.ResponseWriter, r *http.Request) {
@@ -1875,6 +1984,18 @@ func (s *Server) handlePatchMonitorConfig(w http.ResponseWriter, r *http.Request
 	}
 	s.triggerIssueSyncNow()
 	writeJSON(w, http.StatusOK, s.cfg.MaskedMonitorSnapshot())
+}
+
+func (s *Server) handlePruneRunStorage(w http.ResponseWriter, r *http.Request) {
+	stats, err := s.runner.PruneRunStorageNow(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	s.statusMu.Lock()
+	s.dataSizeAt = time.Time{} // force the next status sample to rescan
+	s.statusMu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": len(stats.Errors) == 0, "stats": stats})
 }
 
 func (s *Server) handleTestNotify(w http.ResponseWriter, r *http.Request) {

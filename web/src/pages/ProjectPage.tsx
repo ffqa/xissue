@@ -105,6 +105,7 @@ export default function ProjectPage() {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [autoRunNew, setAutoRunNew] = useState(false);
+  const [issueRepoId, setIssueRepoId] = useState(0);
 
   const [watchRepoId, setWatchRepoId] = useState<number>(0);
   const [watchBranch, setWatchBranch] = useState('');
@@ -122,10 +123,8 @@ export default function ProjectPage() {
   const [doneSearchText, setDoneSearchText] = useState('');
 
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
-  const [syncMenuOpen, setSyncMenuOpen] = useState(false);
   const [prModalOpen, setPrModalOpen] = useState(false);
   const [commitsModal, setCommitsModal] = useState<{ repoId?: number; branch?: string; sha?: string } | null>(null);
-  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
 
   const deleteIssueMut = useMutation({
@@ -150,6 +149,11 @@ export default function ProjectPage() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const hooksQ = useQuery({ queryKey: qk.projectHooks(id), queryFn: () => api.detectHooks(id), enabled: settingsOpen });
+  const pullStatusQ = useQuery({
+    queryKey: qk.projectPullStatus(id),
+    queryFn: () => api.pullStatus(id),
+    enabled: settingsOpen,
+  });
 
   const [settingsTab, setSettingsTab] = useState<'mode' | 'automation'>('mode');
   const [cfgDevMode, setCfgDevMode] = useState<DevMode>('single_main');
@@ -332,7 +336,12 @@ export default function ProjectPage() {
       qc.invalidateQueries({ queryKey: qk.projectPRs(id) });
       qc.invalidateQueries({ queryKey: qk.issues(id) });
       qc.invalidateQueries({ queryKey: qk.watches(id) });
-      toast.success(res.message || '已成功拉取远端最新代码并同步到本地！');
+      qc.invalidateQueries({ queryKey: qk.projectPullStatus(id) });
+      if (res.ok) {
+        toast.success(res.message || '已成功拉取远端最新代码并同步到本地！');
+      } else {
+        toast.info(res.message || '没有可更新的本地仓库');
+      }
     },
     onError: (e) => toast.error(`拉取代码失败: ${(e as Error).message}`),
   });
@@ -358,7 +367,7 @@ export default function ProjectPage() {
 
   const createIssue = useMutation({
     mutationFn: async () => {
-      const iss = await api.createIssue(id, { title: title.trim(), body });
+      const iss = await api.createIssue(id, { title: title.trim(), body, repoId: issueRepoId || undefined });
       if (autoRunNew) {
         await api.startRun(iss.id, { agent: defaultAgent });
       }
@@ -368,6 +377,7 @@ export default function ProjectPage() {
       qc.invalidateQueries({ queryKey: qk.issues(id) });
       setTitle('');
       setBody('');
+      setIssueRepoId(0);
       setIssueOpen(false);
       if (autoRunNew) {
         toast.success(`已创建 ${iss.key} 并立即启动 Agent 执行`);
@@ -498,73 +508,26 @@ export default function ProjectPage() {
           <h1>{p?.name ?? '加载中…'}</h1>
           {p?.description && <div className="muted small">{p.description}</div>}
         </div>
-        <div className="dropdown-wrap">
-          <button
-            className="ghost"
-            onClick={() => setSyncMenuOpen(!syncMenuOpen)}
-            disabled={sync.isPending || checkWatchesMut.isPending || pullMut.isPending}
-            title="代码拉取、Issue 同步与状态检查"
-          >
-            {sync.isPending || checkWatchesMut.isPending || pullMut.isPending ? '同步中…' : '🔄 同步 ▾'}
-          </button>
-          {syncMenuOpen && (
-            <>
-              <div
-                style={{ position: 'fixed', inset: 0, zIndex: 40 }}
-                onClick={() => setSyncMenuOpen(false)}
-              />
-              <div className="dropdown-menu">
-                <button
-                  className="dropdown-item"
-                  disabled={sync.isPending}
-                  onClick={() => {
-                    setSyncMenuOpen(false);
-                    sync.mutate();
-                  }}
-                  title="拉取平台最新 Issue 并同步到本地"
-                >
-                  ⟳ 同步 Issue
-                </button>
-                <button
-                  className="dropdown-item"
-                  disabled={checkWatchesMut.isPending}
-                  onClick={() => {
-                    setSyncMenuOpen(false);
-                    checkWatchesMut.mutate();
-                  }}
-                  title="立即拉取监控分支新推送，并检查所有 PR 合并状态"
-                >
-                  🔄 检查状态
-                </button>
-                <button
-                  className="dropdown-item"
-                  disabled={pullMut.isPending}
-                  onClick={() => {
-                    setSyncMenuOpen(false);
-                    pullMut.mutate();
-                  }}
-                  title="拉取远端所有仓库最新代码并同步到本地工作区"
-                >
-                  📥 拉取代码
-                </button>
-                <div className="dropdown-divider" />
-                <button
-                  className="dropdown-item"
-                  disabled={(p?.repos ?? []).length === 0}
-                  onClick={() => {
-                    setSyncMenuOpen(false);
-                    setCpInitRepoId(p?.repos?.[0]?.id);
-                    setCpInitBranch(undefined);
-                    setCpOpen(true);
-                  }}
-                  title="从指定分支选择 Commit，Cherry-Pick 提 PR"
-                >
-                  🍒 Cherry-Pick
-                </button>
-              </div>
-            </>
-          )}
-        </div>
+        <button
+          className="ghost"
+          disabled={checkWatchesMut.isPending}
+          onClick={() => checkWatchesMut.mutate()}
+          title="立即拉取监控分支新推送，并检查所有 PR 合并状态"
+        >
+          {checkWatchesMut.isPending ? '检查中…' : '🔄 检查状态'}
+        </button>
+        <button
+          className="ghost"
+          disabled={(p?.repos ?? []).length === 0}
+          onClick={() => {
+            setCpInitRepoId(p?.repos?.[0]?.id);
+            setCpInitBranch(undefined);
+            setCpOpen(true);
+          }}
+          title="从指定分支选择 Commit，Cherry-Pick 提 PR"
+        >
+          🍒 Cherry-Pick
+        </button>
 
         <button
           className="ghost"
@@ -636,40 +599,6 @@ export default function ProjectPage() {
           )}
         </button>
 
-        <button className="primary" onClick={() => setIssueOpen(true)}>
-          + 新建 Issue
-        </button>
-
-        <div className="dropdown-wrap">
-          <button
-            className="ghost icon-btn"
-            onClick={() => setMoreMenuOpen(!moreMenuOpen)}
-            title="更多操作"
-            style={{ minWidth: 32, padding: '0 8px', letterSpacing: '2px', fontWeight: 'bold' }}
-          >
-            ···
-          </button>
-          {moreMenuOpen && (
-            <>
-              <div
-                style={{ position: 'fixed', inset: 0, zIndex: 40 }}
-                onClick={() => setMoreMenuOpen(false)}
-              />
-              <div className="dropdown-menu">
-                <button
-                  className="dropdown-item danger"
-                  onClick={() => {
-                    setMoreMenuOpen(false);
-                    setDeleteProjectOpen(true);
-                  }}
-                  title="彻底删除此项目及其所有 Issue、Worktree 与关联数据"
-                >
-                  🗑️ 删除项目
-                </button>
-              </div>
-            </>
-          )}
-        </div>
       </div>
 
       <ProjectReadmePanel projectId={id} onOpenKnowledge={() => setKnowledgeOpen(true)} />
@@ -914,16 +843,32 @@ export default function ProjectPage() {
               <div className="board-col-h" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
                 <div className="row">
                   <span className="grow">{col.title}</span>
-                  {col.id === 'todo' && list.length > 0 && (
-                    <button
-                      type="button"
-                      className="sm primary"
-                      disabled={batchRunMut.isPending}
-                      onClick={() => batchRunMut.mutate()}
-                      title={`使用 ${defaultAgent} 一键自动执行本列所有待办任务`}
-                    >
-                      {batchRunMut.isPending ? '启动中…' : '⚡ 自动执行待办'}
-                    </button>
+                  {col.id === 'todo' && (
+                    <div className="row" style={{ gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <button type="button" className="sm ghost" onClick={() => setIssueOpen(true)} title="新建一个待办 Issue">
+                        + 新建
+                      </button>
+                      <button
+                        type="button"
+                        className="sm ghost"
+                        disabled={sync.isPending}
+                        onClick={() => sync.mutate()}
+                        title="立即从远端平台同步 Issue 到待办池"
+                      >
+                        {sync.isPending ? '同步中…' : '↻ 同步'}
+                      </button>
+                      {list.length > 0 && (
+                        <button
+                          type="button"
+                          className="sm primary"
+                          disabled={batchRunMut.isPending}
+                          onClick={() => batchRunMut.mutate()}
+                          title={`使用 ${defaultAgent} 一键自动执行本列所有待办任务`}
+                        >
+                          {batchRunMut.isPending ? '启动中…' : '⚡ 自动执行待办'}
+                        </button>
+                      )}
+                    </div>
                   )}
                   {isDoneCol ? (
                     <span
@@ -972,6 +917,11 @@ export default function ProjectPage() {
                         <span className="badge awaiting">待审批</span>
                       ) : (
                         <span className="mono dim small">{it.key}</span>
+                      )}
+                      {it.repoId && (
+                        <span className="repo-chip" style={{ margin: 0, padding: '1px 5px', fontSize: 10 }}>
+                          {(p?.repos ?? []).find((r) => r.id === it.repoId)?.name || 'repo'}
+                        </span>
                       )}
                     </div>
                     <div className="issue-card-summary">{summarizeIssue(it)}</div>
@@ -1089,6 +1039,22 @@ export default function ProjectPage() {
             </>
           }
         >
+          {(p?.repos ?? []).length > 1 && (
+            <label className="field">
+              目标仓库（可选）
+              <select value={issueRepoId} onChange={(e) => setIssueRepoId(Number(e.target.value))}>
+                <option value={0}>不限定 / 由 Agent 判断（加载全部仓库）</option>
+                {(p?.repos ?? []).map((repo) => (
+                  <option key={repo.id} value={repo.id}>
+                    {repo.name} · {repo.ownerRepo || repo.remoteUrl}
+                  </option>
+                ))}
+              </select>
+              <span className="small dim">
+                选择后只检出该仓库，Agent 只能修改它；不选则加载项目全部仓库，由 Agent 自行判断。
+              </span>
+            </label>
+          )}
           <label className="field">
             标题
             <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} />
@@ -1534,7 +1500,7 @@ export default function ProjectPage() {
                       </span>
                     </label>
                     <label className="field" style={{ margin: 0 }}>
-                      仅这些作者（逗号分隔，留空不限）
+                      仅这些作者（逗号分隔；全局自动开发时必填）
                       <input
                         className="sm mono"
                         value={cfgAutoDevelopAuthors}
@@ -1542,7 +1508,7 @@ export default function ProjectPage() {
                         placeholder="alice, bob"
                       />
                       <span className="small dim" style={{ fontSize: 11, marginTop: 2 }}>
-                        GitHub Issue 作者 login；非空时其他作者创建的 Issue 不会触发。
+                        GitHub Issue 作者 login；启用全局自动开发时留空会跳过本项目。
                       </span>
                     </label>
                     <label className="field" style={{ margin: 0 }}>
@@ -1571,6 +1537,45 @@ export default function ProjectPage() {
                     </label>
                   </div>
                 )}
+              </div>
+
+              <div
+                style={{
+                  marginTop: 14,
+                  padding: '12px 14px',
+                  borderRadius: 8,
+                  border: '1px solid var(--border)',
+                  background: 'var(--bg-2)',
+                }}
+              >
+                <div className="row" style={{ alignItems: 'center', gap: 10 }}>
+                  <div className="grow">
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>📥 拉取本地代码</div>
+                    <div className="small dim" style={{ marginTop: 2 }}>
+                      只允许在「本地工作区干净、当前分支不是目标分支、且分支在白名单内」时执行。
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="sm"
+                    disabled={pullMut.isPending || pullStatusQ.isLoading || !(pullStatusQ.data ?? []).some((x) => x.canPull)}
+                    onClick={() => pullMut.mutate()}
+                    title="刷新远端镜像；仅当当前分支就是目标分支且工作区干净时才快进本地"
+                  >
+                    {pullMut.isPending ? '拉取中…' : '📥 拉取代码'}
+                  </button>
+                </div>
+                <div className="col" style={{ gap: 4, marginTop: 8 }}>
+                  {(pullStatusQ.data ?? []).map((x) => (
+                    <div key={x.repoId} className="small" style={{ color: 'var(--muted)' }}>
+                      <b style={{ color: 'var(--text)' }}>{x.repoName}</b>
+                      {' · '}
+                      {x.local ? `${x.branch || '未知分支'} → ${x.targetBranch}` : '远程镜像仓库'}
+                      {!x.canPull && x.reason ? ` · ${x.reason}` : x.canPull ? ' · 可拉取' : ''}
+                    </div>
+                  ))}
+                  {pullStatusQ.isLoading && <span className="small dim">正在检查本地分支状态…</span>}
+                </div>
               </div>
 
               <div

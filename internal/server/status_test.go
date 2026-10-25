@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -28,7 +29,13 @@ func TestSystemStatus(t *testing.T) {
 	if st.Disk.Total == 0 || st.Disk.Free == 0 {
 		t.Fatalf("disk stats missing: %+v", st.Disk)
 	}
+	if st.Disk.DataUsed == 0 || st.Disk.Database == 0 {
+		t.Fatalf("data usage missing: %+v", st.Disk)
+	}
 	if st.GC.NextGCBytes == 0 {
 		t.Fatalf("GC stats missing: %+v", st.GC)
+	}
+	if !strings.Contains(w.Body.String(), `"queue"`) {
+		t.Fatalf("queue stats missing: %s", w.Body.String())
 	}
 }

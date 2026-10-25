@@ -5,12 +5,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/xpier/xissue/internal/config"
 	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/gitx"
+	"github.com/xpier/xissue/internal/store"
 )
 
 func TestIsWithinActiveHours(t *testing.T) {
@@ -229,5 +231,210 @@ func TestEffectiveAutomationRulesProjectScope(t *testing.T) {
 		if ids[i] != want[i] {
 			t.Fatalf("rules = %v, want %v", ids, want)
 		}
+	}
+}
+
+func gitTestRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "-b", "main")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "init")
+	return dir
+}
+
+func TestPullProjectStatusGuardsSameBranch(t *testing.T) {
+	dir := gitTestRepo(t)
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	p, err := st.CreateProject(ctx, "Pull", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRepo(ctx, domain.Repo{ProjectID: p.ID, Name: "repo", RemoteURL: dir, DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	r := New(cfg, st, nil)
+
+	status, err := r.PullProjectStatus(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status) != 1 || status[0].Branch != "main" || !status[0].CanPull {
+		t.Fatalf("target branch status = %#v, want main and canPull=true", status)
+	}
+
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	runGit("checkout", "-b", "feature")
+	status, err = r.PullProjectStatus(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status) != 1 || status[0].CanPull || !strings.Contains(status[0].Reason, "不是目标分支") {
+		t.Fatalf("feature branch status = %#v, want canPull=false with target-branch reason", status)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "dirty.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	status, err = r.PullProjectStatus(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status) != 1 || status[0].CanPull || status[0].Clean {
+		t.Fatalf("dirty status = %#v, want canPull=false and dirty", status)
+	}
+}
+
+func TestPullProjectReposReportsBranchMismatch(t *testing.T) {
+	dir := gitTestRepo(t)
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	p, err := st.CreateProject(ctx, "PullMismatch", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRepo(ctx, domain.Repo{ProjectID: p.ID, Name: "repo", RemoteURL: dir, DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	r := New(cfg, st, nil)
+	runGit(t, dir, "checkout", "-b", "feature")
+	results, err := r.PullProjectRepos(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].LocalUpdated || !strings.Contains(results[0].Reason, "不是目标分支") {
+		t.Fatalf("mismatch pull = %#v, want no local update and target-branch reason", results)
+	}
+}
+
+func TestPullProjectReposFastForwardsTargetBranch(t *testing.T) {
+	src := gitTestRepo(t)
+	clone := filepath.Join(t.TempDir(), "clone")
+	runGit(t, filepath.Dir(clone), "clone", src, clone)
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	p, err := st.CreateProject(ctx, "PullFastForward", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRepo(ctx, domain.Repo{ProjectID: p.ID, Name: "repo", RemoteURL: clone, DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	r := New(cfg, st, nil)
+	if err := os.WriteFile(filepath.Join(src, "new.txt"), []byte("new\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, src, "add", ".")
+	runGit(t, src, "commit", "-m", "next")
+	results, err := r.PullProjectRepos(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || !results[0].LocalUpdated || results[0].Error != "" {
+		t.Fatalf("fast-forward pull = %#v", results)
+	}
+	if _, err := os.Stat(filepath.Join(clone, "new.txt")); err != nil {
+		t.Fatalf("clone was not fast-forwarded: %v", err)
+	}
+}
+
+func TestPullProjectReposReportsGitFailure(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	p, err := st.CreateProject(ctx, "PullGitFailure", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRepo(ctx, domain.Repo{ProjectID: p.ID, Name: "broken", RemoteURL: t.TempDir(), DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	r := New(cfg, st, nil)
+	results, err := r.PullProjectRepos(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].LocalUpdated || results[0].Error == "" {
+		t.Fatalf("git failure pull = %#v, want per-repo error and no local update", results)
+	}
+}
+
+func TestPullProjectStatusTreatsStatusFailureAsUnsafe(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	p, err := st.CreateProject(ctx, "PullBroken", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	notGit := t.TempDir()
+	if _, err := st.CreateRepo(ctx, domain.Repo{ProjectID: p.ID, Name: "broken", RemoteURL: notGit, DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.DataDir = t.TempDir()
+	r := New(cfg, st, nil)
+	status, err := r.PullProjectStatus(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status) != 1 || status[0].Clean || status[0].CanPull || status[0].Reason == "" {
+		t.Fatalf("status failure = %#v, want clean=false canPull=false with reason", status)
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }

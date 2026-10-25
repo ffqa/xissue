@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -142,47 +144,43 @@ func (r *Runner) sendExternalNotification(kind, title, body, link string) {
 
 		// 1. Telegram Bot 推送
 		if allowTelegram && tgToken != "" && tgChatID != "" {
-			tgMsg := fmt.Sprintf("🔔 *%s*\n\n%s", escapeTelegramMarkdown(title), escapeTelegramMarkdown(body))
-			if link != "" {
-				tgMsg += fmt.Sprintf("\n\n🔗 链接: %s", link)
-			}
-			payload, _ := json.Marshal(map[string]any{
-				"chat_id":    tgChatID,
-				"text":       tgMsg,
-				"parse_mode": "Markdown",
-			})
+			payload, _ := json.Marshal(telegramPayload(tgChatID, title, body, link))
 			tgURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", tgToken)
 			req, err := http.NewRequestWithContext(ctx, "POST", tgURL, bytes.NewReader(payload))
 			if err == nil {
 				req.Header.Set("Content-Type", "application/json")
 				resp, rerr := http.DefaultClient.Do(req)
-				if rerr == nil {
-					resp.Body.Close()
-					r.LogMonitor("EVENT", "notify", fmt.Sprintf("已成功通过 Telegram Bot 推送通知: %s", title))
-				} else {
+				if rerr != nil {
 					r.LogMonitor("WARN", "notify", fmt.Sprintf("Telegram Bot 推送失败: %v", rerr))
+				} else {
+					detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+					resp.Body.Close()
+					if resp.StatusCode >= 300 {
+						r.LogMonitor("WARN", "notify", fmt.Sprintf("Telegram Bot 推送失败 (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(detail))))
+					} else {
+						r.LogMonitor("EVENT", "notify", fmt.Sprintf("已成功通过 Telegram Bot 推送通知: %s", title))
+					}
 				}
 			}
 		}
 
 		// 2. 通用 Webhook 推送 (飞书/企微/钉钉/Slack/自定义)
 		if allowWebhook && webhookURL != "" {
-			payload, _ := json.Marshal(map[string]any{
-				"event":     kind,
-				"title":     title,
-				"body":      body,
-				"link":      link,
-				"timestamp": time.Now().Format(time.RFC3339),
-			})
+			payload, _ := json.Marshal(webhookPayload(kind, title, body, link))
 			req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, bytes.NewReader(payload))
 			if err == nil {
 				req.Header.Set("Content-Type", "application/json")
 				resp, rerr := http.DefaultClient.Do(req)
-				if rerr == nil {
-					resp.Body.Close()
-					r.LogMonitor("EVENT", "notify", fmt.Sprintf("已成功通过 Webhook 推送通知: %s", title))
-				} else {
+				if rerr != nil {
 					r.LogMonitor("WARN", "notify", fmt.Sprintf("Webhook 推送失败: %v", rerr))
+				} else {
+					detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+					resp.Body.Close()
+					if resp.StatusCode >= 300 {
+						r.LogMonitor("WARN", "notify", fmt.Sprintf("Webhook 推送失败 (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(detail))))
+					} else {
+						r.LogMonitor("EVENT", "notify", fmt.Sprintf("已成功通过 Webhook 推送通知: %s", title))
+					}
 				}
 			}
 		}
@@ -205,6 +203,37 @@ func (r *Runner) sendExternalNotification(kind, title, body, link string) {
 	}()
 }
 
+func telegramMessage(title, body, link string) string {
+	msg := fmt.Sprintf("🔔 *%s*", formatTelegramTitle(title))
+	if strings.TrimSpace(body) != "" {
+		msg += "\n\n" + formatTelegramBody(body)
+	}
+	if link != "" {
+		msg += fmt.Sprintf("\n\n🔗 链接: %s", link)
+	}
+	return msg
+}
+
+func telegramPayload(chatID, title, body, link string) map[string]any {
+	return map[string]any{
+		"chat_id":    chatID,
+		"text":       telegramMessage(title, body, link),
+		"parse_mode": "Markdown",
+	}
+}
+
+func webhookPayload(kind, title, body, link string) map[string]any {
+	return map[string]any{
+		"event":     kind,
+		"title":     title,
+		"body":      body,
+		"link":      link,
+		"timestamp": time.Now().Format(time.RFC3339),
+		"format":    "markdown",
+		"msg_type":  "markdown",
+	}
+}
+
 // notificationRouteAllows reports whether an event kind may use a channel.
 // An empty route map keeps the historical behavior (all configured channels).
 func notificationRouteAllows(routes map[string][]string, kind, channel string) bool {
@@ -223,15 +252,203 @@ func notificationRouteAllows(routes map[string][]string, kind, channel string) b
 	return false
 }
 
-func escapeTelegramMarkdown(s string) string {
+// escapeTelegramInline escapes text that must not be interpreted as Telegram
+// legacy Markdown markup. It is intentionally conservative: losing italics is
+// better than Telegram rejecting the whole message with a parse error.
+func escapeTelegramInline(s string) string {
 	replacer := strings.NewReplacer(
 		`\`, `\\`,
 		`_`, `\_`,
 		`*`, `\*`,
 		"`", "\\`",
-		`[`, `\[`,
+		`[`, "【",
+		`]`, "】",
 	)
 	return replacer.Replace(s)
+}
+
+// formatTelegramTitle keeps the notification title on a single line and avoids
+// legacy Markdown link detection for project/repo names wrapped in brackets.
+func formatTelegramTitle(s string) string {
+	s = strings.NewReplacer("[", "【", "]", "】").Replace(s)
+	s = strings.NewReplacer("\r", " ", "\n", " ").Replace(s)
+	return escapeTelegramInline(strings.TrimSpace(s))
+}
+
+// formatTelegramBody converts common GitHub Markdown constructs to the subset
+// supported by Telegram's legacy "Markdown" parse mode:
+//   - **bold** -> *bold*
+//   - ### heading -> *heading*
+//   - --- / *** -> removed
+//   - [label](url) preserved, with nested backticks stripped from the label
+//   - fenced and inline code preserved
+//
+// Everything else is escaped, so arbitrary issue/commit text cannot break the
+// message with unbalanced markup.
+func formatTelegramBody(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	lines := strings.Split(s, "\n")
+	out := make([]string, 0, len(lines))
+	inCode := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			if inCode {
+				out = append(out, "```")
+				inCode = false
+			} else {
+				out = append(out, "```")
+				inCode = true
+			}
+			continue
+		}
+		if inCode {
+			out = append(out, line)
+			continue
+		}
+		if isTelegramHorizontalRule(trimmed) {
+			continue
+		}
+		if heading, ok := telegramHeading(trimmed); ok {
+			if heading == "" {
+				continue
+			}
+			out = append(out, "*"+escapeTelegramInline(heading)+"*")
+			continue
+		}
+		if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
+			line = strings.Replace(line, trimmed, "• "+strings.TrimPrefix(strings.TrimPrefix(trimmed, "- "), "* "), 1)
+		}
+		out = append(out, formatTelegramLine(line))
+	}
+	if inCode {
+		out = append(out, "```")
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+func isTelegramHorizontalRule(s string) bool {
+	if len(s) < 3 {
+		return false
+	}
+	var marker byte
+	for i := 0; i < len(s); i++ {
+		if s[i] == ' ' || s[i] == '\t' {
+			continue
+		}
+		if marker == 0 {
+			marker = s[i]
+			if marker != '-' && marker != '*' && marker != '_' {
+				return false
+			}
+			continue
+		}
+		if s[i] != marker {
+			return false
+		}
+	}
+	return true
+}
+
+func telegramHeading(s string) (string, bool) {
+	i := 0
+	for i < len(s) && i < 3 && s[i] == ' ' {
+		i++
+	}
+	start := i
+	for i < len(s) && s[i] == '#' {
+		i++
+	}
+	if i == start || i-start > 6 {
+		return "", false
+	}
+	if i < len(s) && s[i] != ' ' {
+		return "", false
+	}
+	heading := strings.TrimSpace(strings.TrimRight(s[i:], "#"))
+	return heading, true
+}
+
+// formatTelegramLine formats inline constructs inside one non-code line.
+func formatTelegramLine(line string) string {
+	var b strings.Builder
+	for i := 0; i < len(line); {
+		rest := line[i:]
+		switch {
+		case strings.HasPrefix(rest, "```"):
+			end := strings.Index(line[i+3:], "```")
+			if end < 0 {
+				b.WriteString("\\`\\`\\`")
+				i += 3
+				continue
+			}
+			b.WriteString(line[i : i+3+end+3])
+			i += 3 + end + 3
+		case strings.HasPrefix(rest, "`"):
+			end := strings.Index(line[i+1:], "`")
+			if end < 0 {
+				b.WriteString("\\`")
+				i++
+				continue
+			}
+			b.WriteString(line[i : i+1+end+1])
+			i += 1 + end + 1
+		case strings.HasPrefix(rest, "https://") || strings.HasPrefix(rest, "http://"):
+			end := i
+			for end < len(line) {
+				c := line[end]
+				if c == ' ' || c == '\t' || c == ')' || c == ']' || c == '>' {
+					break
+				}
+				end++
+			}
+			b.WriteString(line[i:end])
+			i = end
+		case strings.HasPrefix(rest, "["):
+			labelEnd := strings.Index(line[i+1:], "]")
+			if labelEnd >= 0 {
+				labelEnd += i + 1
+				if labelEnd+1 < len(line) && line[labelEnd+1] == '(' {
+					urlEnd := strings.Index(line[labelEnd+2:], ")")
+					if urlEnd >= 0 {
+						urlEnd += labelEnd + 2
+						label := strings.ReplaceAll(line[i+1:labelEnd], "`", "")
+						b.WriteString("[" + escapeTelegramInline(label) + "](" + line[labelEnd+2:urlEnd] + ")")
+						i = urlEnd + 1
+						continue
+					}
+				}
+			}
+			b.WriteString("【")
+			i++
+		case strings.HasPrefix(rest, "**"):
+			end := strings.Index(line[i+2:], "**")
+			if end >= 0 {
+				inner := line[i+2 : i+2+end]
+				b.WriteString("*" + escapeTelegramInline(inner) + "*")
+				i += 2 + end + 2
+				continue
+			}
+			b.WriteString("\\*\\*")
+			i += 2
+		case strings.HasPrefix(rest, "*"):
+			end := strings.Index(line[i+1:], "*")
+			if end >= 0 {
+				inner := line[i+1 : i+1+end]
+				if strings.TrimSpace(inner) != "" {
+					b.WriteString("*" + escapeTelegramInline(inner) + "*")
+					i += 1 + end + 1
+					continue
+				}
+			}
+			b.WriteString("\\*")
+			i++
+		default:
+			b.WriteString(escapeTelegramInline(line[i : i+1]))
+			i++
+		}
+	}
+	return b.String()
 }
 
 func IsWithinActiveHours(activeHours string, t time.Time) bool {
@@ -377,11 +594,15 @@ func (r *Runner) startWatcherLoop() {
 	r.LogMonitor("INFO", "watcher", "监控服务已启动，轮询间隔: 90秒 (保留最近8小时监控与执行日志)")
 	ticker := time.NewTicker(90 * time.Second)
 	pruneTicker := time.NewTicker(1 * time.Hour)
+	retentionTicker := time.NewTicker(6 * time.Hour)
 	defer ticker.Stop()
 	defer pruneTicker.Stop()
+	defer retentionTicker.Stop()
 
 	// 启动时立即执行一次检查与裁剪
+	r.watchWG.Add(2)
 	go func() {
+		defer r.watchWG.Done()
 		select {
 		case <-r.ctx.Done():
 			return
@@ -393,6 +614,17 @@ func (r *Runner) startWatcherLoop() {
 			_, _, _ = r.CheckWatchesAndPRs(ctx, 0)
 		}
 		_, _ = r.PruneMonitorLogs(8 * time.Hour)
+	}()
+	go func() {
+		defer r.watchWG.Done()
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-time.After(30 * time.Second):
+		}
+		ctx, cancel := context.WithTimeout(r.ctx, 10*time.Minute)
+		defer cancel()
+		_, _ = r.PruneRunStorageNow(ctx)
 	}()
 
 	for {
@@ -415,6 +647,10 @@ func (r *Runner) startWatcherLoop() {
 			cancel()
 		case <-pruneTicker.C:
 			_, _ = r.PruneMonitorLogs(8 * time.Hour)
+		case <-retentionTicker.C:
+			ctx, cancel := context.WithTimeout(r.ctx, 10*time.Minute)
+			_, _ = r.PruneRunStorageNow(ctx)
+			cancel()
 		}
 	}
 }
@@ -443,18 +679,30 @@ func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watch
 		watchedBranches[w.RepoID] = append(watchedBranches[w.RepoID], w.Branch)
 	}
 	fetchedRepo := map[int64]string{}
+	fetchFailed := map[int64]bool{}
 	for _, w := range watches {
 		mirror, ok := fetchedRepo[w.RepoID]
 		if !ok {
+			if fetchFailed[w.RepoID] {
+				continue
+			}
 			repo, rerr := r.st.GetRepo(ctx, w.RepoID)
 			if rerr != nil {
+				fetchFailed[w.RepoID] = true
+				r.LogMonitor("WARN", "watcher", fmt.Sprintf("跳过仓库 %d 的分支检查: %v", w.RepoID, rerr))
 				continue
 			}
 			m, merr := r.ensureRepoMirrorCached(ctx, *repo)
 			if merr != nil {
+				fetchFailed[w.RepoID] = true
+				r.LogMonitor("WARN", "watcher", fmt.Sprintf("跳过仓库 %s 的分支检查，镜像不可用: %v", repo.Name, merr))
 				continue
 			}
-			fetchBranches(ctx, m, validPullBranches(watchedBranches[w.RepoID]))
+			if ferr := fetchBranches(ctx, m, validPullBranches(watchedBranches[w.RepoID])); ferr != nil {
+				fetchFailed[w.RepoID] = true
+				r.LogMonitor("WARN", "watcher", fmt.Sprintf("跳过仓库 %s 的分支检查，fetch 失败: %v", repo.Name, ferr))
+				continue
+			}
 			mirror = m
 			fetchedRepo[w.RepoID] = mirror
 		}
@@ -621,6 +869,9 @@ func (r *Runner) CherryPick(ctx context.Context, req CherryPickRequest) (*Cherry
 	if err != nil {
 		return nil, err
 	}
+	if req.ProjectID > 0 && repo.ProjectID != req.ProjectID {
+		return nil, fmt.Errorf("仓库 %s 不属于该项目", repo.Name)
+	}
 	targetBranch := strings.TrimSpace(req.TargetBranch)
 	if targetBranch == "" {
 		targetBranch = repo.DefaultBranch
@@ -758,6 +1009,9 @@ func (r *Runner) BatchRunTodoIssues(ctx context.Context, projectID int64, agentN
 		}
 		run, err := r.StartRun(ctx, iss.ID, agentName, modelName, "")
 		if err != nil {
+			if errors.Is(err, ErrQueueFull) {
+				break
+			}
 			continue
 		}
 		started = append(started, run)
@@ -786,45 +1040,185 @@ func (r *Runner) ListProjectPRs(ctx context.Context, projectID int64, state stri
 	return all, nil
 }
 
-// PullProjectRepos pulls the latest remote commits into bare mirrors and into local repo directories.
-func (r *Runner) PullProjectRepos(ctx context.Context, projectID int64) ([]string, error) {
+// RepoPullStatus describes whether a project repository can be safely pulled.
+type RepoPullStatus struct {
+	RepoID       int64  `json:"repoId"`
+	RepoName     string `json:"repoName"`
+	Local        bool   `json:"local"`
+	Branch       string `json:"branch"`
+	TargetBranch string `json:"targetBranch"`
+	Clean        bool   `json:"clean"`
+	CanPull      bool   `json:"canPull"`
+	Reason       string `json:"reason"`
+}
+
+// PullProjectStatus reports the local branch state used to enable the
+// high-risk pull action in project settings.
+func pullTargetBranch(project *domain.Project, repo domain.Repo) string {
+	if target := strings.TrimSpace(project.TargetBranch); target != "" {
+		return target
+	}
+	if target := strings.TrimSpace(repo.DefaultBranch); target != "" {
+		return target
+	}
+	return "main"
+}
+
+func (r *Runner) PullProjectStatus(ctx context.Context, projectID int64) ([]RepoPullStatus, error) {
 	project, err := r.st.GetProject(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
-	repos := project.Repos
 	pullBranches := validPullBranches(project.PullBranches)
-	var updated []string
-	for _, repo := range repos {
-		// 1. Update mirror. When pullBranches is configured, only fetch those refs
-		// so stale/merged feature branches are not dragged back on every pull.
+	out := make([]RepoPullStatus, 0, len(project.Repos))
+	for _, repo := range project.Repos {
+		st := RepoPullStatus{
+			RepoID:       repo.ID,
+			RepoName:     repo.Name,
+			Local:        gitx.IsLocalDir(repo.RemoteURL),
+			TargetBranch: pullTargetBranch(project, repo),
+			Clean:        true,
+		}
+		if !st.Local {
+			st.Reason = "远程仓库没有本地工作区，无需拉取"
+			out = append(out, st)
+			continue
+		}
+		branch, branchErr := gitx.Run(ctx, repo.RemoteURL, "rev-parse", "--abbrev-ref", "HEAD")
+		if branchErr != nil {
+			st.Clean = false
+			st.Reason = "无法读取当前本地分支: " + strings.TrimSpace(branchErr.Error())
+			out = append(out, st)
+			continue
+		}
+		st.Branch = strings.TrimSpace(branch)
+		status, statusErr := gitx.Run(ctx, repo.RemoteURL, "status", "--porcelain")
+		if statusErr != nil {
+			st.Clean = false
+			st.Reason = "无法读取本地 Git 状态: " + strings.TrimSpace(statusErr.Error())
+			out = append(out, st)
+			continue
+		}
+		st.Clean = strings.TrimSpace(status) == ""
+		st.CanPull = st.Clean && st.Branch != "" && st.Branch != "HEAD" && st.Branch == st.TargetBranch &&
+			(len(pullBranches) == 0 || containsString(pullBranches, st.TargetBranch))
+		switch {
+		case !st.Clean:
+			st.Reason = "本地存在未提交修改"
+		case st.Branch == "" || st.Branch == "HEAD":
+			st.Reason = "无法确定当前本地分支"
+		case st.Branch != st.TargetBranch:
+			st.Reason = fmt.Sprintf("当前分支 %s 不是目标分支 %s，请先切换分支", st.Branch, st.TargetBranch)
+		case len(pullBranches) > 0 && !containsString(pullBranches, st.TargetBranch):
+			st.Reason = "目标分支不在允许拉取的分支列表中"
+		}
+		out = append(out, st)
+	}
+	return out, nil
+}
+
+// RepoPullResult reports what one pull refreshed. MirrorUpdated only means the
+// bare mirror cache was fetched; LocalUpdated means the working tree was fast-forwarded.
+type RepoPullResult struct {
+	RepoID        int64  `json:"repoId"`
+	RepoName      string `json:"repoName"`
+	Branch        string `json:"branch"`
+	TargetBranch  string `json:"targetBranch"`
+	MirrorUpdated bool   `json:"mirrorUpdated"`
+	LocalUpdated  bool   `json:"localUpdated"`
+	Reason        string `json:"reason,omitempty"`
+	Error         string `json:"error,omitempty"`
+}
+
+func FormatPullResults(results []RepoPullResult) string {
+	if len(results) == 0 {
+		return "没有可拉取的仓库"
+	}
+	lines := make([]string, 0, len(results))
+	for _, res := range results {
+		switch {
+		case res.Error != "":
+			lines = append(lines, fmt.Sprintf("- %s：失败（%s）", res.RepoName, res.Error))
+		case res.LocalUpdated:
+			lines = append(lines, fmt.Sprintf("- %s：已更新本地 %s", res.RepoName, res.TargetBranch))
+		case res.MirrorUpdated:
+			lines = append(lines, fmt.Sprintf("- %s：已刷新远端镜像，未更新本地工作区（%s）", res.RepoName, res.Reason))
+		default:
+			lines = append(lines, fmt.Sprintf("- %s：未更新（%s）", res.RepoName, res.Reason))
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// PullProjectRepos refreshes bare mirrors and fast-forwards clean local working
+// trees whose current branch equals the PR target branch. It never switches branches.
+func (r *Runner) PullProjectRepos(ctx context.Context, projectID int64) ([]RepoPullResult, error) {
+	project, err := r.st.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	pullBranches := validPullBranches(project.PullBranches)
+	results := make([]RepoPullResult, 0, len(project.Repos))
+	for _, repo := range project.Repos {
+		target := pullTargetBranch(project, repo)
+		res := RepoPullResult{RepoID: repo.ID, RepoName: repo.Name, TargetBranch: target}
+
+		// Refresh the mirror first: this works even when the local worktree is on
+		// another branch, so PR views and issue sync still see the merged commit.
 		mirror := filepath.Join(r.cfg.MirrorsDir(), fmt.Sprintf("repo-%d.git", repo.ID))
 		if _, statErr := os.Stat(mirror); statErr == nil {
-			fetchBranches(ctx, mirror, pullBranches)
+			fetchList := pullBranches
+			if len(fetchList) > 0 && !containsString(fetchList, target) {
+				fetchList = append(append([]string(nil), fetchList...), target)
+			}
+			if err := fetchBranches(ctx, mirror, fetchList); err != nil {
+				res.Error = "刷新镜像失败: " + err.Error()
+			} else {
+				res.MirrorUpdated = true
+			}
 		}
 
-		// 2. If it's a local directory repository, pull latest into its working tree if clean.
-		// Only the currently checked-out branch can be fast-forwarded; other selected
-		// branches are fetched into origin/<branch> without touching the worktree.
-		if _, statErr := os.Stat(repo.RemoteURL); statErr == nil {
-			branch, _ := gitx.Run(ctx, repo.RemoteURL, "rev-parse", "--abbrev-ref", "HEAD")
-			target := repo.DefaultBranch
-			if target == "" {
-				target = "main"
+		if !gitx.IsLocalDir(repo.RemoteURL) {
+			if res.Reason == "" {
+				res.Reason = "远程仓库没有本地工作区"
 			}
-			allowed := len(pullBranches) == 0 || containsString(pullBranches, branch)
-			st, _ := gitx.Run(ctx, repo.RemoteURL, "status", "--porcelain")
-			if strings.TrimSpace(st) == "" && allowed && (branch == target || branch == "dev") {
-				_, _ = gitx.Run(ctx, repo.RemoteURL, "pull", "--ff-only")
+			results = append(results, res)
+			continue
+		}
+		branch, branchErr := gitx.Run(ctx, repo.RemoteURL, "rev-parse", "--abbrev-ref", "HEAD")
+		if branchErr != nil {
+			res.Error = "无法读取当前本地分支: " + strings.TrimSpace(branchErr.Error())
+			results = append(results, res)
+			continue
+		}
+		res.Branch = strings.TrimSpace(branch)
+		status, statusErr := gitx.Run(ctx, repo.RemoteURL, "status", "--porcelain")
+		if statusErr != nil {
+			res.Error = "无法读取本地 Git 状态: " + strings.TrimSpace(statusErr.Error())
+			results = append(results, res)
+			continue
+		}
+		switch {
+		case strings.TrimSpace(status) != "":
+			res.Reason = "本地存在未提交修改"
+		case res.Branch == "" || res.Branch == "HEAD":
+			res.Reason = "无法确定当前本地分支"
+		case res.Branch != target:
+			res.Reason = fmt.Sprintf("当前分支 %s 不是目标分支 %s，未切换分支", res.Branch, target)
+		case len(pullBranches) > 0 && !containsString(pullBranches, target):
+			res.Reason = "目标分支不在允许拉取的分支列表中"
+		default:
+			out, pullErr := gitx.Run(ctx, repo.RemoteURL, "pull", "--ff-only", "origin", target)
+			if pullErr != nil {
+				res.Error = strings.TrimSpace(out) + " " + pullErr.Error()
 			} else {
-				fetchBranches(ctx, repo.RemoteURL, pullBranches)
+				res.LocalUpdated = true
 			}
 		}
-		updated = append(updated, repo.Name)
+		results = append(results, res)
 	}
-	// Also trigger watch & PR status check to keep issues in sync
 	_, _, _ = r.CheckWatchesAndPRs(ctx, projectID)
-	return updated, nil
+	return results, nil
 }
 
 // validPullBranches drops unsafe branch names from project settings instead of
@@ -855,14 +1249,18 @@ func containsString(list []string, value string) bool {
 // fetchBranches fetches either all remote branches (empty selection) or exactly
 // the selected branches. Each selected branch is fetched separately so one
 // deleted/renamed branch does not abort the whole pull.
-func fetchBranches(ctx context.Context, dir string, branches []string) {
+func fetchBranches(ctx context.Context, dir string, branches []string) error {
 	if len(branches) == 0 {
-		_, _ = gitx.Run(ctx, dir, "fetch", "--prune", "origin")
-		return
+		_, err := gitx.Run(ctx, dir, "fetch", "--prune", "origin")
+		return err
 	}
+	var errs []error
 	for _, b := range branches {
-		_, _ = gitx.Run(ctx, dir, "fetch", "--prune", "origin", "+refs/heads/"+b+":refs/remotes/origin/"+b)
+		if _, err := gitx.Run(ctx, dir, "fetch", "--prune", "origin", "+refs/heads/"+b+":refs/remotes/origin/"+b); err != nil {
+			errs = append(errs, fmt.Errorf("fetch %s: %w", b, err))
+		}
 	}
+	return errors.Join(errs...)
 }
 
 // MergeProjectPR merges a PR in the given repository, and immediately pulls changes locally.
@@ -870,6 +1268,9 @@ func (r *Runner) MergeProjectPR(ctx context.Context, projectID, repoID, number i
 	repo, err := r.st.GetRepo(ctx, repoID)
 	if err != nil {
 		return "", err
+	}
+	if repo.ProjectID != projectID {
+		return "", fmt.Errorf("仓库 %s 不属于该项目", repo.Name)
 	}
 	p := provider.For(repo.Provider)
 	if !p.Caps().PRs {
@@ -880,8 +1281,14 @@ func (r *Runner) MergeProjectPR(ctx context.Context, projectID, repoID, number i
 		return "", err
 	}
 
-	// Immediately pull latest code into mirrors and local directories
-	_, _ = r.PullProjectRepos(ctx, projectID)
+	// Immediately refresh mirrors and fast-forward the local target branch when
+	// it is checked out and clean. Pull failures must be visible in the result.
+	pullResults, pullErr := r.PullProjectRepos(ctx, projectID)
+	if pullErr != nil {
+		pullResults = []RepoPullResult{{RepoName: repo.Name, Error: pullErr.Error()}}
+	}
+	pullSummary := FormatPullResults(pullResults)
+	msg = msg + "\n\n本地更新：\n" + pullSummary
 
 	// Check and update any linked runs and issues
 	_, _, _ = r.CheckWatchesAndPRs(ctx, projectID)
@@ -895,6 +1302,9 @@ func (r *Runner) CloseProjectPR(ctx context.Context, projectID, repoID, number i
 	repo, err := r.st.GetRepo(ctx, repoID)
 	if err != nil {
 		return err
+	}
+	if repo.ProjectID != projectID {
+		return fmt.Errorf("仓库 %s 不属于该项目", repo.Name)
 	}
 	p := provider.For(repo.Provider)
 	if !p.Caps().PRs {
@@ -966,16 +1376,17 @@ func (r *Runner) LogMonitor(level, source, message string) {
 	}
 	r.monitorMu.Unlock()
 
-	// Asynchronously append to file
-	go func() {
-		logFile := filepath.Join(r.cfg.DataDir, "monitor.log")
-		line := fmt.Sprintf("[%s] [%s] [%s] %s\n", entry.Timestamp.Format("2006-01-02 15:04:05"), entry.Level, entry.Source, entry.Message)
-		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-		if err == nil {
-			_, _ = f.WriteString(line)
-			_ = f.Close()
-		}
-	}()
+	// Append synchronously. This is a single line; a fire-and-forget goroutine
+	// here races with shutdown and test temp-dir cleanup.
+	r.logMu.Lock()
+	defer r.logMu.Unlock()
+	logFile := filepath.Join(r.cfg.DataDir, "monitor.log")
+	line := fmt.Sprintf("[%s] [%s] [%s] %s\n", entry.Timestamp.Format("2006-01-02 15:04:05"), entry.Level, entry.Source, entry.Message)
+	f, err := os.OpenFile(logFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err == nil {
+		_, _ = f.WriteString(line)
+		_ = f.Close()
+	}
 }
 
 // GetMonitorStatus returns current status and watched branches.
@@ -1371,12 +1782,18 @@ func (r *Runner) executeActions(ctx context.Context, actions []domain.RuleAction
 				if targetBranch == "" {
 					targetBranch = repo.DefaultBranch
 				}
-				if mirror, merr := r.ensureRepoMirrorCached(ctx, *repo); merr == nil {
-					branches := validPullBranches(project.PullBranches)
-					if len(branches) == 0 {
-						branches = []string{targetBranch}
-					}
-					fetchBranches(ctx, mirror, branches)
+				mirror, merr := r.ensureRepoMirrorCached(ctx, *repo)
+				if merr != nil {
+					r.LogMonitor("WARN", "automation", fmt.Sprintf("刷新仓库 %s 镜像失败: %v", repo.Name, merr))
+					break
+				}
+				branches := validPullBranches(project.PullBranches)
+				if len(branches) == 0 {
+					branches = []string{targetBranch}
+				}
+				if ferr := fetchBranches(ctx, mirror, branches); ferr != nil {
+					r.LogMonitor("WARN", "automation", fmt.Sprintf("刷新仓库 %s 镜像失败: %v", repo.Name, ferr))
+					break
 				}
 				r.LogMonitor("INFO", "automation", fmt.Sprintf("已自动刷新本地镜像与代码缓存 (%s:%s)", repo.Name, targetBranch))
 			}
@@ -1613,12 +2030,18 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 
 		case "pull_local":
 			if repo != nil {
-				if mirror, merr := r.ensureRepoMirrorCached(ctx, *repo); merr == nil {
-					branches := validPullBranches(project.PullBranches)
-					if len(branches) == 0 {
-						branches = []string{w.Branch}
-					}
-					fetchBranches(ctx, mirror, branches)
+				mirror, merr := r.ensureRepoMirrorCached(ctx, *repo)
+				if merr != nil {
+					r.LogMonitor("WARN", "automation", fmt.Sprintf("刷新仓库 %s 镜像失败: %v", repo.Name, merr))
+					break
+				}
+				branches := validPullBranches(project.PullBranches)
+				if len(branches) == 0 {
+					branches = []string{w.Branch}
+				}
+				if ferr := fetchBranches(ctx, mirror, branches); ferr != nil {
+					r.LogMonitor("WARN", "automation", fmt.Sprintf("刷新仓库 %s 镜像失败: %v", repo.Name, ferr))
+					break
 				}
 				r.LogMonitor("INFO", "automation", fmt.Sprintf("已自动刷新本地镜像与代码缓存 (%s:%s)", repo.Name, w.Branch))
 			}
@@ -1628,7 +2051,7 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 			if msg == "" {
 				msg = fmt.Sprintf("分支 %s:%s 收到 %d 个新提交", w.RepoName, w.Branch, len(commits))
 			}
-			r.pushNotification("automation", fmt.Sprintf("⚡ [%s] 分支推送自动化", w.RepoName), msg, branchPushLink(w.ProjectID, w.RepoID, w.Branch, tip.SHA), "")
+			r.pushNotification("automation", fmt.Sprintf("⚡ 【%s】分支推送自动化", w.RepoName), msg, branchPushLink(w.ProjectID, w.RepoID, w.Branch, tip.SHA), "")
 		}
 	}
 

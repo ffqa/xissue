@@ -146,3 +146,45 @@ func TestAddWorktreeRestoresExistingRemoteBranch(t *testing.T) {
 		t.Fatalf("restored HEAD = %s, want %s", strings.TrimSpace(head), sha)
 	}
 }
+
+func TestEnsureMirrorRepairsBareHeadMismatch(t *testing.T) {
+	ctx := t.Context()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	seed := filepath.Join(root, "seed")
+	if _, err := Run(ctx, root, "init", "--bare", "-b", "master", remote); err != nil {
+		t.Fatalf("init bare: %v", err)
+	}
+	if _, err := Run(ctx, root, "init", "-b", "main", seed); err != nil {
+		t.Fatalf("init seed: %v", err)
+	}
+	_, _ = Run(ctx, seed, "config", "user.name", "Tester")
+	_, _ = Run(ctx, seed, "config", "user.email", "tester@example.com")
+	if err := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, seed, "add", "."); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, seed, "commit", "-m", "init"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, seed, "remote", "add", "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(ctx, seed, "push", "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	mirror := filepath.Join(root, "mirror.git")
+	if err := EnsureMirror(ctx, remote, mirror); err != nil {
+		t.Fatalf("EnsureMirror: %v", err)
+	}
+	wt := filepath.Join(root, "wt")
+	if err := AddWorktree(ctx, mirror, wt, "agent/fix", "main"); err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "a.txt")); err != nil {
+		t.Fatalf("worktree missing pushed file: %v", err)
+	}
+}

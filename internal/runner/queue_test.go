@@ -188,6 +188,10 @@ func waitRunStatus(t *testing.T, st *store.Store, runID int64, want domain.RunSt
 		time.Sleep(20 * time.Millisecond)
 	}
 	run, _ := st.GetRun(context.Background(), runID)
+	if run != nil {
+		events, _ := st.ListEvents(context.Background(), runID, 0)
+		t.Logf("run %d status=%s error=%q summary=%q events=%+v", runID, run.Status, run.Error, run.Summary, events)
+	}
 	t.Fatalf("run %d status = %s, want %s", runID, run.Status, want)
 }
 

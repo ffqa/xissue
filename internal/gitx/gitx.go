@@ -73,6 +73,27 @@ func ensureLocalRepoHasCommit(ctx context.Context, dir, base string) error {
 	if _, err := Run(ctx, dir, "rev-parse", "--verify", "HEAD"); err == nil {
 		return nil
 	}
+	// A local bare remote may have refs/heads/main while its HEAD still points
+	// at the default "master" (or another unborn branch). Point HEAD at an
+	// existing branch instead of trying to commit inside a bare repository.
+	if base != "" && ValidateBranchName(base) == nil {
+		ref := "refs/heads/" + base
+		if _, err := Run(ctx, dir, "rev-parse", "--verify", ref); err == nil {
+			if _, err := Run(ctx, dir, "symbolic-ref", "HEAD", ref); err == nil {
+				return nil
+			}
+		}
+	}
+	if refs, err := Run(ctx, dir, "for-each-ref", "--format=%(refname)", "refs/heads"); err == nil {
+		for _, ref := range splitLines(refs) {
+			if ref == "" {
+				continue
+			}
+			if _, err := Run(ctx, dir, "symbolic-ref", "HEAD", ref); err == nil {
+				return nil
+			}
+		}
+	}
 	if base != "" && ValidateBranchName(base) == nil {
 		_, _ = Run(ctx, dir, "symbolic-ref", "HEAD", "refs/heads/"+base)
 	}

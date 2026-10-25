@@ -14,6 +14,7 @@ import (
 
 	"github.com/xpier/xissue/internal/config"
 	"github.com/xpier/xissue/internal/domain"
+	"github.com/xpier/xissue/internal/remote"
 	"github.com/xpier/xissue/internal/remoterunner"
 	"github.com/xpier/xissue/internal/runner"
 	"github.com/xpier/xissue/internal/store"
@@ -54,8 +55,9 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"fake-remote-session"}}\n' "$id"
       ;;
     *'"method":"session/prompt"'*)
+      big=$(printf '%040000d' 0 | tr '0' 'y')
       printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-remote-session","update":{"sessionUpdate":"usage_update","used":321,"size":200000,"cost":{"amount":0.01,"currency":"USD"}}}}\n'
-      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-remote-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"remote done"}}}}\n'
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-remote-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"remote done %s"}}}}\n' "$big"
       printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn","usage":{"inputTokens":11,"outputTokens":7,"totalTokens":18}}}\n' "$id"
       ;;
   esac
@@ -105,7 +107,7 @@ done
 	if _, err := st.UpdateProject(ctx, proj.ID, store.ProjectPatch{RunnerID: &runnerID}); err != nil {
 		t.Fatal(err)
 	}
-	issue, err := st.CreateLocalIssue(ctx, proj.ID, "remote task", "body", nil)
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "remote task", strings.Repeat("issue-body-", 4000), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +135,9 @@ done
 	events, _ := st.ListEvents(ctx, run.ID, 0)
 	if !eventMessage(events, "remote done") {
 		t.Fatalf("missing remote message event: %+v", events)
+	}
+	if !eventMessage(events, strings.Repeat("y", 40000)) {
+		t.Fatal("large (>32KiB) remote message event was not persisted")
 	}
 
 	changes, err := srv.runner.Changes(ctx, run.ID)
@@ -403,5 +408,164 @@ func TestRemoteRunnerRejectsBrowserOrigin(t *testing.T) {
 	srv.Handler().ServeHTTP(rec, req)
 	if rec.Code != 403 {
 		t.Fatalf("browser origin status = %d, want 403", rec.Code)
+	}
+}
+
+func TestRemoteManagerRejectsForeignRunnerFrames(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.DataDir = root
+	cfg.Monitor.Enabled = false
+	st, err := store.Open(filepath.Join(root, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := New(cfg, st)
+	defer srv.Shutdown()
+
+	proj, err := st.CreateProject(ctx, "Ownership", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "owned run", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.CreateRun(ctx, issue.ID, "fake", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := "node-a"
+	if _, err := st.UpdateRun(ctx, run.ID, store.RunUpdate{RunnerID: &owner}); err != nil {
+		t.Fatal(err)
+	}
+	foreign := &remoteConn{id: "node-b", pend: map[string]chan remoteCallResult{}}
+
+	srv.remote.handleStatus(foreign, remote.Frame{Type: "status", RunID: run.ID, Status: "completed"})
+	got, err := st.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.RunQueued {
+		t.Fatalf("foreign status changed run to %s", got.Status)
+	}
+	srv.remote.handleEvent(foreign, remote.Frame{Type: "event", RunID: run.ID, Event: &remote.Event{Type: "message", Data: map[string]any{"text": "forged"}}})
+	events, err := st.ListEvents(ctx, run.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eventMessage(events, "forged") {
+		t.Fatal("foreign event was persisted")
+	}
+}
+
+func TestRemoteManagerStaleConnectionDoesNotFailNewOwner(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.DataDir = root
+	cfg.Monitor.Enabled = false
+	st, err := store.Open(filepath.Join(root, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := New(cfg, st)
+	defer srv.Shutdown()
+
+	proj, err := st.CreateProject(ctx, "Reconnect", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "reconnect run", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.CreateRun(ctx, issue.ID, "fake", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	running := domain.RunRunning
+	if _, err := st.UpdateRun(ctx, run.ID, store.RunUpdate{Status: &running}); err != nil {
+		t.Fatal(err)
+	}
+	owner := "node-a"
+	if _, err := st.UpdateRun(ctx, run.ID, store.RunUpdate{RunnerID: &owner}); err != nil {
+		t.Fatal(err)
+	}
+	running = domain.RunRunning
+	if _, err := st.UpdateRun(ctx, run.ID, store.RunUpdate{Status: &running}); err != nil {
+		t.Fatal(err)
+	}
+	state := srv.remote.state(run.ID, issue.ID, owner)
+	newConn := &remoteConn{id: owner, pend: map[string]chan remoteCallResult{}}
+	if !state.claim(newConn) {
+		t.Fatal("new connection could not claim state")
+	}
+	oldConn := &remoteConn{id: owner, pend: map[string]chan remoteCallResult{}}
+	srv.remote.unregister(oldConn)
+	got, err := st.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.RunRunning {
+		t.Fatalf("stale connection failed new owner's run: %s", got.Status)
+	}
+}
+
+func TestRemoteJobSummaryIsBounded(t *testing.T) {
+	state := &remoteJobState{}
+	state.appendMessage(strings.Repeat("a", 10000))
+	state.appendMessage("tail")
+	got := state.summaryText()
+	if len(got) != remoteSummaryLimit {
+		t.Fatalf("summary length = %d, want %d", len(got), remoteSummaryLimit)
+	}
+	if !strings.HasSuffix(got, "tail") {
+		t.Fatalf("summary lost newest text: %q", got[len(got)-20:])
+	}
+}
+
+func TestRemoteTerminalStatusCannotResurrectDiscardedRun(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.DataDir = root
+	cfg.Monitor.Enabled = false
+	st, err := store.Open(filepath.Join(root, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := New(cfg, st)
+	defer srv.Shutdown()
+
+	proj, err := st.CreateProject(ctx, "Discard", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "discarded", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.CreateRun(ctx, issue.ID, "fake", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := "node-a"
+	discarded := domain.RunDiscarded
+	if _, err := st.UpdateRun(ctx, run.ID, store.RunUpdate{RunnerID: &owner, Status: &discarded, Ended: true}); err != nil {
+		t.Fatal(err)
+	}
+	conn := &remoteConn{id: owner, pend: map[string]chan remoteCallResult{}}
+	srv.remote.handleStatus(conn, remote.Frame{Type: "status", RunID: run.ID, Status: "cancelled"})
+	got, err := st.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != domain.RunDiscarded {
+		t.Fatalf("late status changed discarded run to %s", got.Status)
 	}
 }

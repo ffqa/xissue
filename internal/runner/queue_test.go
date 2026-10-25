@@ -147,14 +147,31 @@ done
 	if iss2.Status == domain.IssueRunning {
 		t.Fatalf("queued issue should not be marked running: %+v", iss2)
 	}
-	if err := r.Cancel(run1.ID); err != nil {
-		t.Fatal(err)
-	}
-	waitRunStatus(t, st, run2.ID, domain.RunRunning)
+	// Cancelling a queued (not yet dispatched) run must remove it immediately
+	// and release its queue slot instead of waiting for the head to finish.
 	if err := r.Cancel(run2.ID); err != nil {
 		t.Fatal(err)
 	}
 	waitRunStatus(t, st, run2.ID, domain.RunCancelled)
+	waitQueueStats(t, r, 0, 1)
+
+	issue3, err := st.CreateLocalIssue(ctx, proj.ID, "third", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run3, err := r.StartRun(ctx, issue3.ID, "fake", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitQueueStats(t, r, 1, 1)
+	if err := r.Cancel(run1.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitRunStatus(t, st, run3.ID, domain.RunRunning)
+	if err := r.Cancel(run3.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitRunStatus(t, st, run3.ID, domain.RunCancelled)
 }
 
 func waitRunStatus(t *testing.T, st *store.Store, runID int64, want domain.RunStatus) {

@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS runs (
     ended_at      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_runs_issue ON runs(issue_id);
+CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at);
 
 CREATE TABLE IF NOT EXISTS run_events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

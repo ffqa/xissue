@@ -52,3 +52,23 @@ func TestStartRunPTYRunsInWorkspace(t *testing.T) {
 		t.Fatal("timed out waiting for pty output")
 	}
 }
+
+func TestTerminalEnvStripsServerTokens(t *testing.T) {
+	env := terminalEnv([]string{
+		"PATH=/bin",
+		"XISSUE_TOKEN=secret",
+		"GITEA_TOKEN=secret2",
+		"XISSUE_GITEA_TOKEN=secret3",
+		"GITEA_ACCESS_TOKEN=secret4",
+		"HOME=/tmp",
+	})
+	joined := strings.Join(env, "\n")
+	for _, secret := range []string{"XISSUE_TOKEN", "GITEA_TOKEN", "XISSUE_GITEA_TOKEN", "GITEA_ACCESS_TOKEN"} {
+		if strings.Contains(joined, secret) {
+			t.Fatalf("terminal env leaked %s: %v", secret, env)
+		}
+	}
+	if !strings.Contains(joined, "PATH=/bin") || !strings.Contains(joined, "HOME=/tmp") {
+		t.Fatalf("terminal env dropped ordinary values: %v", env)
+	}
+}

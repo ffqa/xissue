@@ -59,16 +59,19 @@ type remoteCallResult struct {
 
 type remoteJobState struct {
 	mu       sync.Mutex
+	owner    *remoteConn
 	runnerID string
 	runID    int64
 	issueID  int64
 	autoPush bool
-	summary  strings.Builder
+	summary  string
 }
+
+const remoteSummaryLimit = 4000
 
 func (s *remoteJobState) resetSummary() {
 	s.mu.Lock()
-	s.summary.Reset()
+	s.summary = ""
 	s.mu.Unlock()
 }
 
@@ -76,19 +79,39 @@ func (s *remoteJobState) appendMessage(text string) {
 	if text == "" {
 		return
 	}
+	if len(text) > remoteSummaryLimit {
+		text = text[len(text)-remoteSummaryLimit:]
+	}
 	s.mu.Lock()
-	s.summary.WriteString(text)
+	s.summary += text
+	if len(s.summary) > remoteSummaryLimit {
+		s.summary = s.summary[len(s.summary)-remoteSummaryLimit:]
+	}
 	s.mu.Unlock()
 }
 
 func (s *remoteJobState) summaryText() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	text := strings.TrimSpace(s.summary.String())
-	if len(text) > 4000 {
-		text = text[len(text)-4000:]
+	return strings.TrimSpace(s.summary)
+}
+
+// claim binds a job to the connection that started it. A second runner using
+// the same name must never be able to report another node's run.
+func (s *remoteJobState) claim(c *remoteConn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.owner != nil && s.owner != c {
+		return false
 	}
-	return text
+	s.owner = c
+	return true
+}
+
+func (s *remoteJobState) ownedBy(c *remoteConn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.owner == c
 }
 
 func (s *remoteJobState) setAutoPush(v bool) {
@@ -190,6 +213,7 @@ func (m *remoteManager) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
+	conn.SetReadLimit(remote.MaxFrameBytes)
 	defer conn.CloseNow()
 
 	readCtx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
@@ -212,12 +236,16 @@ func (m *remoteManager) handleWS(w http.ResponseWriter, r *http.Request) {
 		id: name, name: name, version: strings.TrimSpace(hello.Version),
 		conn: conn, joined: time.Now(), pend: map[string]chan remoteCallResult{},
 	}
+	var old *remoteConn
 	m.mu.Lock()
-	if old := m.runners[name]; old != nil && old.conn != conn {
-		_ = old.conn.Close(websocket.StatusPolicyViolation, "runner reconnected")
+	if prev := m.runners[name]; prev != nil && prev.conn != conn {
+		old = prev
 	}
 	m.runners[name] = c
 	m.mu.Unlock()
+	if old != nil {
+		_ = old.conn.CloseNow()
+	}
 	defer m.unregister(c)
 
 	if err := writeFrame(r.Context(), conn, remote.Frame{Type: "welcome", RunnerID: c.id, Version: strconv.Itoa(remote.Version)}); err != nil {
@@ -373,40 +401,71 @@ func (m *remoteManager) jobsLocked(runID int64) *remoteJobState {
 	return m.jobStates[runID]
 }
 
-func (m *remoteManager) issueIDForRun(runID int64) int64 {
-	if run, err := m.st.GetRun(context.Background(), runID); err == nil {
-		return run.IssueID
+func isTerminalRunStatus(s domain.RunStatus) bool {
+	switch s {
+	case domain.RunCompleted, domain.RunFailed, domain.RunCancelled, domain.RunSubmitted, domain.RunDiscarded:
+		return true
 	}
-	return 0
+	return false
+}
+
+// ownedState returns the job state only when both the persisted run and the
+// in-memory job belong to c. A runner sharing the server token must not be able
+// to report another node's run.
+func (m *remoteManager) ownedState(c *remoteConn, run *domain.Run) (*remoteJobState, bool) {
+	if run == nil || strings.TrimSpace(run.RunnerID) != c.id {
+		return nil, false
+	}
+	state := m.state(run.ID, run.IssueID, c.id)
+	if !state.claim(c) {
+		return nil, false
+	}
+	return state, true
+}
+
+func (m *remoteManager) forgetState(c *remoteConn, runID int64) {
+	m.mu.Lock()
+	if state := m.jobsLocked(runID); state != nil && state.ownedBy(c) {
+		delete(m.jobStates, runID)
+	}
+	m.mu.Unlock()
+	m.clearPermissions(runID)
+	m.r.ForgetRemoteRun(runID)
 }
 
 func (m *remoteManager) handleEvent(c *remoteConn, f remote.Frame) {
 	if f.Event == nil {
 		return
 	}
-	issueID := m.issueIDForRun(f.RunID)
-	if issueID == 0 {
+	run, err := m.st.GetRun(context.Background(), f.RunID)
+	if err != nil || isTerminalRunStatus(run.Status) {
 		return
 	}
-	state := m.state(f.RunID, issueID, c.id)
+	state, ok := m.ownedState(c, run)
+	if !ok {
+		return
+	}
 	if f.Event.Type == "message" {
 		if txt, ok := f.Event.Data["text"].(string); ok {
 			state.appendMessage(txt)
 		}
 	}
 	if f.Event.Type == "usage" {
-		m.r.RecordRemoteUsage(f.RunID, issueID, f.Event.Data)
+		m.r.RecordRemoteUsage(f.RunID, run.IssueID, f.Event.Data)
 	}
-	m.r.EmitRemoteEvent(f.RunID, issueID, f.Event.Type, f.Event.Data)
+	m.r.EmitRemoteEvent(f.RunID, run.IssueID, f.Event.Type, f.Event.Data)
 }
 
 func (m *remoteManager) handleStatus(c *remoteConn, f remote.Frame) {
 	run, err := m.st.GetRun(context.Background(), f.RunID)
-	if err != nil {
+	if err != nil || isTerminalRunStatus(run.Status) {
+		return
+	}
+	state, ok := m.ownedState(c, run)
+	if !ok {
 		return
 	}
 	issueID := run.IssueID
-	state := m.state(f.RunID, issueID, c.id)
 	m.r.UpdateRemoteWorkspace(f.RunID, f.Workdir, f.SessionID)
 	if f.Usage != nil {
 		m.r.RecordRemoteTurnUsage(f.RunID, issueID, f.Usage)
@@ -422,15 +481,16 @@ func (m *remoteManager) handleStatus(c *remoteConn, f remote.Frame) {
 		summary := state.summaryText()
 		m.r.FinishRemoteRun(f.RunID, issueID, domain.RunCompleted, summary, "")
 		m.maybeAutoSubmit(run, state)
+		m.forgetState(c, f.RunID)
 	case domain.RunFailed:
 		msg := strings.TrimSpace(f.Error)
 		if msg == "" {
 			msg = "remote runner reported failure"
 		}
-		m.clearPermissions(f.RunID)
+		m.forgetState(c, f.RunID)
 		m.r.FinishRemoteRun(f.RunID, issueID, domain.RunFailed, "", msg)
 	case domain.RunCancelled:
-		m.clearPermissions(f.RunID)
+		m.forgetState(c, f.RunID)
 		m.r.FinishRemoteRun(f.RunID, issueID, domain.RunCancelled, "", "")
 	}
 }
@@ -449,7 +509,10 @@ func (m *remoteManager) handlePermission(c *remoteConn, f remote.Frame) {
 		return
 	}
 	run, err := m.st.GetRun(context.Background(), f.RunID)
-	if err != nil {
+	if err != nil || isTerminalRunStatus(run.Status) {
+		return
+	}
+	if _, ok := m.ownedState(c, run); !ok {
 		return
 	}
 	title := strings.TrimSpace(req.Title)
@@ -527,7 +590,7 @@ func (m *remoteManager) maybeAutoSubmit(run *domain.Run, state *remoteJobState) 
 	switch {
 	case state != nil && state.autoPushEnabled():
 		go m.autoSubmit(run.ID, "push", "chore: apply remote CI fix")
-	case run.AutoPR:
+	case run.AutoPR && strings.TrimSpace(run.PRURL) == "":
 		go m.autoSubmit(run.ID, "pr", "")
 	}
 }
@@ -550,6 +613,9 @@ func (m *remoteManager) Start(ctx context.Context, job remote.Job) error {
 		return fmt.Errorf("%w: %s", runner.ErrRemoteRunnerOffline, job.RunnerID)
 	}
 	state := m.state(job.RunID, job.IssueID, job.RunnerID)
+	if !state.claim(c) {
+		return fmt.Errorf("run %d is owned by another runner", job.RunID)
+	}
 	state.setAutoPush(job.AutoPush)
 	state.resetSummary()
 	if err := c.write(ctx, remote.Frame{Type: "job_start", Job: &job}); err != nil {
@@ -567,6 +633,9 @@ func (m *remoteManager) Send(ctx context.Context, job remote.Job) error {
 		return fmt.Errorf("%w: %s", runner.ErrRemoteRunnerOffline, job.RunnerID)
 	}
 	state := m.state(job.RunID, job.IssueID, job.RunnerID)
+	if !state.claim(c) {
+		return fmt.Errorf("run %d is owned by another runner", job.RunID)
+	}
 	state.setAutoPush(job.AutoPush)
 	state.resetSummary()
 	if err := c.write(ctx, remote.Frame{Type: "job_message", Job: &job}); err != nil {
@@ -817,10 +886,17 @@ func (m *remoteManager) cleanupRemote(ctx context.Context, run *domain.Run, meth
 		return fmt.Errorf("%w: %s", runner.ErrRemoteRunnerOffline, run.RunnerID)
 	}
 	_, err := c.call(ctx, method, run.ID, struct{}{})
-	if err == nil || !strings.Contains(err.Error(), "not known") {
+	if err == nil {
+		m.forgetState(c, run.ID)
+		return nil
+	}
+	if !strings.Contains(err.Error(), "not known") {
 		return err
 	}
 	_, err = c.call(ctx, "cleanup", run.ID, map[string]string{"workdir": run.Workdir})
+	if err == nil {
+		m.forgetState(c, run.ID)
+	}
 	return err
 }
 
@@ -831,10 +907,12 @@ func (m *remoteManager) unregister(c *remoteConn) {
 	}
 	var runs []*domain.Run
 	for runID, state := range m.jobsLockedAll() {
-		if state.runnerID == c.id {
-			if run, err := m.st.GetRun(context.Background(), runID); err == nil && isActiveRun(run.Status) {
-				runs = append(runs, run)
-			}
+		if !state.ownedBy(c) {
+			continue
+		}
+		delete(m.jobStates, runID)
+		if run, err := m.st.GetRun(context.Background(), runID); err == nil && isActiveRun(run.Status) {
+			runs = append(runs, run)
 		}
 	}
 	m.mu.Unlock()

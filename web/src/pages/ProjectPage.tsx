@@ -1590,7 +1590,7 @@ export default function ProjectPage() {
                   <div className="grow">
                     <div style={{ fontWeight: 600, fontSize: 13 }}>📥 拉取本地代码</div>
                     <div className="small dim" style={{ marginTop: 2 }}>
-                      只允许在「本地工作区干净、当前分支不是目标分支、且分支在白名单内」时执行。
+                      只允许在「本地工作区干净、当前分支就是目标分支、且分支在白名单内」时执行。
                     </div>
                   </div>
                   <button

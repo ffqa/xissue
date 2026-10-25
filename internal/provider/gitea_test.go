@@ -223,3 +223,18 @@ func writeTestJSON(t *testing.T, w http.ResponseWriter, v any) {
 func srvURL(r *http.Request) string {
 	return "http://" + r.Host
 }
+
+func TestUnconfiguredGiteaFallsBackToPlainCapabilities(t *testing.T) {
+	t.Setenv("XISSUE_GITEA_URL", "")
+	t.Setenv("GITEA_URL", "")
+	t.Setenv("XISSUE_GITEA_TOKEN", "")
+	t.Setenv("GITEA_TOKEN", "")
+	t.Setenv("GITEA_ACCESS_TOKEN", "")
+	if caps := (gitea{}).Caps(); caps.Issues || caps.PRs {
+		t.Fatalf("unconfigured gitea caps = %+v, want none", caps)
+	}
+	t.Setenv("XISSUE_GITEA_URL", "https://gitea.example.com")
+	if caps := (gitea{}).Caps(); !caps.Issues || !caps.PRs {
+		t.Fatalf("configured gitea caps = %+v, want issues+PRs", caps)
+	}
+}

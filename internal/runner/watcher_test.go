@@ -438,3 +438,39 @@ func runGit(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
+
+func TestFetchBranchesIgnoresDeletedBranch(t *testing.T) {
+	ctx := context.Background()
+	local := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-b", "main"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "test"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = local
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(local, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "."}, {"commit", "-m", "init"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = local
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	mirror := filepath.Join(t.TempDir(), "mirror.git")
+	if err := gitx.EnsureMirror(ctx, local, mirror); err != nil {
+		t.Fatal(err)
+	}
+	if err := fetchBranches(ctx, mirror, []string{"main", "deleted-branch"}); err != nil {
+		t.Fatalf("deleted branch aborted fetch: %v", err)
+	}
+	if _, err := gitx.Run(ctx, mirror, "rev-parse", "--verify", "refs/remotes/origin/main"); err != nil {
+		t.Fatalf("main was not fetched: %v", err)
+	}
+}

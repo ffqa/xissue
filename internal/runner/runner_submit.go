@@ -241,6 +241,9 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 }
 
 func (r *Runner) cleanupSpecificRepoWorktrees(ctx context.Context, run *domain.Run, proj *domain.Project, targetRepos map[string]bool) {
+	if strings.TrimSpace(run.RunnerID) != "" {
+		return
+	}
 	cctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_ = ctx
@@ -267,6 +270,11 @@ func (r *Runner) cleanupRunWorkdir(ctx context.Context, run *domain.Run, proj *d
 // pointer when the filesystem still holds data.
 func (r *Runner) removeRunWorkdir(ctx context.Context, run *domain.Run, proj *domain.Project) error {
 	if run.Workdir == "" {
+		return nil
+	}
+	if strings.TrimSpace(run.RunnerID) != "" {
+		// Remote workdirs live on the runner host. Never let a runner-supplied
+		// path make the server delete a local workspace.
 		return nil
 	}
 	runsRoot := filepath.Clean(r.cfg.RunsDir())

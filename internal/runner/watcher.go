@@ -1264,10 +1264,20 @@ func fetchBranches(ctx context.Context, dir string, branches []string) error {
 	var errs []error
 	for _, b := range branches {
 		if _, err := gitx.Run(ctx, dir, "fetch", "--prune", "origin", "+refs/heads/"+b+":refs/remotes/origin/"+b); err != nil {
+			if missingRemoteRef(err.Error()) {
+				continue
+			}
 			errs = append(errs, fmt.Errorf("fetch %s: %w", b, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func missingRemoteRef(msg string) bool {
+	msg = strings.ToLower(msg)
+	return strings.Contains(msg, "couldn't find remote ref") ||
+		strings.Contains(msg, "remote ref does not exist") ||
+		strings.Contains(msg, "could not find remote ref")
 }
 
 // MergeProjectPR merges a PR in the given repository, and immediately pulls changes locally.

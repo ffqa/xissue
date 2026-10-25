@@ -76,10 +76,35 @@ func (s *Store) UsageReport(ctx context.Context, since time.Time) (UsageReport, 
 		return rep, err
 	}
 	rows.Close()
-	for i := range rep.Daily {
-		day := rep.Daily[i].Date
-		if err := s.scanUsageCosts(ctx, `SELECT cost_currency, SUM(cost_amount) FROM runs WHERE created_at >= ? AND cost_amount > 0 AND substr(created_at,1,10)=? GROUP BY cost_currency`, sinceStr, rep.Daily[i].CostByCurrency, day); err != nil {
+	costRows, err := s.db.QueryContext(ctx, `SELECT substr(created_at,1,10) AS day, cost_currency, SUM(cost_amount)
+		FROM runs WHERE created_at >= ? AND cost_amount > 0 GROUP BY day, cost_currency ORDER BY day`, sinceStr)
+	if err != nil {
+		return rep, err
+	}
+	dayCosts := map[string]map[string]float64{}
+	for costRows.Next() {
+		var day, currency string
+		var amount float64
+		if err := costRows.Scan(&day, &currency, &amount); err != nil {
+			costRows.Close()
 			return rep, err
+		}
+		if currency == "" {
+			currency = "USD"
+		}
+		if dayCosts[day] == nil {
+			dayCosts[day] = map[string]float64{}
+		}
+		dayCosts[day][currency] += amount
+	}
+	if err := costRows.Err(); err != nil {
+		costRows.Close()
+		return rep, err
+	}
+	costRows.Close()
+	for i := range rep.Daily {
+		if costs := dayCosts[rep.Daily[i].Date]; costs != nil {
+			rep.Daily[i].CostByCurrency = costs
 		}
 	}
 

@@ -163,6 +163,13 @@ func (r *Runner) RemotePermissionDecision(runID int64, title, kind string, toolC
 	return "", false
 }
 
+// ForgetRemoteRun clears per-run server state after a remote run is terminal.
+func (r *Runner) ForgetRemoteRun(runID int64) {
+	r.mu.Lock()
+	delete(r.allowSet, runID)
+	r.mu.Unlock()
+}
+
 // RememberRemoteAllow records an allow_always choice made for a remote run.
 func (r *Runner) RememberRemoteAllow(runID int64, kind string) {
 	if kind == "" {
@@ -387,6 +394,13 @@ func (r *Runner) UpdateRemoteWorkspace(runID int64, workdir, sessionID string) {
 	}
 	if strings.TrimSpace(sessionID) != "" {
 		upd.SessionID = &sessionID
+		if run, err := r.st.GetRun(context.Background(), runID); err == nil &&
+			run.SessionID != "" && run.SessionID != sessionID {
+			// A resume that fell back to session/new starts a new cumulative
+			// cost baseline; keep the already-attributed total.
+			zero := 0.0
+			upd.UsageCumulativeCost = &zero
+		}
 	}
 	if u, err := r.st.UpdateRun(context.Background(), runID, upd); err == nil && r.notify != nil {
 		r.notify.BroadcastRunUpdated(u)

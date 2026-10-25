@@ -104,14 +104,22 @@ func (s *Server) collectSystemStatus() SystemStatus {
 	}
 	total, free, diskErr := diskUsage(s.cfg.DataDir)
 	disk := DiskStatus{Path: s.cfg.DataDir, Total: total, Free: free}
-	s.statusMu.Lock()
-	if s.dataSizeAt.IsZero() || time.Since(s.dataSizeAt) > 60*time.Second {
-		s.dataUsed, s.runsUsed = dirUsage(s.cfg.DataDir)
-		s.dbUsed = databaseUsage(s.cfg.DataDir)
+	s.usageMu.Lock()
+	needUsage := s.dataSizeAt.IsZero() || time.Since(s.dataSizeAt) > 60*time.Second
+	if needUsage {
+		// Mark first so concurrent status samples do not walk the tree too.
 		s.dataSizeAt = now
 	}
-	disk.DataUsed, disk.RunWorkspaces, disk.Database = s.dataUsed, s.runsUsed, s.dbUsed
-	s.statusMu.Unlock()
+	dataUsed, runsUsed, dbUsed := s.dataUsed, s.runsUsed, s.dbUsed
+	s.usageMu.Unlock()
+	if needUsage {
+		dataUsed, runsUsed = dirUsage(s.cfg.DataDir)
+		dbUsed = databaseUsage(s.cfg.DataDir)
+		s.usageMu.Lock()
+		s.dataUsed, s.runsUsed, s.dbUsed = dataUsed, runsUsed, dbUsed
+		s.usageMu.Unlock()
+	}
+	disk.DataUsed, disk.RunWorkspaces, disk.Database = dataUsed, runsUsed, dbUsed
 	if diskErr != nil {
 		disk.Error = diskErr.Error()
 	}

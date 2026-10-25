@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/xpier/xissue/internal/agent/acp"
 	"github.com/xpier/xissue/internal/config"
 	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/store"
@@ -78,5 +79,88 @@ done
 	}
 	if got.UsageUpdatedAt == nil {
 		t.Fatal("usage timestamp not set")
+	}
+}
+
+func TestPromptCostDoesNotDoubleCountLaterCumulativeUpdate(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r := &Runner{st: st, cfg: config.Default()}
+	proj, err := st.CreateProject(ctx, "Cost", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "cost", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.CreateRun(ctx, issue.ID, "fake", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	act := &activeRun{}
+	r.recordTurnUsage(act, run.ID, issue.ID, &acp.Usage{
+		Cost: &acp.Cost{Amount: 0.10, Currency: "USD"},
+	})
+	r.recordUsage(act, run.ID, issue.ID, map[string]any{
+		"cost": map[string]any{"amount": 0.22, "currency": "USD"},
+	})
+	got, err := st.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(got.CostAmount-0.22) > 1e-9 {
+		t.Fatalf("cost = %f, want 0.22 (prompt cost was double counted)", got.CostAmount)
+	}
+	if math.Abs(got.UsageCumulativeCost-0.22) > 1e-9 {
+		t.Fatalf("cumulative baseline = %f, want 0.22", got.UsageCumulativeCost)
+	}
+}
+
+func TestRemoteNewSessionResetsCostBaseline(t *testing.T) {
+	ctx := context.Background()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r := &Runner{st: st, cfg: config.Default()}
+	proj, err := st.CreateProject(ctx, "Baseline", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "baseline", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.CreateRun(ctx, issue.ID, "fake", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSession := "old"
+	baseline := 1.2
+	cost := 1.2
+	if _, err := st.UpdateRun(ctx, run.ID, store.RunUpdate{
+		SessionID: &oldSession, UsageCumulativeCost: &baseline, CostAmount: &cost,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r.UpdateRemoteWorkspace(run.ID, "", "new-session")
+	got, err := st.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SessionID != "new-session" {
+		t.Fatalf("session = %q", got.SessionID)
+	}
+	if got.UsageCumulativeCost != 0 {
+		t.Fatalf("cumulative baseline = %f, want 0", got.UsageCumulativeCost)
+	}
+	if math.Abs(got.CostAmount-1.2) > 1e-9 {
+		t.Fatalf("total cost changed to %f", got.CostAmount)
 	}
 }

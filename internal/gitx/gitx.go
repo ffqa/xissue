@@ -155,7 +155,9 @@ func resolveBaseRef(ctx context.Context, dir, base string) string {
 	return "HEAD"
 }
 
-// AddWorktree creates a new branch from the resolved base ref and checks it out at dir.
+// AddWorktree creates or restores a branch at dir. If the branch already
+// exists on origin (for example after a submit cleared the workspace and a CI
+// fix resumes it), that tip is the start point; otherwise start from base.
 func AddWorktree(ctx context.Context, mirror, dir, branch, base string) error {
 	if err := ValidateBranchName(branch); err != nil {
 		return err
@@ -163,7 +165,10 @@ func AddWorktree(ctx context.Context, mirror, dir, branch, base string) error {
 	l := lockFor(mirror)
 	l.Lock()
 	defer l.Unlock()
-	startPoint := resolveBaseRef(ctx, mirror, base)
+	startPoint := "refs/remotes/origin/" + branch
+	if _, err := Run(ctx, mirror, "rev-parse", "--verify", "--quiet", startPoint); err != nil {
+		startPoint = resolveBaseRef(ctx, mirror, base)
+	}
 	_, err := Run(ctx, mirror, "worktree", "add", "-B", branch, "--", dir, startPoint)
 	return err
 }

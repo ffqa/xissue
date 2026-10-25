@@ -26,7 +26,15 @@ import (
 // repositories you monitor.
 type gitea struct{}
 
-func (gitea) Caps() Caps { return Caps{Issues: true, PRs: true} }
+func (gitea) Caps() Caps {
+	// Existing databases may already label Gitea/Codeberg repositories even
+	// when no Gitea API URL/token is configured. Report no remote capabilities
+	// then, matching the pre-Gitea plain behavior instead of failing sync.
+	if _, err := giteaConfig(); err != nil {
+		return Caps{}
+	}
+	return Caps{Issues: true, PRs: true}
+}
 
 const giteaPageSize = 50
 

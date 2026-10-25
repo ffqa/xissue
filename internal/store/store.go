@@ -1148,6 +1148,19 @@ func (s *Store) DeleteRunEvents(ctx context.Context, runID int64) (int64, error)
 	return res.RowsAffected()
 }
 
+// RunHasEvents reports whether retention still has event rows to remove.
+func (s *Store) RunHasEvents(ctx context.Context, runID int64) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM run_events WHERE run_id=? LIMIT 1`, runID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // ---------- Branch Watches ----------
 
 const watchCols = `w.id, w.project_id, w.repo_id, COALESCE(r.name, ''), w.branch, w.last_sha, w.last_message, w.last_author, w.updated_at`

@@ -20,7 +20,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.22"
+const Version = "0.2.23"
 
 type Server struct {
 	cfg    *config.Config
@@ -49,23 +49,28 @@ type Server struct {
 	lastCPUAt      time.Time
 	lastHeapAlloc  uint64
 	lastHeapAt     time.Time
-	dataSizeAt     time.Time
-	dataUsed       uint64
-	runsUsed       uint64
-	dbUsed         uint64
+
+	usageMu    sync.Mutex
+	dataSizeAt time.Time
+	dataUsed   uint64
+	runsUsed   uint64
+	dbUsed     uint64
+
+	terminalSem chan struct{}
 }
 
 func New(cfg *config.Config, st *store.Store) *Server {
 	hub := newHub()
 	r := runner.New(cfg, st, hub)
 	s := &Server{
-		cfg:       cfg,
-		st:        st,
-		runner:    r,
-		hub:       hub,
-		mux:       http.NewServeMux(),
-		stopCh:    make(chan struct{}),
-		startedAt: time.Now(),
+		cfg:         cfg,
+		st:          st,
+		runner:      r,
+		hub:         hub,
+		mux:         http.NewServeMux(),
+		stopCh:      make(chan struct{}),
+		startedAt:   time.Now(),
+		terminalSem: make(chan struct{}, 8),
 	}
 	s.remote = newRemoteManager(cfg, st, r, hub)
 	r.SetRemoteExecutor(s.remote)

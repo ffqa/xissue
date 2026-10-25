@@ -13,6 +13,11 @@ import (
 
 const Version = 1
 
+// MaxFrameBytes bounds one control frame. Job prompts, diff previews and file
+// reads can legitimately exceed the coder/websocket 32 KiB default; 16 MiB
+// matches the HTTP JSON body limit without allowing unbounded reads.
+const MaxFrameBytes = 16 << 20
+
 // Frame is the single WebSocket message shape used in both directions.
 type Frame struct {
 	Type      string          `json:"type"`

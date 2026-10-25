@@ -614,6 +614,23 @@ func (r *Runner) nextQueuedTurn() *queuedTurn {
 	return t
 }
 
+// removeQueuedTurn removes a not-yet-dispatched turn. It returns nil when the
+// dispatcher already popped it, in which case the normal cancel path applies.
+func (r *Runner) removeQueuedTurn(runID int64) *queuedTurn {
+	r.queueMu.Lock()
+	defer r.queueMu.Unlock()
+	for i, t := range r.queue {
+		if t.act == nil || t.act.runID != runID {
+			continue
+		}
+		copy(r.queue[i:], r.queue[i+1:])
+		r.queue[len(r.queue)-1] = nil
+		r.queue = r.queue[:len(r.queue)-1]
+		return t
+	}
+	return nil
+}
+
 func (r *Runner) pendingTurns() int {
 	r.queueMu.Lock()
 	n := len(r.queue)
@@ -873,10 +890,12 @@ func (r *Runner) sendMessage(ctx context.Context, runID int64, text string, auto
 		}
 		r.emitEvent(run.ID, issue.ID, "user", map[string]any{"text": text})
 		queued := domain.RunQueued
-		if u, err := r.st.UpdateRun(ctx, run.ID, store.RunUpdate{Status: &queued, Reopen: true}); err == nil {
-			r.emitEvent(run.ID, issue.ID, "status", map[string]any{"status": queued})
-			r.notify.BroadcastRunUpdated(u)
+		u, uerr := r.st.UpdateRun(ctx, run.ID, store.RunUpdate{Status: &queued, Reopen: true})
+		if uerr != nil {
+			return uerr
 		}
+		r.emitEvent(run.ID, issue.ID, "status", map[string]any{"status": queued})
+		r.notify.BroadcastRunUpdated(u)
 		job := r.remoteJob(proj, issue, run, ac, text, true, autoPush)
 		if err := r.remote.Send(r.ctx, job); err != nil {
 			r.failRemoteStart(run, issue, err)
@@ -1059,6 +1078,10 @@ func (r *Runner) Cancel(runID int64) error {
 		return r.remote.Cancel(runID)
 	}
 	r.closeWarmClient(runID)
+	if queued := r.removeQueuedTurn(runID); queued != nil {
+		r.abortQueuedTurn(queued)
+		return nil
+	}
 	r.mu.Lock()
 	act := r.active[runID]
 	r.mu.Unlock()
@@ -1163,6 +1186,17 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 	if err != nil {
 		r.failRun(runID, issueID, fmt.Sprintf("load run: %v", err))
 		return
+	}
+	// Submit clears Workdir after pushing. A later turn (notably an automatic
+	// CI fix) must recreate the workspace instead of calling os.MkdirAll("").
+	if strings.TrimSpace(run.Workdir) == "" {
+		wd := filepath.Join(r.cfg.RunsDir(), fmt.Sprintf("run-%d", runID))
+		if u, uerr := r.st.UpdateRun(ctx, runID, store.RunUpdate{Workdir: &wd}); uerr != nil {
+			r.failRun(runID, issueID, fmt.Sprintf("restore workspace: %v", uerr))
+			return
+		} else {
+			run = u
+		}
 	}
 	if !isResume {
 		if err := r.prepareWorkspace(ctx, run, proj, issue); err != nil {
@@ -1272,7 +1306,10 @@ func (r *Runner) executeTurn(act *activeRun, proj *domain.Project, issue *domain
 				return
 			}
 			sid := client.SessionID
-			_, _ = r.st.UpdateRun(context.Background(), runID, store.RunUpdate{SessionID: &sid})
+			zero := 0.0
+			_, _ = r.st.UpdateRun(context.Background(), runID, store.RunUpdate{
+				SessionID: &sid, UsageCumulativeCost: &zero,
+			})
 			if isResume {
 				sessPrompt = fmt.Sprintf("Continuing work on [%s] %s in this existing workspace.\n\nUser feedback / follow-up:\n%s", issue.Key, issue.Title, prompt)
 			} else {

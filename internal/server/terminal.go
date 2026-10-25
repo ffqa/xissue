@@ -68,6 +68,15 @@ func (s *Server) handleRunTerminal(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusGone, errors.New("run workspace is no longer available"))
 		return
 	}
+	if s.terminalSem != nil {
+		select {
+		case s.terminalSem <- struct{}{}:
+			defer func() { <-s.terminalSem }()
+		default:
+			writeErr(w, http.StatusTooManyRequests, errors.New("too many open terminals"))
+			return
+		}
+	}
 
 	ptmx, cmd, err := startRunPTY(workdir, 100, 30)
 	if err != nil {

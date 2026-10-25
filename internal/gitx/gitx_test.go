@@ -3,6 +3,7 @@ package gitx
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -91,5 +92,57 @@ func TestMergeBranchToTargetLocal(t *testing.T) {
 	}
 	if string(content) != "world\n" {
 		t.Errorf("unexpected content: %q", string(content))
+	}
+}
+
+func TestAddWorktreeRestoresExistingRemoteBranch(t *testing.T) {
+	ctx := t.Context()
+	localDir := t.TempDir()
+	if _, err := Run(ctx, localDir, "init", "-b", "main"); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = Run(ctx, localDir, "config", "user.name", "Tester")
+	_, _ = Run(ctx, localDir, "config", "user.email", "tester@example.com")
+	if _, err := Run(ctx, localDir, "commit", "--allow-empty", "-m", "init"); err != nil {
+		t.Fatal(err)
+	}
+	mirrorDir := t.TempDir()
+	if err := EnsureMirror(ctx, localDir, mirrorDir); err != nil {
+		t.Fatal(err)
+	}
+	wtDir := t.TempDir()
+	if err := AddWorktree(ctx, mirrorDir, wtDir, "feat-restore", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wtDir, "restored.txt"), []byte("kept\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := CommitAll(ctx, wtDir, "branch work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Push(ctx, wtDir, "feat-restore"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveWorktree(ctx, mirrorDir, wtDir, "feat-restore"); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureMirror(ctx, localDir, mirrorDir); err != nil {
+		t.Fatal(err)
+	}
+	restored := t.TempDir()
+	if err := AddWorktree(ctx, mirrorDir, restored, "feat-restore", "main"); err != nil {
+		t.Fatal(err)
+	}
+	defer RemoveWorktree(ctx, mirrorDir, restored, "feat-restore")
+	if _, err := os.Stat(filepath.Join(restored, "restored.txt")); err != nil {
+		t.Fatalf("restored worktree lost branch content: %v", err)
+	}
+	head, err := Run(ctx, restored, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(head) != sha {
+		t.Fatalf("restored HEAD = %s, want %s", strings.TrimSpace(head), sha)
 	}
 }

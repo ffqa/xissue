@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -38,6 +39,7 @@ func (s *Server) syncProjectIssues(ctx context.Context, proj *domain.Project) (i
 		return 0, nil
 	}
 	imported := 0
+	var errs []error
 	for _, repo := range proj.Repos {
 		p := provider.For(repo.Provider)
 		if !p.Caps().Issues {
@@ -45,7 +47,10 @@ func (s *Server) syncProjectIssues(ctx context.Context, proj *domain.Project) (i
 		}
 		list, err := p.ListOpenIssues(ctx, repo)
 		if err != nil {
-			return imported, fmt.Errorf("%s: %w", repo.Name, err)
+			// One unavailable repository must not stop the other repositories
+			// in the project from syncing.
+			errs = append(errs, fmt.Errorf("%s: %w", repo.Name, err))
+			continue
 		}
 		repoID := repo.ID
 		for _, ri := range list {
@@ -61,7 +66,8 @@ func (s *Server) syncProjectIssues(ctx context.Context, proj *domain.Project) (i
 				Labels:       ri.Labels,
 			})
 			if err != nil {
-				return imported, err
+				errs = append(errs, fmt.Errorf("%s issue #%d: %w", repo.Name, ri.Number, err))
+				continue
 			}
 			if created {
 				imported++
@@ -72,7 +78,7 @@ func (s *Server) syncProjectIssues(ctx context.Context, proj *domain.Project) (i
 		}
 		s.syncRemoteIssueComments(ctx, proj, repo)
 	}
-	return imported, nil
+	return imported, errors.Join(errs...)
 }
 
 // syncRemoteIssueComments imports comments for all issues of one repository in

@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/xpier/xissue/internal/domain"
@@ -53,6 +54,14 @@ func (r *Runner) PruneRunStorage(ctx context.Context, now time.Time) (PruneStats
 			continue
 		}
 		needEvents := eventDays > 0 && run.EndedAt.Before(eventCutoff)
+		if needEvents {
+			hasEvents, herr := r.st.RunHasEvents(ctx, run.ID)
+			if herr != nil {
+				stats.addError(fmt.Sprintf("run %d: check events: %v", run.ID, herr))
+				continue
+			}
+			needEvents = hasEvents
+		}
 		// completed means the agent finished but nobody reviewed/accepted the
 		// changes yet. A submitted run normally had its workdir cleared on
 		// success; a non-empty one means some repos failed to push, so keep it
@@ -88,7 +97,16 @@ func (r *Runner) PruneRunStorage(ctx context.Context, now time.Time) (PruneStats
 			}
 		}
 		if needWorkspace {
-			if rerr := r.removeRunWorkdir(ctx, run, proj); rerr != nil {
+			if strings.TrimSpace(run.RunnerID) != "" {
+				if r.remote == nil || !r.remote.Online(run.RunnerID) {
+					stats.addError(fmt.Sprintf("run %d: remote runner %s is offline; workspace retained", run.ID, run.RunnerID))
+					continue
+				}
+				if derr := r.remote.Discard(ctx, run, proj); derr != nil {
+					stats.addError(fmt.Sprintf("run %d: remove remote workdir: %v", run.ID, derr))
+					continue
+				}
+			} else if rerr := r.removeRunWorkdir(ctx, run, proj); rerr != nil {
 				stats.addError(fmt.Sprintf("run %d: remove workdir: %v", run.ID, rerr))
 				continue
 			}

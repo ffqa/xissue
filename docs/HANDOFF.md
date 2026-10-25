@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.22` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.23` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.22`
+- **最新发布版本**: `v0.2.23`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -227,6 +227,17 @@
 - **可观测性**: `GET /api/runners` 列出在线节点；项目设置显示执行节点，离线节点会显示为「离线 / 未连接」。`GET /api/status` 不统计远程节点资源，节点资源由节点本机负责。
 - **测试**: `internal/server/remote_manager_test.go` 使用真实 WebSocket Runner + 假 ACP 覆盖注册、远程启动、事件/用量、diff/读写、后续 Turn、push 提交清理、离线拒绝、权限往返与浏览器 Origin 拒绝。
 
+### 2.22 可靠性、安全与并发修复（v0.2.23）
+- **远程 Runner 会话归属**: 远程管理器的 `Cancel`、`RespondPermission`、`Changes`、`ReadFile`、`WriteFile`、`Submit`、`Discard`、`Delete` 现在统一校验「Run 是否属于当前节点连接」，防止复用 Run ID 或陈旧连接操作他人 Run；连接释放路径会失败归属该连接的未完成 Job。
+- **远程协议边界**: WebSocket 读取上限降为 16MB；超过限制直接断开，避免恶意/异常节点把整个主服务拖入 OOM。远程 `status` 对 `failed/cancelled/discarded` 等终态只接受一次，重复或迟到的完成帧不会把已取消 Run 复活为 completed。
+- **状态写入错误**: `Start`/`Send`/`Cancel` 等远程帧写入失败会同步回滚数据库中的 queued/running 状态，避免 UI 永久等待一个从未发出的任务。
+- **CI 自动修复恢复**: 远程或本地工作区在 push 提交后被清理时，`AddWorktree` 会优先从 `origin/<base>` 重建分支，而不是依赖本地可能已删除的分支；CI 修复不再因「分支已存在但工作区已清理」直接失败。
+- **队列/取消/容量**: 取消排队 Run 不再占用调度槽；`cancel` 避免持锁执行 `UpdateRun`；PTY 终端增加进程级并发上限（8）并限制可继承的敏感环境变量/输出缓冲；事件与工作区保留策略在删除事件后仍能继续收敛工作区。
+- **用量统计**: 同一 Turn 的 usage 快照按 message 去重，避免重复累计；无 usage 的 Turn 不再把整段会话用量重复计入；失败后重试且无新 usage 时按会话差值兜底；保留最后模型名；状态栏避免在持锁期间做磁盘扫描。
+- **Gitea**: 未配置 Gitea 时不再对 Gitea 仓库发起 Issue 同步并返回 502；仅对实际支持更新的 Provider 触发标签/状态回写，避免把只读适配器当成可写。
+- **审计与回归**: 新增远程归属/终态、CI 修复恢复、队列预算、用量去重、Gitea 更新能力等测试；`go test -count=1 -race ./...`、`go vet ./...`、`tsc --noEmit` 全部通过。
+- **已知限制**: 单个 Run 中途切换成本币种时仍按 `runs.cost_currency` 单一币种聚合，跨币种精确汇总留待用量表持久化 `cost_breakdown` 后再实现。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid
@@ -319,6 +330,7 @@ brew info ffqa/tap/xissue
 2. **监控任务热重启平滑衔接**:
    - 当正在执行监控拉取或调度任务时，如果用户执行 `xissue service restart`，服务已支持优雅退出与端口等待；
    - 后续可加入持久化的任务状态快照，在进程重启后自动恢复未完成的短任务。
-3. **插件可视化管理界面**:
-   - 当前插件通过 `~/.xissue/config.yaml` 或项目配置声明并执行外部脚本；
-   - 后续可在 Web 端增加「插件市场 / 插件管理」面板，方便一键启停插件并配置参数。
+3. **远程执行节点调度**:
+   - 当前远程节点会自动接收派发到该节点的全部 Run；后续应由节点上报 CPU/内存/并发能力，主服务按容量排队，避免多 Run 同时压满节点。
+4. **跨币种用量汇总**:
+   - 当前单个 Run 以 `cost_currency` 单币种聚合；后续在用量表持久化 `cost_breakdown`（币种→金额）后，再提供精确的跨币种汇总。

@@ -103,6 +103,14 @@ func TestPruneRunStorageArchivesDeletesEventsAndWorkdir(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(archive, "events.log")); err != nil {
 		t.Fatalf("archive missing: %v", err)
 	}
+	// A second pass must be a no-op, not re-archive an already-pruned run.
+	again, err := r.PruneRunStorage(ctx, time.Now().Add(3*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.RunsArchived != 0 || again.EventRows != 0 || again.Workdirs != 0 {
+		t.Fatalf("second prune was not idempotent: %+v", again)
+	}
 }
 
 func TestPruneRunStorageKeepsCompletedWorkspace(t *testing.T) {

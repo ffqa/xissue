@@ -148,9 +148,9 @@ func (s *Server) handlePruneRunStorage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	s.statusMu.Lock()
+	s.usageMu.Lock()
 	s.dataSizeAt = time.Time{} // force the next status sample to rescan
-	s.statusMu.Unlock()
+	s.usageMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": len(stats.Errors) == 0, "stats": stats})
 }
 

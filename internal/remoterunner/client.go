@@ -65,9 +65,13 @@ func Run(ctx context.Context, opts Options) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		started := time.Now()
 		err := r.connectAndServe(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if time.Since(started) >= 10*time.Second {
+			backoff = time.Second
 		}
 		if err != nil && opts.Logger != nil {
 			opts.Logger.Printf("remote runner disconnected: %v", err)
@@ -102,6 +106,7 @@ func (r *Runner) connectAndServe(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	conn.SetReadLimit(remote.MaxFrameBytes)
 	r.connMu.Lock()
 	r.conn = conn
 	r.connMu.Unlock()

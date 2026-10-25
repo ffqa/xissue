@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,5 +207,138 @@ func TestSubmitPushKeepsExistingPRMetadata(t *testing.T) {
 	}
 	if gotIssue.Status != domain.IssuePROpen {
 		t.Fatalf("issue status = %s, want pr_open", gotIssue.Status)
+	}
+}
+
+func TestCIFixResumeRecreatesWorkspaceFromRemoteBranch(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	seed := filepath.Join(root, "seed")
+	runGit := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.MkdirAll(seed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(root, "init", "--bare", remote)
+	runGit(seed, "init", "-b", "main")
+	runGit(seed, "config", "user.email", "test@example.com")
+	runGit(seed, "config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(seed, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(seed, "add", ".")
+	runGit(seed, "commit", "-m", "init")
+	runGit(seed, "remote", "add", "origin", remote)
+	runGit(seed, "push", "origin", "main")
+
+	agent := filepath.Join(root, "fake-acp.sh")
+	body := `#!/bin/sh
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":1,"agentCapabilities":{},"agentInfo":{"name":"fake"}}}\n' "$id"
+      ;;
+    *'"method":"session/new"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"fake-session"}}\n' "$id"
+      ;;
+    *'"method":"session/prompt"'*)
+      echo fix >> demo/a.txt
+      printf '{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"fake-session","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"fixed"}}}}\n'
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn","usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}}\n' "$id"
+      ;;
+  esac
+done
+`
+	if err := os.WriteFile(agent, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(filepath.Join(root, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	cfg := config.Default()
+	cfg.DataDir = filepath.Join(root, "data")
+	cfg.Monitor.Enabled = false
+	cfg.Runner.MaxConcurrent = 1
+	cfg.Agents["fake"] = config.AgentConfig{Command: agent, MemoryMB: 10}
+	r := New(cfg, st, &dummyNotifier{})
+	t.Cleanup(r.Shutdown)
+
+	proj, err := st.CreateProject(ctx, "CI Fix Resume", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := st.CreateRepo(ctx, domain.Repo{ProjectID: proj.ID, Name: "demo", RemoteURL: remote, DefaultBranch: "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssueInRepo(ctx, proj.ID, &repo.ID, "fix ci", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := r.StartRun(ctx, issue.ID, "fake", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitRunStatus(t, st, run.ID, domain.RunCompleted)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r.mu.Lock()
+		busy := r.active[run.ID] != nil
+		r.mu.Unlock()
+		if !busy {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("run stayed active after completion")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, err := r.Submit(ctx, run.ID, SubmitRequest{Mode: "push", CommitMessage: "initial"}); err != nil {
+		t.Fatal(err)
+	}
+	afterSubmit, err := st.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterSubmit.Status != domain.RunSubmitted || afterSubmit.Workdir != "" {
+		t.Fatalf("after submit status=%s workdir=%q", afterSubmit.Status, afterSubmit.Workdir)
+	}
+	// Simulate the CI-fix path: a follow-up turn must recreate the worktree
+	// from the pushed branch, not from main, then auto-push.
+	if err := r.sendMessage(ctx, run.ID, "fix the CI failure", true); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		final, err := st.GetRun(ctx, run.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if final.Status == domain.RunSubmitted && final.Workdir == "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("after CI fix status=%s workdir=%q", final.Status, final.Workdir)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	logOut, err := exec.CommandContext(ctx, "git", "--git-dir", remote, "log", "--oneline", "main.."+afterSubmit.Branch).Output()
+	if err != nil {
+		t.Fatalf("read remote branch: %v", err)
+	}
+	if lines := strings.Count(strings.TrimSpace(string(logOut)), "\n") + 1; lines < 2 {
+		t.Fatalf("CI fix did not add a commit to the existing branch: %s", logOut)
 	}
 }

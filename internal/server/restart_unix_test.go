@@ -27,6 +27,8 @@ func TestServiceManagedFromEnv(t *testing.T) {
 		t.Fatal("XISSUE_SERVICE=1 should mark the process as supervised")
 	}
 	t.Setenv("XISSUE_SERVICE", "")
+	t.Setenv("INVOCATION_ID", "")
+	t.Setenv("SYSTEMD_EXEC_PID", "")
 	if os.Getppid() == 1 {
 		t.Skip("test runner is itself supervised")
 	}

@@ -524,11 +524,12 @@ func (m *remoteManager) handlePermission(c *remoteConn, f remote.Frame) {
 	for _, o := range req.Options {
 		opts = append(opts, acp.PermissionOption{OptionID: o.OptionID, Name: o.Name, Kind: o.Kind})
 	}
-	// Emit the same event shape as the local runner so the existing UI works.
-	m.r.EmitRemoteEvent(f.RunID, run.IssueID, "permission_request", map[string]any{
-		"requestId": f.RequestID, "title": title, "toolCall": req.ToolCall, "options": req.Options,
-	})
-	if option, auto := m.r.RemotePermissionDecision(f.RunID, title, kind, req.ToolCall, opts); auto {
+	option, auto := m.r.RemotePermissionDecision(f.RunID, title, kind, req.ToolCall, opts)
+	if auto {
+		// Emit the same event shape as the local runner so the existing UI works.
+		m.r.EmitRemoteEvent(f.RunID, run.IssueID, "permission_request", map[string]any{
+			"requestId": f.RequestID, "title": title, "toolCall": req.ToolCall, "options": req.Options,
+		})
 		for _, o := range opts {
 			if o.OptionID == option && o.Kind == "allow_always" {
 				m.r.RememberRemoteAllow(f.RunID, kind)
@@ -551,8 +552,13 @@ func (m *remoteManager) handlePermission(c *remoteConn, f remote.Frame) {
 	m.mu.Lock()
 	m.perms[key] = &remotePermission{conn: c, requestID: f.RequestID, runID: f.RunID, issueID: run.IssueID, kind: kind, allowAlways: allowAlways}
 	m.mu.Unlock()
+	// Commit the awaiting state before exposing the request so clients that
+	// react to permission_request observe a consistent run status.
 	m.r.SetRemoteRunStatus(f.RunID, run.IssueID, domain.RunAwaiting, run.Workdir, run.SessionID, "", "")
 	m.r.NotifyRemoteRun("permission", fmt.Sprintf("Run #%d 等待授权审批", f.RunID), title, fmt.Sprintf("/issues/%d", run.IssueID))
+	m.r.EmitRemoteEvent(f.RunID, run.IssueID, "permission_request", map[string]any{
+		"requestId": f.RequestID, "title": title, "toolCall": req.ToolCall, "options": req.Options,
+	})
 }
 
 func permissionKey(runID int64, requestID string) string {
@@ -673,7 +679,21 @@ func (m *remoteManager) RespondPermission(runID int64, requestID, optionID strin
 	if p == nil {
 		return errors.New("permission request not found or already resolved")
 	}
+	run, _ := m.st.GetRun(context.Background(), runID)
+	workdir, session := "", ""
+	if run != nil {
+		workdir, session = run.Workdir, run.SessionID
+	}
+	// Leave awaiting_permission before sending the result. The remote runner
+	// can finish and report completed immediately after receiving it; setting
+	// running afterwards would overwrite that terminal state.
+	if run != nil && run.Status == domain.RunAwaiting {
+		m.r.SetRemoteRunStatus(runID, p.issueID, domain.RunRunning, workdir, session, "", "")
+	}
 	if err := p.conn.write(context.Background(), remote.Frame{Type: "permission_result", RunID: runID, RequestID: requestID, OptionID: optionID}); err != nil {
+		if run != nil && run.Status == domain.RunAwaiting {
+			m.r.SetRemoteRunStatus(runID, p.issueID, domain.RunAwaiting, workdir, session, "", "")
+		}
 		return err
 	}
 	if optionID == "" {
@@ -685,12 +705,6 @@ func (m *remoteManager) RespondPermission(runID int64, requestID, optionID strin
 	m.r.EmitRemoteEvent(runID, p.issueID, "permission_resolved", map[string]any{
 		"requestId": requestID, "optionId": optionID, "auto": false,
 	})
-	run, _ := m.st.GetRun(context.Background(), runID)
-	workdir, session := "", ""
-	if run != nil {
-		workdir, session = run.Workdir, run.SessionID
-	}
-	m.r.SetRemoteRunStatus(runID, p.issueID, domain.RunRunning, workdir, session, "", "")
 	return nil
 }
 

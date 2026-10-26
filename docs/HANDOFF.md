@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.25` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.26` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.25`
+- **最新发布版本**: `v0.2.26`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -239,12 +239,14 @@
 - **审计与回归**: 新增远程归属/终态、CI 修复恢复、队列预算、用量去重、Gitea 更新能力等测试；`go test -count=1 -race ./...`、`go vet ./...`、`tsc --noEmit` 全部通过。
 - **已知限制**: 单个 Run 中途切换成本币种时仍按 `runs.cost_currency` 单一币种聚合，跨币种精确汇总留待用量表持久化 `cost_breakdown` 后再实现。
 
-### 2.23 服务重启后的进程身份（v0.2.25）
+### 2.23 服务重启后的进程身份（v0.2.26）
 - **现象**: 自动更新或网页「↻ 重启」后，底部状态栏已显示新版本、UP 重新计时，但 `ps -o lstart` / 进程管理器仍显示旧启动时间；再执行 `xissue service restart` 才看到新的启动时间。
 - **根因**: `POST /api/restart` 与自动更新后的重启走 `syscall.Exec` 自替换。`exec` 只替换进程映像，PID 和操作系统记录的进程启动时间不变；Web 的 UP 来自新 Server 的 `startedAt`，因此两者不一致。`xissue service restart` 走 `launchctl kickstart -k`，会真正结束旧进程并由 launchd 拉起新进程，所以时间会更新。
 - **修复**: 新增 `requestSupervisorRestart`。launchd/Homebrew 服务下直接退出，由 KeepAlive 拉起新进程；systemd 下从 `/proc/self/cgroup` 解析 unit 并执行 `systemctl --user --no-block restart <unit>`；旧 unit 使用非零退出兜底。前台无 supervisor 时仍保留 `execSelf` 以获得无缝重启。
 - **服务定义**: LaunchAgent/systemd/Homebrew 服务新增 `XISSUE_SERVICE=1`；systemd unit 的 `Restart` 从 `on-failure` 改为 `always`，兼容旧 unit 的显式 restart。
 - **验证**: 本地 launchd 服务实测网页重启后 PID 与 `lstart` 均变化；隔离前台进程实测仍保留 PID（符合前台 `exec` 语义）；新增 `TestUnitFromCgroup` 与 `TestServiceManagedFromEnv`。
+- **顺带修复**: 远程权限响应原先在把 `permission_result` 写给节点后才把 Run 从 `awaiting_permission` 改回 `running`；节点可能先回报 completed，导致终态被 running 覆盖。现在先离开等待态再发送结果，并新增 30 次并发回归。
+- **发布说明**: v0.2.25 的 tag 因 CI 发现上述测试竞态而未发布，修复随 v0.2.26 发布。
 
 ## 3. 核心架构与关键代码索引
 

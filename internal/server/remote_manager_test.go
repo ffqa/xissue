@@ -230,7 +230,10 @@ func waitRunStatusServer(t *testing.T, st *store.Store, runID int64, want domain
 	}
 	if run, err := st.GetRun(context.Background(), runID); err == nil {
 		events, _ := st.ListEvents(context.Background(), runID, 0)
-		t.Logf("run %d status=%s error=%q events=%+v", runID, run.Status, run.Error, events)
+		t.Logf("run %d status=%s error=%q", runID, run.Status, run.Error)
+		for _, ev := range events {
+			t.Logf("event %s %s", ev.Type, string(ev.Data))
+		}
 	}
 	t.Fatalf("timeout waiting for run %s", want)
 }

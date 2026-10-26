@@ -179,6 +179,7 @@ printf '%s' '[{"number":7,"title":"auto sync","body":"","labels":[],"url":"https
 	for time.Now().Before(deadline) {
 		issues, err := st.ListIssues(context.Background(), proj.ID)
 		if err == nil && len(issues) == 1 && issues[0].Key == "acme/auto-sync-repo#7" {
+			waitIssueSyncIdle(t, srv)
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -448,4 +449,20 @@ func TestGlobalAutoDevelopRequiresProjectAuthorAllowlist(t *testing.T) {
 	if !found {
 		t.Fatalf("allowlisted author did not reach the agent gate: %+v", comments)
 	}
+}
+
+// waitIssueSyncIdle waits for the background sync goroutine to release its
+// mutex. Returning while it is still writing to the temp DB races with
+// t.TempDir cleanup.
+func waitIssueSyncIdle(t *testing.T, srv *Server) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if srv.syncMu.TryLock() {
+			srv.syncMu.Unlock()
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("background issue sync did not finish")
 }

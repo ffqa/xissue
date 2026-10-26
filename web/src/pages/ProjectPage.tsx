@@ -95,6 +95,7 @@ export default function ProjectPage() {
   const project = useQuery({ queryKey: qk.project(id), queryFn: () => api.project(id) });
   const issues = useQuery({ queryKey: qk.issues(id), queryFn: () => api.issues(id) });
   const agentsQ = useQuery({ queryKey: qk.agents, queryFn: api.agents });
+  const settingsQ = useQuery({ queryKey: qk.settings, queryFn: api.settings });
   const watchesQ = useQuery({ queryKey: qk.watches(id), queryFn: () => api.watches(id) });
   const runnersQ = useQuery({ queryKey: qk.runners, queryFn: api.runners, refetchInterval: 15000 });
 
@@ -228,11 +229,17 @@ export default function ProjectPage() {
   };
 
   const remoteProject = Boolean(project.data?.runnerId);
-  const defaultAgent = remoteProject
-    ? (agentsQ.data ?? []).find((a) => a.name === 'opencode')?.name || (agentsQ.data ?? [])[0]?.name || 'opencode'
-    : (agentsQ.data ?? []).find((a) => a.available && a.name === 'opencode')?.name ||
-      (agentsQ.data ?? []).find((a) => a.available)?.name ||
-      'opencode';
+  // The global default agent is authoritative. Only fall back to opencode (or
+  // the first usable agent) when it is unset or unavailable on this node.
+  const configuredAgent = settingsQ.data?.defaultAgent?.trim() ?? '';
+  const usableAgents = (agentsQ.data ?? []).filter((a) => remoteProject || a.available);
+  const defaultAgent =
+    configuredAgent && (usableAgents.length === 0 || usableAgents.some((a) => a.name === configuredAgent))
+      ? configuredAgent
+      : usableAgents.find((a) => a.name === 'opencode')?.name ||
+        usableAgents[0]?.name ||
+        configuredAgent ||
+        'opencode';
 
   const refreshProject = () => {
     qc.invalidateQueries({ queryKey: qk.project(id) });

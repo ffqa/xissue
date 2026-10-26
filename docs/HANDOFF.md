@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.29` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.30` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.29`
+- **最新发布版本**: `v0.2.30`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -259,6 +259,12 @@
 - **修复**: 更新前先判断当前可执行文件属于 Homebrew；若 `homebrew.mxcl.xissue`（或 Homebrew systemd 服务）正在运行，直接 kickstart / `brew services restart` 对应服务。只重启已在运行的服务，不会把用户手动运行时的停止服务偷偷拉起。
 - **验证**: 新增 `parseBrewServices` 与 `launchdOutputHasPID` 测试；`go test ./cmd/xissue` 通过。
 - **关停收敛**: 远程 Run 完成后归档是异步的；`Runner.Shutdown` 现在等待归档 goroutine 结束，避免测试/重启时数据目录仍被写入。v0.2.28 的 CI 因该清理竞态失败，未发布；修复随 v0.2.29 发布。
+
+### 2.26 全局默认 Agent 在项目页生效（v0.2.30）
+
+- **问题**: 新建 Issue 弹窗的「创建后立即启动 Agent (opencode)」、批量执行和快速启动 Run 都使用前端写死的 `opencode` 优先逻辑，忽略「设置 → Agents → 默认 Agent」。
+- **修复**: `ProjectPage` 读取 `/api/settings` 的 `defaultAgent`，优先使用全局默认；仅当默认值未配置或在当前节点不可用时，才回退到 `opencode` / 第一个可用 Agent。远程项目按远程 Agent 列表判断。
+- **验证**: `tsc --noEmit` 通过；本地默认 Agent 为 `devin` 的浏览器冒烟显示「创建后立即启动 Agent (devin) 自动执行」。
 
 ## 3. 核心架构与关键代码索引
 

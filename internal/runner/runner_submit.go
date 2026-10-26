@@ -16,6 +16,15 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
+func requirePRSupport(proj *domain.Project, issue *domain.Issue) error {
+	for _, repo := range reposForIssue(proj, issue) {
+		if !provider.For(repo.Provider).Caps().PRs {
+			return fmt.Errorf("repository %s (%s) does not support pull requests; use push only", repo.Name, repo.Provider)
+		}
+	}
+	return nil
+}
+
 func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]SubmitResult, error) {
 	run, proj, err := r.runAndProject(ctx, runID)
 	if err != nil {
@@ -34,6 +43,11 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 			return nil, fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, run.RunnerID)
 		}
 		return r.remote.Submit(ctx, run, proj, issue, req)
+	}
+	if req.Mode == "pr" {
+		if err := requirePRSupport(proj, issue); err != nil {
+			return nil, err
+		}
 	}
 	r.mu.Lock()
 	busy := r.active[runID] != nil

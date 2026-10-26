@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.26` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.27` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.26`
+- **最新发布版本**: `v0.2.27`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -247,6 +247,11 @@
 - **验证**: 本地 launchd 服务实测网页重启后 PID 与 `lstart` 均变化；隔离前台进程实测仍保留 PID（符合前台 `exec` 语义）；新增 `TestUnitFromCgroup` 与 `TestServiceManagedFromEnv`。
 - **顺带修复**: 远程权限响应原先在把 `permission_result` 写给节点后才把 Run 从 `awaiting_permission` 改回 `running`；节点可能先回报 completed，导致终态被 running 覆盖。现在先离开等待态再发送结果，并新增 30 次并发回归。
 - **发布说明**: v0.2.25 的 tag 因 CI 发现上述测试竞态而未发布，修复随 v0.2.26 发布。
+
+### 2.24 README 收纳进项目工具条（v0.2.27）
+- **移除独立区域**: 项目页不再在标题工具条下方渲染整块「📖 项目 README」面板，避免 README 内容挤压仓库、监控与看板的首屏空间。
+- **工具条入口**: 在「📚 知识库」旁边新增「📖 README」按钮，点击后以宽幅弹窗展示当前项目各仓库 README；多仓库时可切换仓库，弹窗内可直接跳转知识库。
+- **组件调整**: `ProjectReadmePanel` 由页面内嵌面板改为 `ProjectReadmeModal`，沿用统一 `Modal` 的 Esc/遮罩关闭与滚动行为。
 
 ## 3. 核心架构与关键代码索引
 

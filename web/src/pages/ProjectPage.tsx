@@ -9,7 +9,7 @@ import { PRModal } from '../components/PRModal';
 import { CommitsModal } from '../components/CommitsModal';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
-import { ProjectReadmePanel } from '../components/ProjectReadmePanel';
+import { ProjectReadmeModal } from '../components/ProjectReadmeModal';
 import { getCommitWebUrl, getBranchWebUrl } from '../gitUrls';
 import { toast } from '../toast';
 import { copyText } from '../clipboard';
@@ -127,6 +127,7 @@ export default function ProjectPage() {
   const [prModalOpen, setPrModalOpen] = useState(false);
   const [commitsModal, setCommitsModal] = useState<{ repoId?: number; branch?: string; sha?: string } | null>(null);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
+  const [readmeOpen, setReadmeOpen] = useState(false);
 
   const deleteIssueMut = useMutation({
     mutationFn: (issueId: number) => api.deleteIssue(issueId),
@@ -569,6 +570,14 @@ export default function ProjectPage() {
 
         <button
           className="ghost"
+          onClick={() => setReadmeOpen(true)}
+          title="查看项目各仓库的 README"
+        >
+          📖 README
+        </button>
+
+        <button
+          className="ghost"
           onClick={() => setKnowledgeOpen(true)}
           title="查看与搜索项目知识库、本地文档与 GitHub Wiki"
         >
@@ -615,8 +624,6 @@ export default function ProjectPage() {
         </button>
 
       </div>
-
-      <ProjectReadmePanel projectId={id} onOpenKnowledge={() => setKnowledgeOpen(true)} />
 
       {/* 仓库与分支监控双栏面板 */}
       <div
@@ -2206,6 +2213,17 @@ export default function ProjectPage() {
           project={{ id: p.id, name: p.name }}
           onClose={() => setDeleteProjectOpen(false)}
           onDeleted={() => nav('/')}
+        />
+      )}
+
+      {readmeOpen && (
+        <ProjectReadmeModal
+          projectId={id}
+          onClose={() => setReadmeOpen(false)}
+          onOpenKnowledge={() => {
+            setReadmeOpen(false);
+            setKnowledgeOpen(true);
+          }}
         />
       )}
 

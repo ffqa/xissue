@@ -220,10 +220,19 @@ func eventMessage(events []domain.RunEvent, text string) bool {
 
 func waitRunStatusServer(t *testing.T, st *store.Store, runID int64, want domain.RunStatus, timeout time.Duration) {
 	t.Helper()
-	waitFor(t, timeout, "run "+string(want), func() bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
 		run, err := st.GetRun(context.Background(), runID)
-		return err == nil && run.Status == want
-	})
+		if err == nil && run.Status == want {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if run, err := st.GetRun(context.Background(), runID); err == nil {
+		events, _ := st.ListEvents(context.Background(), runID, 0)
+		t.Logf("run %d status=%s error=%q events=%+v", runID, run.Status, run.Error, events)
+	}
+	t.Fatalf("timeout waiting for run %s", want)
 }
 
 func waitFor(t *testing.T, timeout time.Duration, what string, ok func() bool) {

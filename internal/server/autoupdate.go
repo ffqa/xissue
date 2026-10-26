@@ -165,12 +165,5 @@ func (s *Server) notifyUpdateFailure(version, reason string) {
 }
 
 func (s *Server) restartAfterUpdate() {
-	time.Sleep(1200 * time.Millisecond)
-	s.Shutdown()
-	_ = s.st.Close()
-	exe, err := os.Executable()
-	if err == nil {
-		execSelf(exe)
-	}
-	os.Exit(0)
+	s.restartProcess(1200 * time.Millisecond)
 }

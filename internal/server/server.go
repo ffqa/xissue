@@ -20,7 +20,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.24"
+const Version = "0.2.25"
 
 type Server struct {
 	cfg    *config.Config
@@ -317,22 +317,35 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// restartProcess replaces the running program after a short delay. When the
+// process is supervised (launchd/systemd/brew services), exit and let the
+// supervisor create a fresh process. syscall.Exec keeps the original PID and
+// OS process start time, which makes ps/lstart and uptime disagree; reserve it
+// for foreground terminals that have no supervisor to restart us.
+func (s *Server) restartProcess(delay time.Duration) {
+	time.Sleep(delay)
+	s.Shutdown()
+	_ = s.st.Close()
+	if serviceManaged() {
+		if requestSupervisorRestart() {
+			os.Exit(0)
+		}
+		// A supervised unit normally has Restart=on-failure (or always);
+		// a non-zero exit makes legacy units start a fresh process too.
+		os.Exit(1)
+	}
+	if exe, err := os.Executable(); err == nil {
+		execSelf(exe)
+	}
+	os.Exit(0)
+}
+
 func (s *Server) handleRestart(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"restarting": true})
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
-	go func() {
-		time.Sleep(150 * time.Millisecond)
-		s.Shutdown()
-		_ = s.st.Close()
-		// When running under launchd/systemd KeepAlive, exiting is enough,
-		// while execSelf also seamlessly replaces the process in foreground terminals.
-		if exe, err := os.Executable(); err == nil {
-			execSelf(exe)
-		}
-		os.Exit(0)
-	}()
+	go s.restartProcess(150 * time.Millisecond)
 }
 
 type issueSyncResult struct {

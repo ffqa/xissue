@@ -112,6 +112,7 @@ class Xissue < Formula
     run [opt_bin/"xissue"]
     keep_alive true
     working_dir Dir.home
+    environment_variables XISSUE_SERVICE: "1"
     log_path var/"log/xissue.log"
     error_log_path var/"log/xissue.log"
   end

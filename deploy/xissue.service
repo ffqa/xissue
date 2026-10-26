@@ -6,11 +6,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/xissue
-Restart=on-failure
+Restart=always
 RestartSec=3
 # Keep the control server alive if an agent process triggers the OOM killer on small machines
 OOMScoreAdjust=-500
 Environment=HOME=%h
+Environment=XISSUE_SERVICE=1
 
 [Install]
 WantedBy=default.target

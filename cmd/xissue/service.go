@@ -287,6 +287,8 @@ func installService() {
   <dict>
     <key>HOME</key>
     <string>%s</string>
+    <key>XISSUE_SERVICE</key>
+    <string>1</string>
     <key>PATH</key>
     <string>%s</string>
   </dict>
@@ -346,10 +348,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=%s
-Restart=on-failure
+Restart=always
 RestartSec=3
 OOMScoreAdjust=-500
 Environment=HOME=%s
+Environment=XISSUE_SERVICE=1
 
 [Install]
 WantedBy=default.target

@@ -306,24 +306,21 @@ func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key, a
 	if !p.AutoDevelop && !globalAuto {
 		return
 	}
-	// Global auto-develop is a fleet-wide switch. Require an explicit author
-	// allowlist per project before letting arbitrary public issue authors start
-	// agents on this machine.
-	if globalAuto && len(p.AutoDevelopAuthors) == 0 {
-		s.runner.LogMonitor("WARN", "auto-develop", fmt.Sprintf("跳过 %s：全局自动开发要求项目配置作者白名单（autoDevelopAuthors）", key))
+	// Auto-develop can start an agent on code from an arbitrary issue author.
+	// Require an explicit author allowlist even for project-level opt-in.
+	if len(p.AutoDevelopAuthors) == 0 {
+		s.runner.LogMonitor("WARN", "auto-develop", fmt.Sprintf("跳过 %s：自动开发要求项目配置作者白名单（autoDevelopAuthors）", key))
 		return
 	}
-	if len(p.AutoDevelopAuthors) > 0 {
-		allowed := false
-		for _, name := range p.AutoDevelopAuthors {
-			if strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(name), "@"), strings.TrimSpace(author)) {
-				allowed = true
-				break
-			}
+	allowed := false
+	for _, name := range p.AutoDevelopAuthors {
+		if strings.EqualFold(strings.TrimPrefix(strings.TrimSpace(name), "@"), strings.TrimSpace(author)) {
+			allowed = true
+			break
 		}
-		if !allowed {
-			return
-		}
+	}
+	if !allowed {
+		return
 	}
 	issue, err := s.st.FindIssueByKey(ctx, p.ID, key)
 	if err != nil {

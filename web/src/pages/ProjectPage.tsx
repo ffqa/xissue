@@ -1551,7 +1551,7 @@ export default function ProjectPage() {
                       </span>
                     </label>
                     <label className="field" style={{ margin: 0 }}>
-                      仅这些作者（逗号分隔；全局自动开发时必填）
+                      仅这些作者（自动开发时必填，逗号分隔）
                       <input
                         className="sm mono"
                         value={cfgAutoDevelopAuthors}
@@ -1559,7 +1559,7 @@ export default function ProjectPage() {
                         placeholder="alice, bob"
                       />
                       <span className="small dim" style={{ fontSize: 11, marginTop: 2 }}>
-                        GitHub Issue 作者 login；启用全局自动开发时留空会跳过本项目。
+                        GitHub Issue 作者 login；留空时本项目不会自动开发。
                       </span>
                     </label>
                     <label className="field" style={{ margin: 0 }}>

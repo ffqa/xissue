@@ -289,9 +289,11 @@ printf '%s' '[{"number":12,"title":"In the global settings, agents should also b
 	}
 	auto := true
 	labels := domain.DefaultAutoDevelopLabels()
+	authors := []string{"erin"}
 	if _, err := st.UpdateProject(context.Background(), proj.ID, store.ProjectPatch{
-		AutoDevelop:       &auto,
-		AutoDevelopLabels: &labels,
+		AutoDevelop:        &auto,
+		AutoDevelopLabels:  &labels,
+		AutoDevelopAuthors: &authors,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -387,6 +389,52 @@ esac
 	if len(comments) != 1 {
 		t.Fatalf("second sync duplicated comments: %+v", comments)
 	}
+}
+
+func TestProjectAutoDevelopRequiresAuthorAllowlist(t *testing.T) {
+	srv, st, _ := newTestServer(t)
+	proj, err := st.CreateProject(t.Context(), "ProjectAutoAuthors", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(t.Context(), proj.ID, "Crash", "error", []string{"bug"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	auto := true
+	labels := []string{"bug"}
+	if _, err := st.UpdateProject(t.Context(), proj.ID, store.ProjectPatch{AutoDevelop: &auto, AutoDevelopLabels: &labels}); err != nil {
+		t.Fatal(err)
+	}
+	triage := runner.TriageResult{Kind: runner.IssueKindBug, Actionable: true}
+
+	srv.maybeAutoDevelop(t.Context(), proj, issue.Key, "mallory", triage)
+	comments, err := st.ListComments(t.Context(), issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range comments {
+		if strings.Contains(c.Body, "未配置任何 Agent") {
+			t.Fatalf("project auto-develop ran without an author allowlist: %+v", comments)
+		}
+	}
+
+	authors := []string{"carol"}
+	if _, err := st.UpdateProject(t.Context(), proj.ID, store.ProjectPatch{AutoDevelopAuthors: &authors}); err != nil {
+		t.Fatal(err)
+	}
+	proj, err = st.GetProject(t.Context(), proj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.maybeAutoDevelop(t.Context(), proj, issue.Key, "carol", triage)
+	comments, _ = st.ListComments(t.Context(), issue.ID)
+	for _, c := range comments {
+		if strings.Contains(c.Body, "未配置任何 Agent") {
+			return
+		}
+	}
+	t.Fatalf("allowlisted author did not reach the agent gate: %+v", comments)
 }
 
 func TestGlobalAutoDevelopRequiresProjectAuthorAllowlist(t *testing.T) {

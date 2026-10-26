@@ -612,10 +612,8 @@ func CherryPickAndPush(ctx context.Context, mirror, tempDir, newBranch, targetBa
 	return headSHA, subjects, nil
 }
 
-// MergeBranchToTarget merges sourceBranch directly into targetBranch locally or on remote,
-// bypassing PR workflow.
-// If remoteURL is a local directory, it integrates directly into that local repo.
-// Otherwise, it pushes the worktree commits directly to the remote target branch.
+// MergeBranchToTarget merges sourceBranch directly into targetBranch in a local repository.
+// Remote origins must use a PR or an explicit branch push; never write the target branch directly.
 func MergeBranchToTarget(ctx context.Context, wtDir, mirrorPath, remoteURL, sourceBranch, targetBranch, commitMsg string) (headSHA string, err error) {
 	if err := ValidateBranchName(sourceBranch); err != nil {
 		return "", err
@@ -623,70 +621,54 @@ func MergeBranchToTarget(ctx context.Context, wtDir, mirrorPath, remoteURL, sour
 	if err := ValidateBranchName(targetBranch); err != nil {
 		return "", err
 	}
+	if !isLocalDir(remoteURL) {
+		return "", fmt.Errorf("直接合入仅支持本地路径仓库；远程仓库请创建 PR 或仅推送分支")
+	}
 	headSHA, err = Run(ctx, wtDir, "rev-parse", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("rev-parse HEAD: %w", err)
 	}
 
-	// 1. If remoteURL is a local directory (plain / local repo)
-	if isLocalDir(remoteURL) {
-		// First push the source branch to the local directory's repo so it receives the commits.
-		_ = Push(ctx, wtDir, sourceBranch)
+	// First push the source branch to the local directory's repo so it receives the commits.
+	_ = Push(ctx, wtDir, sourceBranch)
 
-		// Check current branch of the local directory.
-		curBranch, err := Run(ctx, remoteURL, "rev-parse", "--abbrev-ref", "HEAD")
-		if err == nil && curBranch == targetBranch {
-			st, _ := Run(ctx, remoteURL, "status", "--porcelain")
-			if strings.TrimSpace(st) == "" {
-				// Clean working tree, directly fast-forward / merge.
-				if _, err := Run(ctx, remoteURL, "merge", "--ff-only", sourceBranch); err != nil {
-					// Fall back to merge commit
-					args := []string{"merge", "-m", fmt.Sprintf("Merge %s into %s", sourceBranch, targetBranch), sourceBranch}
-					if email, _ := Run(ctx, remoteURL, "config", "user.email"); email == "" {
-						args = append([]string{"-c", "user.name=xIssue", "-c", "user.email=xissue@localhost"}, args...)
-					}
-					if out, merr := Run(ctx, remoteURL, args...); merr != nil {
-						_, _ = Run(ctx, remoteURL, "merge", "--abort")
-						return headSHA, fmt.Errorf("合入 %s 失败 (存在冲突或工作区错误): %w, 输出: %s", targetBranch, merr, out)
-					}
+	// Check current branch of the local directory.
+	curBranch, err := Run(ctx, remoteURL, "rev-parse", "--abbrev-ref", "HEAD")
+	if err == nil && curBranch == targetBranch {
+		st, _ := Run(ctx, remoteURL, "status", "--porcelain")
+		if strings.TrimSpace(st) == "" {
+			// Clean working tree, directly fast-forward / merge.
+			if _, err := Run(ctx, remoteURL, "merge", "--ff-only", sourceBranch); err != nil {
+				// Fall back to merge commit
+				args := []string{"merge", "-m", fmt.Sprintf("Merge %s into %s", sourceBranch, targetBranch), sourceBranch}
+				if email, _ := Run(ctx, remoteURL, "config", "user.email"); email == "" {
+					args = append([]string{"-c", "user.name=xIssue", "-c", "user.email=xissue@localhost"}, args...)
 				}
-			} else {
-				// Working tree has uncommitted edits: verify fast-forward ancestor relationship
-				if _, err := Run(ctx, remoteURL, "merge-base", "--is-ancestor", targetBranch, sourceBranch); err != nil {
-					return headSHA, fmt.Errorf("本地工作区有未提交修改且目标分支 %s 含有独立提交，无法直接合入，请先提交或手动处理", targetBranch)
-				}
-				if _, err := Run(ctx, remoteURL, "update-ref", fmt.Sprintf("refs/heads/%s", targetBranch), sourceBranch); err != nil {
-					return headSHA, fmt.Errorf("更新目标分支 %s 引用失败: %w", targetBranch, err)
+				if out, merr := Run(ctx, remoteURL, args...); merr != nil {
+					_, _ = Run(ctx, remoteURL, "merge", "--abort")
+					return headSHA, fmt.Errorf("合入 %s 失败 (存在冲突或工作区错误): %w, 输出: %s", targetBranch, merr, out)
 				}
 			}
 		} else {
-			// Checked out branch is different: verify ancestor before moving branch
+			// Working tree has uncommitted edits: verify fast-forward ancestor relationship
 			if _, err := Run(ctx, remoteURL, "merge-base", "--is-ancestor", targetBranch, sourceBranch); err != nil {
-				return headSHA, fmt.Errorf("目标分支 %s 包含独立提交，无法直接 fast-forward 覆盖，请在本地检出后手动合并", targetBranch)
+				return headSHA, fmt.Errorf("本地工作区有未提交修改且目标分支 %s 含有独立提交，无法直接合入，请先提交或手动处理", targetBranch)
 			}
-			if _, err := Run(ctx, remoteURL, "branch", "-f", targetBranch, sourceBranch); err != nil {
-				return headSHA, fmt.Errorf("更新目标分支 %s 失败: %w", targetBranch, err)
+			if _, err := Run(ctx, remoteURL, "update-ref", fmt.Sprintf("refs/heads/%s", targetBranch), sourceBranch); err != nil {
+				return headSHA, fmt.Errorf("更新目标分支 %s 引用失败: %w", targetBranch, err)
 			}
 		}
-
-		// Also update mirror's ref
-		if mirrorPath != "" {
-			_, _ = Run(ctx, mirrorPath, "fetch", "origin")
+	} else {
+		// Checked out branch is different: verify ancestor before moving branch
+		if _, err := Run(ctx, remoteURL, "merge-base", "--is-ancestor", targetBranch, sourceBranch); err != nil {
+			return headSHA, fmt.Errorf("目标分支 %s 包含独立提交，无法直接 fast-forward 覆盖，请在本地检出后手动合并", targetBranch)
 		}
-		return headSHA, nil
+		if _, err := Run(ctx, remoteURL, "branch", "-f", targetBranch, sourceBranch); err != nil {
+			return headSHA, fmt.Errorf("更新目标分支 %s 失败: %w", targetBranch, err)
+		}
 	}
 
-	// 2. Remote repository (GitHub / GitLab / etc.):
-	// First push source branch so work is preserved on remote.
-	_ = Push(ctx, wtDir, sourceBranch)
-
-	// Attempt to push directly into targetBranch (fast-forward).
-	_, pushErr := Run(ctx, wtDir, "push", "origin", sourceBranch+":"+targetBranch)
-	if pushErr != nil {
-		// If direct push fails (e.g. non-fast-forward), return informative error
-		return headSHA, fmt.Errorf("push to %s: %w", targetBranch, pushErr)
-	}
-
+	// Also update mirror's ref
 	if mirrorPath != "" {
 		_, _ = Run(ctx, mirrorPath, "fetch", "origin")
 	}

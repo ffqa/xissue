@@ -95,6 +95,13 @@ func TestMergeBranchToTargetLocal(t *testing.T) {
 	}
 }
 
+func TestMergeBranchToTargetRejectsRemoteOrigin(t *testing.T) {
+	_, err := MergeBranchToTarget(t.Context(), t.TempDir(), "", "https://example.test/repo.git", "feat", "main", "merge")
+	if err == nil || !strings.Contains(err.Error(), "本地路径仓库") {
+		t.Fatalf("expected remote origin rejection, got %v", err)
+	}
+}
+
 func TestAddWorktreeRestoresExistingRemoteBranch(t *testing.T) {
 	ctx := t.Context()
 	localDir := t.TempDir()

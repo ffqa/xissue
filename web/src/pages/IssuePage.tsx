@@ -33,6 +33,11 @@ import {
   type SubmitResult,
 } from '../types';
 
+function isLocalGitPath(url: string): boolean {
+  const v = url.trim();
+  return v.startsWith('/') || v.startsWith('./') || v.startsWith('../') || /^[a-zA-Z]:[\\/]/.test(v);
+}
+
 export default function IssuePage() {
   const id = Number(useParams().id);
   const qc = useQueryClient();
@@ -53,6 +58,10 @@ export default function IssuePage() {
   const healthQ = useQuery({ queryKey: qk.health, queryFn: api.health, staleTime: Infinity });
 
   const remoteProject = Boolean(project?.runnerId);
+  const projectCanMergeLocal =
+    !remoteProject &&
+    (project?.repos ?? []).length > 0 &&
+    (project?.repos ?? []).every((r) => isLocalGitPath(r.remoteUrl));
   const agentUsable = (a: { available: boolean }) => a.available || remoteProject;
   const runs = runsQ.data ?? [];
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
@@ -559,6 +568,7 @@ export default function IssuePage() {
                   targetBranch={project?.targetBranch}
                   devMode={project?.devMode}
                   autoPrOnConfirm={project?.autoPrOnConfirm}
+                  localProject={projectCanMergeLocal}
                 />
               )}
             </>
@@ -878,6 +888,7 @@ function ReviewPane({
   devMode = 'single_main',
   targetBranch = 'main',
   autoPrOnConfirm = true,
+  localProject = false,
 }: {
   run: Run;
   isRunning: boolean;
@@ -886,6 +897,7 @@ function ReviewPane({
   devMode?: DevMode;
   targetBranch?: string;
   autoPrOnConfirm?: boolean;
+  localProject?: boolean;
 }) {
   const qc = useQueryClient();
   const [theme] = useTheme();
@@ -1031,6 +1043,7 @@ function ReviewPane({
 
   const totalFiles = groups.reduce((n, g) => n + g.files.length, 0);
   const isRemoteRun = Boolean(run.runnerId);
+  const canMergeLocal = !isRemoteRun && localProject;
   const absPath = sel && run.workdir ? `${run.workdir}/${sel.repoName}/${sel.path}` : '';
   const openHref = absPath ? editorUrl(editorTemplate, absPath) : null;
 
@@ -1071,31 +1084,46 @@ function ReviewPane({
           >
             <span className="small muted">模式:</span>
             <code className="mono small" style={{ color: 'var(--accent)' }}>
-              {devMode === 'main_dev' ? `main+dev (PR → ${subTargetBranch || 'dev'})` : '单一 main (本地合入)'}
+              {devMode === 'main_dev'
+                ? `main+dev (PR → ${subTargetBranch || 'dev'})`
+                : canMergeLocal
+                ? '单一 main (本地合入)'
+                : '单一 main (PR)'}
             </code>
           </div>
         )}
         <span className="grow" />
 
         {devMode === 'single_main' ? (
-          <>
+          canMergeLocal ? (
+            <>
+              <button
+                className="primary sm"
+                disabled={totalFiles === 0 || isRunning || submit.isPending}
+                onClick={() => openSubmitModal('merge_local', 'main')}
+                title="改完确认后直接合入本地 main 分支并标记完成"
+              >
+                {submit.isPending ? '合入中…' : '⚡ 确认并合入本地 main'}
+              </button>
+              <button
+                className="sm ghost"
+                disabled={totalFiles === 0 || isRunning || submit.isPending}
+                onClick={() => openSubmitModal('pr', 'main')}
+                title="在远端平台发起 Pull Request 到 main 分支"
+              >
+                提 PR 到 main
+              </button>
+            </>
+          ) : (
             <button
               className="primary sm"
-              disabled={totalFiles === 0 || isRunning || submit.isPending || isRemoteRun}
-              onClick={() => openSubmitModal('merge_local', 'main')}
-              title={isRemoteRun ? '远程 Run 不支持直接合入本地分支，请使用 PR 或仅推送' : '改完确认后直接合入本地 main 分支并标记完成'}
-            >
-              {submit.isPending ? '合入中…' : '⚡ 确认并合入本地 main'}
-            </button>
-            <button
-              className="sm ghost"
               disabled={totalFiles === 0 || isRunning || submit.isPending}
               onClick={() => openSubmitModal('pr', 'main')}
-              title="在远端平台发起 Pull Request 到 main 分支"
+              title="远程仓库不能直接写目标分支；请创建 Pull Request"
             >
-              提 PR 到 main
+              {submit.isPending ? '创建中…' : '🚀 确认并提 PR 到 main'}
             </button>
-          </>
+          )
         ) : (
           <>
             <button
@@ -1307,8 +1335,8 @@ function ReviewPane({
                 <button
                   type="button"
                   className={`sm ${subMode === 'merge_local' ? 'primary' : 'ghost'}`}
-                  disabled={isRemoteRun}
-                  title={isRemoteRun ? '远程 Run 不支持直接合入本地分支' : undefined}
+                  disabled={!canMergeLocal}
+                  title={canMergeLocal ? undefined : '远程仓库不能直接合入目标分支；请创建 PR 或仅推送'}
                   onClick={() => setSubMode('merge_local')}
                 >
                   ⚡ 合入本地分支

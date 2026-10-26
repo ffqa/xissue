@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.31` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.32` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.31`
+- **最新发布版本**: `v0.2.32`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -267,6 +267,12 @@
 - **验证**: `tsc --noEmit` 通过；本地默认 Agent 为 `devin` 的浏览器冒烟显示「创建后立即启动 Agent (devin) 自动执行」。
 - **缓存修正**: 默认 Agent 下拉框是即时保存；现在保存成功后同步写入 `qk.settings` 缓存，避免关闭设置后项目页仍使用旧默认值。v0.2.31 修复。
 
+### 2.27 自动开发作者白名单与本地合并收紧（v0.2.32）
+
+- **自动开发**: 项目级自动预开发也要求配置 `autoDevelopAuthors`；为空时不再对任意作者的远程 Issue 启动 Agent。全局自动开发原有必填规则不变。
+- **本地合并**: `MergeBranchToTarget` 现在只接受本地目录作为 `origin`。远程仓库点击「合入本地分支」会返回明确错误，必须走 PR 或仅推送，避免直接写远程 main/dev。
+- **界面**: 远程仓库的「单一 main」主按钮改为「确认并提 PR 到 main」；提交弹窗中的「合入本地分支」禁用。
+- **测试**: 新增项目级作者白名单测试与远程 origin 拒绝合并测试。
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

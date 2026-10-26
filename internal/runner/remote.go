@@ -200,7 +200,15 @@ func (r *Runner) DispatchRemoteRunEvent(runID int64, event string) {
 
 // ArchiveRemoteRun exports the run archive after completion.
 func (r *Runner) ArchiveRemoteRun(runID int64) {
+	r.archiveMu.Lock()
+	if r.archiveClosed {
+		r.archiveMu.Unlock()
+		return
+	}
+	r.archiveWG.Add(1)
+	r.archiveMu.Unlock()
 	go func() {
+		defer r.archiveWG.Done()
 		_, _ = r.ArchiveRun(context.Background(), runID)
 	}()
 }

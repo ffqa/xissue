@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.28` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.29` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.28`
+- **最新发布版本**: `v0.2.29`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -253,11 +253,12 @@
 - **工具条入口**: 在「📚 知识库」旁边新增「📖 README」按钮，点击后以宽幅弹窗展示当前项目各仓库 README；多仓库时可切换仓库，弹窗内可直接跳转知识库。
 - **组件调整**: `ProjectReadmePanel` 由页面内嵌面板改为 `ProjectReadmeModal`，沿用统一 `Modal` 的 Esc/遮罩关闭与滚动行为。
 
-### 2.25 Homebrew 服务更新重启（v0.2.28）
+### 2.25 Homebrew 服务更新重启与关停收敛（v0.2.29）
 - **现象**: Homebrew 已升级到新版本（`/usr/local/opt/xissue` 指向新 Cellar），但 `xissue update` 后进程仍是旧版本；`/api/status` 的 `version` 与 `pid` 不变。
 - **根因**: `restartServiceIfRunning` 只识别自管 `dev.xissue`，不识别 Homebrew 的 `homebrew.mxcl.xissue`，也不调用 `brew services restart`；`brew upgrade` 只替换磁盘二进制，不会重启服务。
 - **修复**: 更新前先判断当前可执行文件属于 Homebrew；若 `homebrew.mxcl.xissue`（或 Homebrew systemd 服务）正在运行，直接 kickstart / `brew services restart` 对应服务。只重启已在运行的服务，不会把用户手动运行时的停止服务偷偷拉起。
 - **验证**: 新增 `parseBrewServices` 与 `launchdOutputHasPID` 测试；`go test ./cmd/xissue` 通过。
+- **关停收敛**: 远程 Run 完成后归档是异步的；`Runner.Shutdown` 现在等待归档 goroutine 结束，避免测试/重启时数据目录仍被写入。v0.2.28 的 CI 因该清理竞态失败，未发布；修复随 v0.2.29 发布。
 
 ## 3. 核心架构与关键代码索引
 

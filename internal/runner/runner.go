@@ -167,6 +167,9 @@ type Runner struct {
 	stopOnce        sync.Once
 	watchMu         sync.Mutex
 	watchWG         sync.WaitGroup
+	archiveMu       sync.Mutex
+	archiveWG       sync.WaitGroup
+	archiveClosed   bool
 	retentionMu     sync.Mutex
 	modelMu         sync.Mutex
 	modelCache      map[string]cachedAgentModels
@@ -1040,6 +1043,12 @@ func (r *Runner) Shutdown() {
 	// Let watcher children exit before the caller removes the data directory
 	// (also keeps tests and shutdown free of late monitor.log writes).
 	r.watchWG.Wait()
+	// Remote completion archives run asynchronously; wait for them before the
+	// caller closes the store or removes the data directory.
+	r.archiveMu.Lock()
+	r.archiveClosed = true
+	r.archiveMu.Unlock()
+	r.archiveWG.Wait()
 }
 
 // RespondPermission delivers the user's permission decision to a waiting run.

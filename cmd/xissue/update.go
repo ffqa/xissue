@@ -411,6 +411,12 @@ func extractAndInstallBinary(archivePath, targetBin string) error {
 }
 
 func restartServiceIfRunning() {
+	// Homebrew 服务使用独立的 homebrew.mxcl.xissue LaunchAgent/systemd unit。
+	// 旧逻辑只重启 dev.xissue，导致 brew upgrade 后进程仍跑旧二进制。
+	if isHomebrewExecutable() && restartHomebrewServiceIfRunning() {
+		return
+	}
+
 	// 如果旧配置中写死了特定版本 Cellar 物理路径，自动迁移并重启
 	if checkAndMigrateCellarService() {
 		return
@@ -431,4 +437,61 @@ func restartServiceIfRunning() {
 	} else if runtime.GOOS == "linux" {
 		_ = exec.Command("systemctl", "--user", "restart", "xissue.service").Run()
 	}
+}
+
+func isHomebrewExecutable() bool {
+	exe, err := os.Executable()
+	if err != nil {
+		return false
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	return isHomebrewInstall(exe)
+}
+
+// restartHomebrewServiceIfRunning restarts only a service that is already
+// running. Starting a stopped Homebrew service as a side effect of an update
+// would surprise users who run xissue manually.
+func restartHomebrewServiceIfRunning() bool {
+	if runtime.GOOS == "darwin" {
+		for _, label := range []string{"homebrew.mxcl.xissue", "homebrew.mxcl.ffqa.tap.xissue"} {
+			if !launchdServiceRunning(label) {
+				continue
+			}
+			out, err := exec.Command("launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/%s", os.Getuid(), label)).CombinedOutput()
+			if err == nil {
+				fmt.Printf("服务重启结果: %s\n", strings.TrimSpace(string(out)))
+				return true
+			}
+		}
+	}
+	if brewServiceRunning("xissue") {
+		for _, formula := range []string{"ffqa/tap/xissue", "xissue"} {
+			out, err := exec.Command("brew", "services", "restart", formula).CombinedOutput()
+			if err == nil {
+				fmt.Printf("服务重启结果: %s\n", strings.TrimSpace(string(out)))
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func brewServiceRunning(name string) bool {
+	out, err := exec.Command("brew", "services", "list").Output()
+	if err != nil {
+		return false
+	}
+	return parseBrewServices(string(out), name)
+}
+
+func parseBrewServices(out, name string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 2 && fields[0] == name && fields[1] == "started" {
+			return true
+		}
+	}
+	return false
 }

@@ -16,3 +16,12 @@ func TestHasNewListener(t *testing.T) {
 		t.Fatal("no listener must not count as restarted")
 	}
 }
+
+func TestLaunchdOutputHasPID(t *testing.T) {
+	if launchdOutputHasPID("state = running\n\tpid = 123\n") != true {
+		t.Fatal("running launchd job should expose a PID")
+	}
+	if launchdOutputHasPID("state = not running\n") {
+		t.Fatal("stopped launchd job must not count as running")
+	}
+}

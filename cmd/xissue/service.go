@@ -587,3 +587,22 @@ func killPort(port int) {
 	}
 	time.Sleep(200 * time.Millisecond)
 }
+
+// launchdServiceRunning reports whether a LaunchAgent label is loaded and has
+// a live PID. A loaded-but-stopped job has no "pid =" line.
+func launchdServiceRunning(label string) bool {
+	out, err := exec.Command("launchctl", "print", fmt.Sprintf("gui/%d/%s", os.Getuid(), label)).CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return launchdOutputHasPID(string(out))
+}
+
+func launchdOutputHasPID(out string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "pid =") {
+			return true
+		}
+	}
+	return false
+}

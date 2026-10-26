@@ -238,7 +238,6 @@ export default function ProjectPage() {
       ? configuredAgent
       : usableAgents.find((a) => a.name === 'opencode')?.name ||
         usableAgents[0]?.name ||
-        configuredAgent ||
         'opencode';
 
   const refreshProject = () => {

@@ -492,10 +492,12 @@ export function SettingsModal({
                   <select
                     value={defaultAgent}
                     onChange={(e) => {
-                      setDefaultAgent(e.target.value);
-                      void api.patchSettings({ defaultAgent: e.target.value }).catch((err) =>
-                        toast.error(`保存默认 Agent 失败: ${(err as Error).message}`),
-                      );
+                      const next = e.target.value;
+                      setDefaultAgent(next);
+                      void api
+                        .patchSettings({ defaultAgent: next })
+                        .then((updated) => qc.setQueryData(qk.settings, updated))
+                        .catch((err) => toast.error(`保存默认 Agent 失败: ${(err as Error).message}`));
                     }}
                   >
                     <option value="">自动选择（优先 opencode）</option>

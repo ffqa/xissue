@@ -97,20 +97,27 @@ type HookStatus struct {
 	Description string `json:"description"` // 说明
 }
 
+type PluginUIInfo struct {
+	Entry string   `json:"entry"`
+	Title string   `json:"title"`
+	Slots []string `json:"slots"`
+}
+
 type PluginInfo struct {
-	ID          string   `json:"id"`
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	APIVersion  int      `json:"apiVersion"`
-	Description string   `json:"description"`
-	Author      string   `json:"author"`
-	Events      []string `json:"events"`
-	Permissions []string `json:"permissions"`
-	Path        string   `json:"path"`
-	Enabled     bool     `json:"enabled"`
-	HasReadme   bool     `json:"hasReadme"`
-	HasConfig   bool     `json:"hasConfig"`
-	Error       string   `json:"error,omitempty"`
+	ID          string        `json:"id"`
+	Name        string        `json:"name"`
+	Version     string        `json:"version"`
+	APIVersion  int           `json:"apiVersion"`
+	Description string        `json:"description"`
+	Author      string        `json:"author"`
+	Events      []string      `json:"events"`
+	Permissions []string      `json:"permissions"`
+	Path        string        `json:"path"`
+	Enabled     bool          `json:"enabled"`
+	HasReadme   bool          `json:"hasReadme"`
+	HasConfig   bool          `json:"hasConfig"`
+	UI          *PluginUIInfo `json:"ui,omitempty"`
+	Error       string        `json:"error,omitempty"`
 }
 
 type IssueStatus string

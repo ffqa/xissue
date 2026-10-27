@@ -50,6 +50,10 @@ type remoteConn struct {
 	writeMu sync.Mutex
 	pendMu  sync.Mutex
 	pend    map[string]chan remoteCallResult
+
+	agentsMu    sync.RWMutex
+	agents      []remote.AgentCapability
+	agentsKnown bool
 }
 
 type remoteCallResult struct {
@@ -137,11 +141,13 @@ type remotePermission struct {
 
 // RemoteRunnerInfo is returned by GET /api/runners.
 type RemoteRunnerInfo struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Version     string `json:"version"`
-	Online      bool   `json:"online"`
-	ConnectedAt string `json:"connectedAt,omitempty"`
+	ID          string                   `json:"id"`
+	Name        string                   `json:"name"`
+	Version     string                   `json:"version"`
+	Online      bool                     `json:"online"`
+	ConnectedAt string                   `json:"connectedAt,omitempty"`
+	Agents      []remote.AgentCapability `json:"agents,omitempty"`
+	AgentsKnown bool                     `json:"agentsKnown"`
 }
 
 func newRemoteManager(cfg *config.Config, st *store.Store, r *runner.Runner, hub *Hub) *remoteManager {
@@ -174,13 +180,68 @@ func (m *remoteManager) List() []RemoteRunnerInfo {
 	defer m.mu.Unlock()
 	out := make([]RemoteRunnerInfo, 0, len(m.runners))
 	for _, c := range m.runners {
+		agents, known := c.agentsSnapshot()
 		out = append(out, RemoteRunnerInfo{
 			ID: c.id, Name: c.name, Version: c.version, Online: true,
 			ConnectedAt: c.joined.Format(time.RFC3339),
+			Agents:      agents, AgentsKnown: known,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// Agents returns the cached capability list for one runner. known=false means
+// the probe has not completed yet; callers should not reject agents then.
+func (m *remoteManager) Agents(runnerID string) ([]remote.AgentCapability, bool) {
+	c := m.conn(runnerID)
+	if c == nil {
+		return nil, false
+	}
+	return c.agentsSnapshot()
+}
+
+func (c *remoteConn) setAgents(agents []remote.AgentCapability, known bool) {
+	c.agentsMu.Lock()
+	c.agents = append([]remote.AgentCapability(nil), agents...)
+	c.agentsKnown = known
+	c.agentsMu.Unlock()
+}
+
+func (c *remoteConn) agentsSnapshot() ([]remote.AgentCapability, bool) {
+	c.agentsMu.RLock()
+	defer c.agentsMu.RUnlock()
+	return append([]remote.AgentCapability(nil), c.agents...), c.agentsKnown
+}
+
+// probeAgents asks the runner which configured commands resolve on its host.
+// Probes run in the background so a slow filesystem does not delay the job
+// channel; StartRun temporarily allows agents until the probe completes.
+func (m *remoteManager) probeAgents(ctx context.Context, c *remoteConn) {
+	configured := m.cfg.AgentsSnapshot()
+	probes := make([]remote.AgentProbe, 0, len(configured))
+	for name, ac := range configured {
+		command := strings.TrimSpace(ac.Command)
+		if name == "" || command == "" {
+			continue
+		}
+		probes = append(probes, remote.AgentProbe{Name: name, Command: command})
+	}
+	if len(probes) == 0 {
+		c.setAgents(nil, true)
+		return
+	}
+	pctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	raw, err := c.call(pctx, "agents", 0, map[string]any{"agents": probes})
+	if err != nil {
+		return
+	}
+	var res remote.AgentsResult
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return
+	}
+	c.setAgents(res.Agents, true)
 }
 
 func (m *remoteManager) conn(id string) *remoteConn {
@@ -251,6 +312,7 @@ func (m *remoteManager) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err := writeFrame(r.Context(), conn, remote.Frame{Type: "welcome", RunnerID: c.id, Version: strconv.Itoa(remote.Version)}); err != nil {
 		return
 	}
+	go m.probeAgents(r.Context(), c)
 
 	// Detect a silently dead link (NAT timeout, sleeping laptop) without
 	// waiting for the next job write.

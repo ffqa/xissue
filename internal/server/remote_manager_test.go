@@ -581,3 +581,90 @@ func TestRemoteTerminalStatusCannotResurrectDiscardedRun(t *testing.T) {
 		t.Fatalf("late status changed discarded run to %s", got.Status)
 	}
 }
+
+func TestRemoteRunnerAgentCapabilities(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	agentPath := filepath.Join(root, "present-agent.sh")
+	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.DataDir = filepath.Join(root, "server-data")
+	cfg.Monitor.Enabled = false
+	cfg.DefaultAgent = "missing"
+	cfg.Agents = map[string]config.AgentConfig{
+		"present": {Command: agentPath},
+		"missing": {Command: "xissue-agent-that-does-not-exist"},
+	}
+	st, err := store.Open(filepath.Join(root, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	srv := New(cfg, st)
+	defer srv.Shutdown()
+	hs := httptest.NewServer(srv.Handler())
+	defer hs.Close()
+	runnerCtx, stopRunner := context.WithCancel(ctx)
+	defer stopRunner()
+	go func() {
+		_ = remoterunner.Run(runnerCtx, remoterunner.Options{
+			Server: hs.URL, Name: "cap-runner", DataDir: filepath.Join(root, "runner-data"),
+		})
+	}()
+	waitFor(t, 10*time.Second, "runner registration", func() bool {
+		return srv.remote.Online("cap-runner")
+	})
+	waitFor(t, 10*time.Second, "agent capability probe", func() bool {
+		_, known := srv.remote.Agents("cap-runner")
+		return known
+	})
+	agents, known := srv.remote.Agents("cap-runner")
+	if !known {
+		t.Fatal("capabilities not known")
+	}
+	byName := map[string]remote.AgentCapability{}
+	for _, a := range agents {
+		byName[a.Name] = a
+	}
+	if !byName["present"].Available || byName["present"].Path == "" {
+		t.Fatalf("present agent = %+v", byName["present"])
+	}
+	if byName["missing"].Available || byName["missing"].Error == "" {
+		t.Fatalf("missing agent = %+v", byName["missing"])
+	}
+	info := srv.remote.List()
+	if len(info) != 1 || !info[0].AgentsKnown || len(info[0].Agents) != 2 {
+		t.Fatalf("runner info = %+v", info)
+	}
+
+	proj, err := st.CreateProject(ctx, "Caps", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rid := "cap-runner"
+	if _, err := st.UpdateProject(ctx, proj.ID, store.ProjectPatch{RunnerID: &rid}); err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "cap task", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRepo(ctx, domain.Repo{ProjectID: proj.ID, Name: "repo", RemoteURL: t.TempDir(), DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.runner.StartRun(ctx, issue.ID, "missing", "", ""); err == nil || !strings.Contains(err.Error(), "not available on remote runner") {
+		t.Fatalf("StartRun missing agent error = %v", err)
+	}
+	runs, err := st.ListRuns(ctx, issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("failed capability gate created %d runs", len(runs))
+	}
+	if got := srv.runner.AvailableAgentForProject(runner.AgentRoleIssueDevelop, proj); got != "present" {
+		t.Fatalf("AvailableAgentForProject = %q, want present", got)
+	}
+}

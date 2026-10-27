@@ -11,13 +11,14 @@
 - 若配置了 `token`：请求需带 `Authorization: Bearer <token>`，或 Cookie `xissue_token=<token>`。
   访问 `/?token=<token>` 时服务端会写入该 Cookie 并重定向到 `/`。WebSocket 依赖 Cookie，并校验 Origin。
 - `GET /api/fs/browse` / `GET /api/fs/inspect` 无根目录白名单；配置 token 后应视为敏感接口。
-- `GET /api/runners/ws` 供远程执行节点主动拨入；配置 token 时必须带 Bearer，未配置 token 时只允许回环地址，并拒绝带浏览器 `Origin` 的请求。
+- `GET /api/runners/ws` 供远程执行节点主动拨入；配置 token 时必须带 Bearer，未配置 token 时只允许回环地址，并拒绝带浏览器 `Origin` 的请求。连接建立后服务端通过 `agents` RPC 探测该节点的 Agent 命令；`GET /api/runners` 返回 `agents` 与 `agentsKnown`，启动远程 Run 时若已探测完成则拒绝该节点不存在的 Agent。
+- `GET /api/plugins/{id}/ui/{path...}` 提供插件静态 UI；只能访问 `<plugin>/ui/` 下的文件，拒绝 `..` 与符号链接逃逸。
 
 ## 类型
 
 ```ts
 type Provider = "github" | "gitlab" | "gitea" | "plain";
-// github 与 gitea 实现了 Issue/PR API；gitlab 选项目前按 plain Git 处理。
+// github、gitea 与 gitlab 均实现 Issue/PR API。
 
 interface Repo {
   id: number; projectId: number;
@@ -30,6 +31,26 @@ interface Repo {
 }
 
 type DevMode = "single_main" | "main_dev";
+
+interface RemoteAgentCapability {
+  name: string;
+  available: boolean;
+  path?: string;
+  error?: string;
+}
+
+interface RemoteRunnerInfo {
+  id: string; name: string; version: string; online: boolean;
+  connectedAt?: string;
+  agents?: RemoteAgentCapability[];
+  agentsKnown: boolean;    // 探测完成前为 false，服务端此时不会拒绝 Agent
+}
+
+interface PluginUIInfo {
+  entry: string;           // 必须位于 ui/ 下
+  title: string;
+  slots: string[];         // project.page | project.header | issue.page | issue.actions
+}
 
 interface Project {
   id: number; name: string; description: string;

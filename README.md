@@ -98,7 +98,7 @@ chmod +x ~/.local/bin/xissue
 
 ## ✨ 核心特性
 
-- **Git 平台适配**：GitHub 复用本机 `gh`；Gitea/Forgejo 使用 REST API（Issue/评论/标签/PR 创建/合并/关闭/状态同步）。Gitea 连接信息只从环境变量读取：`XISSUE_GITEA_URL`（或 `GITEA_URL`）与 `XISSUE_GITEA_TOKEN`（或 `GITEA_TOKEN` / `GITEA_ACCESS_TOKEN`），Token 不写入数据库或 Web UI，也不会传给 Agent 子进程。PR 列表会展示 CI 汇总徽标；GitLab 暂按 plain Git 处理。
+- **Git 平台适配**：GitHub 复用本机 `gh`；Gitea/Forgejo 与 GitLab 使用 REST API（Issue/评论/标签/PR 或 MR 创建/合并/关闭/状态同步）。连接信息只从环境变量读取：Gitea 用 `XISSUE_GITEA_URL`（或 `GITEA_URL`）与 `XISSUE_GITEA_TOKEN`（或 `GITEA_TOKEN` / `GITEA_ACCESS_TOKEN`）；GitLab 用 `XISSUE_GITLAB_URL`（或 `GITLAB_URL`，如 `https://gitlab.com`）与 `XISSUE_GITLAB_TOKEN`（或 `GITLAB_TOKEN` / `GITLAB_PRIVATE_TOKEN`）。Token 不写入数据库或 Web UI，也不会传给 Agent 子进程。PR/MR 列表会展示 CI 汇总徽标；GitLab 支持嵌套 group/project 路径。
 - **🖥️ 远程执行节点**：项目可把 Run 派发到另一台机器上的 `xissue runner`；节点主动拨出 WebSocket，无需公网入口。远程 Run 支持事件流、权限审批、会话续跑、Diff 编辑、提交/提 PR，服务端负责状态与 PR 编排。
 - **单仓 / 多仓统一模型**：一个 Project 包含 `1..N` 个 Git 仓库。每次 Run 为各仓库从本地 bare mirror 创建独立 `git worktree` 放在同一父目录下，Agent 可跨仓库修改；提交时按仓库分别 commit / push / 提 PR。
 - **精简四列拖拽流转看板**：
@@ -131,6 +131,7 @@ chmod +x ~/.local/bin/xissue
   - **🅱️ 项目级 Hooks 脚本 (Layer 2)**：在代码库根目录放置 `.xissue/hooks/on-pr-comment` 或 `on-pr-review` 脚本，接收 stdin JSON 上下文并自由定制私有流转逻辑（*注：本项目 Hook 仅对以本地目录添加的仓库生效；远程镜像仓库及 `pr_merged` 事件不执行仓库内脚本，避免外部合并触发本地代码执行。`branch_push` 仅本地仓库执行，且受自动化规则作者门控*）；
   - **🅲️ 规范化生态插件 (Layer 3)**：`xissue plugin install <name>` 从官方目录安装，或直接从 GitHub 仓库安装带 `plugin.yaml` v1 清单的插件；支持 `branch_push`、`pr_*`、`issue_*`、`run_*` 等生命周期事件。模板与插件目录见 <https://github.com/ffqa/xissue-plugin-template> 与 <https://github.com/ffqa/xissue-plugins>。
   - **🧩 全局插件管理**：顶栏「插件」可即时启用/停用、预览 README、生成/编辑 `config.json`；停用后不再接收任何事件。
+  - **🪟 插件 UI（沙箱 iframe + 插槽）**：`plugin.yaml` 可声明 `ui.entry`（必须位于 `ui/` 下）、`ui.title` 与 `ui.slots`。插件页面挂在 `/plugins/<id>`；`project.header`、`project.page`、`issue.actions`、`issue.page` 插槽可把同一 UI 嵌入宿主页面。iframe 不带 `allow-same-origin`，只通过 `postMessage` 的 `context/notify/open/reload/resize` 小桥通信；示例见 [`examples/plugin-ui`](examples/plugin-ui)。
 - **内置审查与暗色/亮色主题切换**：
   - Web UI 内嵌本地打包的 Monaco DiffEditor，支持行内编辑保存、一键跳回 VSCode/Cursor。
 

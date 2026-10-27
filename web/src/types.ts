@@ -57,12 +57,21 @@ export interface Project {
   updatedAt: string;
 }
 
+export interface RemoteAgentCapability {
+  name: string;
+  available: boolean;
+  path?: string;
+  error?: string;
+}
+
 export interface RemoteRunnerInfo {
   id: string;
   name: string;
   version: string;
   online: boolean;
   connectedAt?: string;
+  agents?: RemoteAgentCapability[];
+  agentsKnown: boolean;
 }
 
 export interface RuleConditions {
@@ -101,6 +110,12 @@ export interface HookStatus {
   description: string;
 }
 
+export interface PluginUIInfo {
+  entry: string;
+  title: string;
+  slots: string[];
+}
+
 export interface PluginInfo {
   id: string;
   name: string;
@@ -114,6 +129,7 @@ export interface PluginInfo {
   enabled: boolean;
   hasReadme: boolean;
   hasConfig: boolean;
+  ui?: PluginUIInfo;
   error?: string;
 }
 

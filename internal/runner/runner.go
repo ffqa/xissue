@@ -767,6 +767,13 @@ func (r *Runner) startRun(ctx context.Context, issueID int64, agentName, modelNa
 		return nil, fmt.Errorf("%w: %s", ErrRemoteRunnerOffline, proj.RunnerID)
 	}
 	if remoteRun {
+		if agents, known := remoteExec.Agents(proj.RunnerID); known {
+			if !remoteAgentAvailable(agents, agentName) {
+				return nil, fmt.Errorf("agent %q is not available on remote runner %s%s", agentName, proj.RunnerID, remoteAgentList(agents))
+			}
+		}
+	}
+	if remoteRun {
 		if r.issueHasActiveRunAny(ctx, issueID) {
 			return nil, errors.New("this issue already has an active run in progress")
 		}

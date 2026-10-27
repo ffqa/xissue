@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { Markdown, Modal } from './common';
@@ -152,6 +153,17 @@ export function PluginManagerModal({ onClose }: { onClose: () => void }) {
                     {selected.enabled ? '● 已启用' : '○ 已停用'}
                   </span>
                   <span className="grow" />
+                  {selected.ui && (
+                    <Link
+                      to={`/plugins/${selected.id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="sm ghost"
+                      title="在新标签页打开插件 UI"
+                    >
+                      🪟 打开插件页面
+                    </Link>
+                  )}
                   <button
                     type="button"
                     className={`sm ${selected.enabled ? 'danger' : 'primary'}`}
@@ -168,6 +180,11 @@ export function PluginManagerModal({ onClose }: { onClose: () => void }) {
                   {selected.author && <span>作者：{selected.author}</span>}
                   <span>事件：{selected.events.join(', ')}</span>
                   <span>权限：{selected.permissions.join(', ') || '无'}</span>
+                  {selected.ui && (
+                    <span>
+                      UI：{selected.ui.entry} · 插槽：{selected.ui.slots.join(', ') || '仅独立页面'}
+                    </span>
+                  )}
                 </div>
                 {selected.error && (
                   <div className="panel" style={{ color: 'var(--red)', fontSize: 12 }}>

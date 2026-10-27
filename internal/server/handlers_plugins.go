@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/xpier/xissue/internal/automation"
@@ -92,4 +93,36 @@ func (s *Server) handlePluginConfig(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", "GET, PUT")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handlePluginUI serves a plugin's static UI. The iframe is sandboxed by the
+// frontend; this handler additionally prevents traversal outside <plugin>/ui.
+func (s *Server) handlePluginUI(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" || id == "." || id == ".." || strings.ContainsAny(id, `/\`) {
+		writeErr(w, http.StatusBadRequest, errors.New("invalid plugin id"))
+		return
+	}
+	pluginDir := filepath.Join(s.cfg.PluginsDir(), id)
+	manifest, _, err := automation.LoadPluginManifest(pluginDir)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, errors.New("plugin not found or invalid"))
+		return
+	}
+	if manifest.UI == nil {
+		writeErr(w, http.StatusNotFound, errors.New("plugin has no ui"))
+		return
+	}
+	rel := strings.TrimSpace(r.PathValue("path"))
+	if rel == "" {
+		rel = strings.TrimPrefix(manifest.UI.Entry, "ui/")
+	}
+	target, err := automation.ResolvePluginUIFile(pluginDir, rel)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, errors.New("ui asset not found"))
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	http.ServeFile(w, r, target)
 }

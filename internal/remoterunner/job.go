@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/gitx"
 	"github.com/xpier/xissue/internal/remote"
+	"github.com/xpier/xissue/internal/runner"
 )
 
 type job struct {
@@ -189,6 +191,15 @@ func safeJoin(root, name string) (string, error) {
 }
 
 func (r *Runner) rpc(ctx context.Context, f remote.Frame) (any, error) {
+	if f.Method == "agents" {
+		var p struct {
+			Agents []remote.AgentProbe `json:"agents"`
+		}
+		if err := json.Unmarshal(f.Params, &p); err != nil {
+			return nil, err
+		}
+		return r.probeAgents(p.Agents), nil
+	}
 	if f.Method == "cleanup" {
 		var p struct {
 			Workdir string `json:"workdir"`
@@ -435,4 +446,36 @@ func (r *Runner) cleanupPath(ctx context.Context, workdir string) error {
 		_, _ = gitx.Run(ctx, mirror, "worktree", "prune")
 	}
 	return nil
+}
+
+// probeAgents resolves every configured command on this host. The server uses
+// the result to offer only agents that actually exist on the selected runner.
+func (r *Runner) probeAgents(probes []remote.AgentProbe) remote.AgentsResult {
+	out := remote.AgentsResult{Agents: make([]remote.AgentCapability, 0, len(probes))}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, probe := range probes {
+		probe := probe
+		if strings.TrimSpace(probe.Name) == "" || strings.TrimSpace(probe.Command) == "" {
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			item := remote.AgentCapability{Name: probe.Name}
+			path, err := runner.LookupAgentBinary(probe.Command)
+			if err != nil {
+				item.Error = err.Error()
+			} else {
+				item.Available = true
+				item.Path = path
+			}
+			mu.Lock()
+			out.Agents = append(out.Agents, item)
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	sort.Slice(out.Agents, func(i, j int) bool { return out.Agents[i].Name < out.Agents[j].Name })
+	return out
 }

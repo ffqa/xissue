@@ -5,7 +5,7 @@ PORT     ?= 7789
 DATA_DIR := $(HOME)/.xissue
 LOG_FILE := $(DATA_DIR)/xissue.log
 
-.PHONY: help build all web server deploy run dev stop restart status logs test clean \
+.PHONY: help build all web web-test server deploy run dev stop restart status logs test clean \
         install-service uninstall-service service-status service-restart brew-publish
 
 help: ## 显示此帮助菜单（默认）
@@ -17,12 +17,15 @@ help: ## 显示此帮助菜单（默认）
 
 all: build ## 同 build：完整构建前端与后端单文件二进制
 
-build: web server ## 完整构建前端静态资源并内嵌打包为 bin/xissue
+build: web-test web server ## 完整构建前端静态资源并内嵌打包为 bin/xissue
 
 web: ## 仅类型检查并构建前端 (web -> internal/server/dist)
 	./web/node_modules/.bin/tsc -p web/tsconfig.json --noEmit
 	./web/node_modules/.bin/vite build web
 	@mkdir -p internal/server/dist && touch internal/server/dist/.gitkeep
+
+web-test: ## 运行前端纯逻辑单元测试 (Vitest)
+	./web/node_modules/.bin/vitest run --root web
 
 server: ## 仅编译 Go 后端二进制 (bin/xissue，使用已构建的前端产物)
 	go build -o $(BINARY) ./cmd/xissue

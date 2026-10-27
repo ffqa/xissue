@@ -194,6 +194,9 @@ func CheckPRStatus(ctx context.Context, prURL string) (state string, title strin
 	if _, _, _, _, ok := giteaPRFromURL(prURL); ok {
 		return giteaCheckPRStatus(ctx, prURL)
 	}
+	if _, _, _, ok := gitlabPRFromURL(prURL); ok {
+		return gitlabCheckPRStatus(ctx, prURL)
+	}
 	b, err := gh(ctx, "pr", "view", prURL, "--json", "state,mergedAt,title")
 	if err != nil {
 		return "", "", err
@@ -225,6 +228,9 @@ func GetPRDetails(ctx context.Context, prURL string) (*PRDetailInfo, error) {
 	}
 	if _, _, _, _, ok := giteaPRFromURL(prURL); ok {
 		return giteaPRDetails(ctx, prURL)
+	}
+	if _, _, _, ok := gitlabPRFromURL(prURL); ok {
+		return gitlabPRDetails(ctx, prURL)
 	}
 	b, err := gh(ctx, "pr", "view", prURL, "--json", "number,title,state,mergedAt,url,headRefName,headRefOid,baseRefName,author,comments,latestReviews,statusCheckRollup")
 	if err != nil {

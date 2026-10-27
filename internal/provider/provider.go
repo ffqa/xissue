@@ -115,8 +115,9 @@ func For(p domain.Provider) Provider {
 		return github{}
 	case domain.ProviderGitea:
 		return gitea{}
+	case domain.ProviderGitLab:
+		return gitlab{}
 	default:
-		// gitlab adapter lands in M2; until then it behaves like plain git.
 		return plain{}
 	}
 }

@@ -2,6 +2,9 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
+import { PluginSlot } from '../components/PluginFrame';
+import { availableRemoteAgentNames } from '../logic/agents';
+import { isLocalGitPath } from '../logic/repos';
 import {
   Crumbs,
   editorUrl,
@@ -33,11 +36,6 @@ import {
   type SubmitResult,
 } from '../types';
 
-function isLocalGitPath(url: string): boolean {
-  const v = url.trim();
-  return v.startsWith('/') || v.startsWith('./') || v.startsWith('../') || /^[a-zA-Z]:[\\/]/.test(v);
-}
-
 export default function IssuePage() {
   const id = Number(useParams().id);
   const qc = useQueryClient();
@@ -55,14 +53,25 @@ export default function IssuePage() {
   const commentsQ = useQuery({ queryKey: qk.comments(id), queryFn: () => api.comments(id) });
   const runsQ = useQuery({ queryKey: qk.runs(id), queryFn: () => api.runs(id) });
   const agentsQ = useQuery({ queryKey: qk.agents, queryFn: api.agents });
+  const runnersQ = useQuery({ queryKey: qk.runners, queryFn: api.runners, refetchInterval: 15000 });
   const healthQ = useQuery({ queryKey: qk.health, queryFn: api.health, staleTime: Infinity });
 
   const remoteProject = Boolean(project?.runnerId);
+  const remoteRunner = (runnersQ.data?.runners ?? []).find((r) => r.id === project?.runnerId);
+  const remoteAgentNames = availableRemoteAgentNames(remoteRunner?.agents);
   const projectCanMergeLocal =
     !remoteProject &&
     (project?.repos ?? []).length > 0 &&
     (project?.repos ?? []).every((r) => isLocalGitPath(r.remoteUrl));
-  const agentUsable = (a: { available: boolean }) => a.available || remoteProject;
+  const agentUsable = (a: { name: string; available: boolean }) =>
+    remoteProject ? (remoteRunner?.agentsKnown ? remoteAgentNames.has(a.name) : true) : a.available;
+  const agentHint = (a: { name: string; available: boolean }) => {
+    if (remoteProject) {
+      if (!remoteRunner?.agentsKnown) return ' - 远程节点探测中';
+      return remoteAgentNames.has(a.name) ? ' - 远程可用' : ' - 远程未找到';
+    }
+    return a.available ? '' : ' - 未安装';
+  };
   const runs = runsQ.data ?? [];
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
 
@@ -284,6 +293,12 @@ export default function IssuePage() {
         <span>/</span>
         <span className="mono">{issue?.key ?? `#${id}`}</span>
       </Crumbs>
+
+      <PluginSlot
+        name="issue.actions"
+        context={{ issueId: id, issueKey: issue?.key, status: issue?.status, projectId: issue?.projectId }}
+        height={160}
+      />
 
       <div className="issue-layout">
         {/* 左侧：Issue 信息与评论 */}
@@ -608,7 +623,7 @@ export default function IssuePage() {
               {(agentsQ.data ?? []).map((a) => (
                 <option key={a.name} value={a.name} disabled={!agentUsable(a)}>
                   {a.name} ({a.command}){a.defaultModel ? ` · 默认: ${a.defaultModel}` : ''}
-                  {a.available ? '' : remoteProject ? ' - 本机未安装，将在远程执行' : ' - 未安装'}
+                  {agentHint(a)}
                 </option>
               ))}
             </select>
@@ -874,6 +889,12 @@ export default function IssuePage() {
           />
         </Suspense>
       )}
+
+      <PluginSlot
+        name="issue.page"
+        context={{ issueId: id, issueKey: issue?.key, status: issue?.status, projectId: issue?.projectId }}
+        height={280}
+      />
     </div>
   );
 }
@@ -1449,6 +1470,7 @@ function ReviewPane({
           </div>
         </Modal>
       )}
+
     </div>
   );
 }

@@ -49,6 +49,10 @@ jobs:
           pnpm install --no-frozen-lockfile
           pnpm build
 
+      - name: Run Frontend Tests
+        working-directory: web
+        run: pnpm test
+
       - name: Run Go Tests
         run: go test -race ./...
 

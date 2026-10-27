@@ -4,7 +4,13 @@
   "title": "xIssue plugin manifest v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["apiVersion", "name", "version", "entrypoint", "events"],
+  "required": [
+    "apiVersion",
+    "name",
+    "version",
+    "entrypoint",
+    "events"
+  ],
   "properties": {
     "apiVersion": {
       "const": 1,
@@ -57,13 +63,51 @@
       "type": "array",
       "uniqueItems": true,
       "items": {
-        "enum": ["repo:read", "repo:write", "network", "notify", "process"]
+        "enum": [
+          "repo:read",
+          "repo:write",
+          "network",
+          "notify",
+          "process"
+        ]
       },
       "description": "Informational declarations shown in the UI. Not an OS sandbox."
     },
     "enabled": {
       "type": "boolean",
       "default": true
+    },
+    "ui": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entry"
+      ],
+      "description": "Optional sandboxed web UI served from <plugin>/ui.",
+      "properties": {
+        "entry": {
+          "type": "string",
+          "pattern": "^ui/(?!.*\\.\\.).+$",
+          "description": "HTML entry under ui/."
+        },
+        "title": {
+          "type": "string",
+          "description": "Display title; defaults to the plugin name."
+        },
+        "slots": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "project.page",
+              "project.header",
+              "issue.page",
+              "issue.actions"
+            ]
+          },
+          "description": "Host slots that mount the UI. Empty means full page only."
+        }
+      }
     }
   }
 }

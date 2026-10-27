@@ -17,6 +17,7 @@ import { fmtTime } from './components/common';
 import ProjectsPage from './pages/ProjectsPage';
 import ProjectPage from './pages/ProjectPage';
 import IssuePage from './pages/IssuePage';
+import PluginPage from './pages/PluginPage';
 
 
 function NotificationBell({ onOpenSettings }: { onOpenSettings: () => void }) {
@@ -358,6 +359,7 @@ export default function App() {
           <Route path="/projects/:id/commits" element={<LegacyProjectViewRedirect kind="commits" />} />
           <Route path="/projects/:id/prs" element={<LegacyProjectViewRedirect kind="prs" />} />
           <Route path="/issues/:id" element={<IssuePage />} />
+          <Route path="/plugins/:id" element={<PluginPage />} />
           <Route path="*" element={<div className="page empty">页面不存在</div>} />
         </Routes>
       </main>

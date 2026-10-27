@@ -83,6 +83,25 @@ type PermissionRequest struct {
 // PermissionOption is re-exported here to keep the JSON shape explicit.
 type PermissionOption = acp.PermissionOption
 
+// AgentProbe asks a remote runner to resolve a configured agent command.
+type AgentProbe struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+}
+
+// AgentCapability is one remote agent probe result.
+type AgentCapability struct {
+	Name      string `json:"name"`
+	Available bool   `json:"available"`
+	Path      string `json:"path,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+// AgentsResult is the response to the "agents" RPC.
+type AgentsResult struct {
+	Agents []AgentCapability `json:"agents"`
+}
+
 // RPCRequest is a server -> runner workspace request.
 type RPCRequest struct {
 	Method string          `json:"method"`

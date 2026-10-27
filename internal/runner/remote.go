@@ -23,6 +23,9 @@ var ErrRemoteRunnerOffline = errors.New("remote runner is offline")
 // uses it to route operations for projects that selected a remote runner.
 type RemoteExecutor interface {
 	Online(runnerID string) bool
+	// Agents returns the runner's cached agent capability list. known=false
+	// means probing has not finished, so callers must not reject an agent.
+	Agents(runnerID string) ([]remote.AgentCapability, bool)
 	Start(ctx context.Context, job remote.Job) error
 	Send(ctx context.Context, job remote.Job) error
 	Cancel(runID int64) error
@@ -413,4 +416,29 @@ func (r *Runner) UpdateRemoteWorkspace(runID int64, workdir, sessionID string) {
 	if u, err := r.st.UpdateRun(context.Background(), runID, upd); err == nil && r.notify != nil {
 		r.notify.BroadcastRunUpdated(u)
 	}
+}
+
+// remoteAgentAvailable reports whether an agent was found on a remote runner.
+func remoteAgentAvailable(agents []remote.AgentCapability, name string) bool {
+	name = strings.TrimSpace(name)
+	for _, a := range agents {
+		if a.Name == name && a.Available {
+			return true
+		}
+	}
+	return false
+}
+
+// remoteAgentList renders the available agents for an actionable error.
+func remoteAgentList(agents []remote.AgentCapability) string {
+	names := make([]string, 0, len(agents))
+	for _, a := range agents {
+		if a.Available {
+			names = append(names, a.Name)
+		}
+	}
+	if len(names) == 0 {
+		return " (no configured agent binary was found there)"
+	}
+	return " (available: " + strings.Join(names, ", ") + ")"
 }

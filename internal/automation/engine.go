@@ -398,6 +398,13 @@ func (e *Engine) ListPlugins() []domain.PluginInfo {
 			pluginFileExists(pluginDir, "readme.md") ||
 			pluginFileExists(pluginDir, "README.markdown")
 		info.HasConfig = pluginFileExists(pluginDir, PluginConfigFile)
+		if manifest.UI != nil {
+			info.UI = &domain.PluginUIInfo{
+				Entry: manifest.UI.Entry,
+				Title: manifest.UI.Title,
+				Slots: append([]string(nil), manifest.UI.Slots...),
+			}
+		}
 		out = append(out, info)
 	}
 	return out

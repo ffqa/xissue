@@ -58,17 +58,44 @@ var knownPluginPermissions = map[string]struct{}{
 
 var pluginNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
+// PluginUI declares an optional sandboxed web UI hosted in a plugin page or
+// one of the host slots. Entry must live under the plugin's ui/ directory.
+type PluginUI struct {
+	Entry string   `yaml:"entry" json:"entry"`
+	Title string   `yaml:"title" json:"title"`
+	Slots []string `yaml:"slots" json:"slots"`
+}
+
 // PluginManifest is the v1 plugin.yaml contract.
 type PluginManifest struct {
-	APIVersion  int      `yaml:"apiVersion" json:"apiVersion"`
-	Name        string   `yaml:"name" json:"name"`
-	Version     string   `yaml:"version" json:"version"`
-	Description string   `yaml:"description" json:"description"`
-	Author      string   `yaml:"author" json:"author"`
-	Entrypoint  string   `yaml:"entrypoint" json:"entrypoint"`
-	Events      []string `yaml:"events" json:"events"`
-	Permissions []string `yaml:"permissions" json:"permissions"`
-	Enabled     *bool    `yaml:"enabled" json:"enabled"`
+	APIVersion  int       `yaml:"apiVersion" json:"apiVersion"`
+	Name        string    `yaml:"name" json:"name"`
+	Version     string    `yaml:"version" json:"version"`
+	Description string    `yaml:"description" json:"description"`
+	Author      string    `yaml:"author" json:"author"`
+	Entrypoint  string    `yaml:"entrypoint" json:"entrypoint"`
+	Events      []string  `yaml:"events" json:"events"`
+	Permissions []string  `yaml:"permissions" json:"permissions"`
+	Enabled     *bool     `yaml:"enabled" json:"enabled"`
+	UI          *PluginUI `yaml:"ui,omitempty" json:"ui,omitempty"`
+}
+
+// Supported host slots for sandboxed plugin UI. The frontend renders the same
+// names; unknown slots are rejected at manifest load time.
+var knownPluginUISlots = map[string]struct{}{
+	"project.page":   {},
+	"project.header": {},
+	"issue.page":     {},
+	"issue.actions":  {},
+}
+
+func KnownPluginUISlots() []string {
+	out := make([]string, 0, len(knownPluginUISlots))
+	for name := range knownPluginUISlots {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // KnownPluginEvents returns the supported event names in stable order.
@@ -167,7 +194,87 @@ func ValidatePluginManifest(dir string, m *PluginManifest) error {
 	if len(m.Permissions) == 0 {
 		m.Permissions = []string{}
 	}
+	if err := validatePluginUI(dir, m); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validatePluginUI(dir string, m *PluginManifest) error {
+	ui := m.UI
+	if ui == nil {
+		return nil
+	}
+	ui.Entry = strings.TrimSpace(filepath.ToSlash(ui.Entry))
+	if ui.Entry == "" {
+		return errors.New("ui.entry is required when ui is declared")
+	}
+	if filepath.IsAbs(ui.Entry) || strings.Contains(ui.Entry, "..") || !strings.HasPrefix(ui.Entry, "ui/") {
+		return fmt.Errorf("invalid ui.entry %q (must be a relative path under ui/)", ui.Entry)
+	}
+	target, err := securePluginPath(dir, ui.Entry)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(target)
+	if err != nil || info.IsDir() {
+		return fmt.Errorf("ui.entry %q not found", ui.Entry)
+	}
+	ui.Title = strings.TrimSpace(ui.Title)
+	if ui.Title == "" {
+		ui.Title = m.Name
+	}
+	seen := map[string]bool{}
+	slots := make([]string, 0, len(ui.Slots))
+	for _, slot := range ui.Slots {
+		slot = strings.TrimSpace(slot)
+		if slot == "" || seen[slot] {
+			continue
+		}
+		if _, ok := knownPluginUISlots[slot]; !ok {
+			return fmt.Errorf("unknown ui slot %q (known: %s)", slot, strings.Join(KnownPluginUISlots(), ", "))
+		}
+		seen[slot] = true
+		slots = append(slots, slot)
+	}
+	ui.Slots = slots
+	return nil
+}
+
+// ResolvePluginUIFile resolves a request path below <plugin>/ui and rejects
+// traversal and symlink escapes. The returned path must exist.
+func ResolvePluginUIFile(dir, rel string) (string, error) {
+	base, err := filepath.Abs(filepath.Join(dir, "ui"))
+	if err != nil {
+		return "", err
+	}
+	rel = filepath.FromSlash(strings.TrimPrefix(strings.TrimSpace(rel), "/"))
+	target, err := filepath.Abs(filepath.Join(base, rel))
+	if err != nil {
+		return "", err
+	}
+	if target != base && !strings.HasPrefix(target, base+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes plugin ui directory", rel)
+	}
+	realBase, err := filepath.EvalSymlinks(base)
+	if err != nil {
+		return "", err
+	}
+	realTarget, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", err
+	}
+	if realTarget != realBase && !strings.HasPrefix(realTarget, realBase+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes plugin ui directory via symlink", rel)
+	}
+	info, err := os.Stat(realTarget)
+	if err != nil {
+		return "", err
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("path %q is a directory", rel)
+	}
+	return realTarget, nil
 }
 
 // securePluginPath resolves a relative path and rejects symlink escapes.

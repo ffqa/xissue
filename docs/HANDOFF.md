@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.33` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.34` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.33`
+- **最新发布版本**: `v0.2.34`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -273,7 +273,15 @@
 - **本地合并**: `MergeBranchToTarget` 现在只接受本地目录作为 `origin`。远程仓库点击「合入本地分支」会返回明确错误，必须走 PR 或仅推送，避免直接写远程 main/dev。
 - **界面**: 远程仓库的「单一 main」主按钮改为「确认并提 PR 到 main」；提交弹窗中的「合入本地分支」禁用。
 - **测试**: 新增项目级作者白名单测试与远程 origin 拒绝合并测试。
-- **平台范围**: 本地合并判断基于 `origin` 是否为本地目录，因此 GitHub、GitLab、Gitea/Forgejo、自建 Git 都一视同仁。PR 能力仍按 Provider：GitHub/Gitea 可用；GitLab 目前没有 API 适配，选择 PR 会直接报错，不再静默标记完成。
+- **平台范围**: 本地合并判断基于 `origin` 是否为本地目录，因此 GitHub、GitLab、Gitea/Forgejo、自建 Git 都一视同仁。PR 能力按 Provider：GitHub/Gitea/GitLab 均可用（GitLab 在 v0.2.34 接入）。
+### 2.28 GitLab 适配、远程 Agent 能力、前端测试与插件 UI（v0.2.34）
+
+- **GitLab v4 Provider**：新增 `internal/provider/gitlab.go`，支持 Issues（列表/创建/标签/评论/仓库级评论同步）、Merge Requests（列表/创建/合并/关闭/按 URL 查询状态与详情）、CI 状态汇总与审批记录。连接信息只读环境变量：`XISSUE_GITLAB_URL` / `XISSUE_GITLAB_TOKEN`（兼容 `GITLAB_URL`、`GITLAB_TOKEN`、`GITLAB_PRIVATE_TOKEN`）；支持嵌套 `group/subgroup/project` 路径，URL 主机不匹配时不会发送 Token。`CheckPRStatus` / `GetPRDetails` 会优先识别 Gitea，再识别 GitLab，最后回退 GitHub CLI。
+- **远程 Agent 能力探测**：远程 Runner 连接后，服务端通过新增的 `agents` RPC 让节点解析所有已配置 Agent 的 `command`；结果缓存在 `GET /api/runners` 的 `agents` / `agentsKnown` 中。探测完成后，`StartRun` 会拒绝节点上不存在的 Agent 并返回可用列表；`AvailableAgentForProject` 会优先从远程可用列表选择。项目页与 Issue 页只展示远程实际可用的 Agent，探测完成前保持宽松，避免阻塞启动。
+- **前端测试**：引入 Vitest（`web/vitest.config.ts`），把默认 Agent 选择、远程 Agent 过滤、本地 Git 路径判断与插件 URL/插槽筛选抽到 `web/src/logic/` 并覆盖 24 个用例；`make build` 会先跑 `web-test`，GitHub Release 工作流在 Go 测试前执行 `pnpm test`。
+- **插件 UI（沙箱 iframe + 插槽）**：`plugin.yaml` 新增可选 `ui.entry`（必须位于 `ui/`）、`ui.title`、`ui.slots`；后端校验路径/槽位并通过 `GET /api/plugins/{id}/ui/{path...}` 只读提供 `<plugin>/ui/` 静态资源（拒绝 `..` 与符号链接逃逸）。前端新增 `/plugins/:id` 页面、`project.header` / `project.page` / `issue.actions` / `issue.page` 槽位与 `PluginFrame`；iframe 不含 `allow-same-origin`，只能通过 `postMessage` 的 `context/notify/open/reload/resize` 通信。示例见 `examples/plugin-ui`。
+- **验证**：`go test -race ./...`、`go vet ./...`、`tsc --noEmit`、`vitest run` 全部通过；本地以临时 HOME/DataDir 启动服务，真实 Chromium 验证插件独立页、`project.page` 插槽、通知与加高消息桥均生效。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

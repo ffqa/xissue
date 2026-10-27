@@ -136,7 +136,23 @@ func (r *Runner) AgentForRoleOrDefault(role AgentRole) string {
 // must not require the agent binary on the server host.
 func (r *Runner) AvailableAgentForProject(role AgentRole, proj *domain.Project) string {
 	if proj != nil && strings.TrimSpace(proj.RunnerID) != "" {
-		return r.AgentForRoleOrDefault(role)
+		preferred := r.AgentForRoleOrDefault(role)
+		if r.remote != nil {
+			if agents, known := r.remote.Agents(proj.RunnerID); known {
+				for _, a := range agents {
+					if a.Name == preferred && a.Available {
+						return a.Name
+					}
+				}
+				for _, a := range agents {
+					if a.Available {
+						return a.Name
+					}
+				}
+				return ""
+			}
+		}
+		return preferred
 	}
 	return r.AvailableAgentForRole(role)
 }

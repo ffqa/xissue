@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
+import { PluginSlot } from '../components/PluginFrame';
+import { availableRemoteAgentNames, filterRemoteCapable, pickDefaultAgent } from '../logic/agents';
 import { Crumbs, fmtTime, Modal } from '../components/common';
 import { LocalDirPickerModal } from '../components/LocalDirPicker';
 import { CherryPickModal } from '../components/CherryPickModal';
@@ -232,13 +234,12 @@ export default function ProjectPage() {
   // The global default agent is authoritative. Only fall back to opencode (or
   // the first usable agent) when it is unset or unavailable on this node.
   const configuredAgent = settingsQ.data?.defaultAgent?.trim() ?? '';
-  const usableAgents = (agentsQ.data ?? []).filter((a) => remoteProject || a.available);
-  const defaultAgent =
-    configuredAgent && (usableAgents.length === 0 || usableAgents.some((a) => a.name === configuredAgent))
-      ? configuredAgent
-      : usableAgents.find((a) => a.name === 'opencode')?.name ||
-        usableAgents[0]?.name ||
-        'opencode';
+  const remoteRunner = (runnersQ.data?.runners ?? []).find((r) => r.id === project.data?.runnerId);
+  const remoteAgentNames = availableRemoteAgentNames(remoteRunner?.agents);
+  const usableAgents = remoteProject
+    ? filterRemoteCapable(agentsQ.data ?? [], remoteRunner?.agents, Boolean(remoteRunner?.agentsKnown))
+    : (agentsQ.data ?? []).filter((a) => a.available);
+  const defaultAgent = pickDefaultAgent(configuredAgent, usableAgents);
 
   const refreshProject = () => {
     qc.invalidateQueries({ queryKey: qk.project(id) });
@@ -630,6 +631,11 @@ export default function ProjectPage() {
         </button>
 
       </div>
+
+      <PluginSlot
+        name="project.header"
+        context={{ projectId: id, projectName: p?.name, runnerId: p?.runnerId }}
+      />
 
       {/* 仓库与分支监控双栏面板 */}
       <div
@@ -1435,6 +1441,12 @@ export default function ProjectPage() {
                 </select>
                 <span className="small dim">
                   选择已连接的远程 Runner 后，本项目的新 Run 会在该节点执行；离线 Runner 无法启动。
+                  {remoteProject && remoteRunner?.agentsKnown && (
+                    <>
+                      {' '}该节点可用 Agent：
+                      {remoteAgentNames.size > 0 ? [...remoteAgentNames].join('、') : '未探测到（请在该节点安装 Agent CLI）'}
+                    </>
+                  )}
                 </span>
               </label>
 
@@ -2240,6 +2252,12 @@ export default function ProjectPage() {
           onClose={() => setKnowledgeOpen(false)}
         />
       )}
+
+      <PluginSlot
+        name="project.page"
+        context={{ projectId: id, projectName: p?.name, runnerId: p?.runnerId }}
+        height={280}
+      />
     </div>
   );
 }

@@ -130,7 +130,7 @@ xissue plugin enable my-plugin
 
 - 官方模板仓库：<https://github.com/ffqa/xissue-plugin-template>
 - 官方插件目录：<https://github.com/ffqa/xissue-plugins>（`index.json` 为机器可读索引）
-- 当前目录插件：`custom-notifier`、`follow-commit-watcher`、`slack-notifier`、`run-audit`
+- 当前目录插件：`custom-notifier`、`follow-commit-watcher`、`slack-notifier`、`run-audit`、`commit-file-linker`、`ui-demo`
 
 ### 3. 执行模型与安全边界
 

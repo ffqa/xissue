@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.37` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.38` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.37`
+- **最新发布版本**: `v0.2.38`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -300,6 +300,13 @@
 - **问题**: 项目标题行自身带 `mb`（12px），外层 header 又有 12px gap，标题到仓库/监控面板实际 24px；仓库/监控网格又额外 `marginBottom: 14px`，与页面 12px gap 叠加成 26px，视觉上中间空白偏大。
 - **修复**: 移除标题行的 `mb` 与仓库/监控网格的额外 `marginBottom`，统一由 `.project-header-section` 和 `.project-page` 的 12px gap 控制。标题→面板与面板→看板均为 12px。
 - **验证**: 1568×900 Chromium 实测标题行 60–105、面板 117–226、看板 238 起；间距从 24/26px 收紧到 12/12px。
+
+### 2.32 自我评审修复（v0.2.38）
+
+- **插件沙盒切换立即生效**: 修改 iframe 的 `sandbox` 属性不会作用于已经加载的文档。`PluginFrame` 现在按全局开关给 iframe 加 `key`，切换时强制重建 iframe；实测关闭开关后 `parent.location` 立即可读，开启后立即被浏览器阻止，无需刷新页面。
+- **沙盒加载期 fail-closed**: `/api/settings` 尚未返回时按“沙盒开启”处理，避免开启沙盒后因设置请求慢或失败而短暂以同源权限加载插件；设置返回后再按真实值重建。
+- **插槽外边距**: 移除 `PluginSlot` 自带的 `marginBottom: 12px`，避免与页面 flex gap 叠加；项目页头部到面板、面板到看板的间距保持 12px。
+- **文档**: 同步插件目录列表（`commit-file-linker`、`ui-demo`）；插件模板库补 UI 契约与校验，目录库新增 `ui-demo` 并更新校验器。
 
 ## 3. 核心架构与关键代码索引
 

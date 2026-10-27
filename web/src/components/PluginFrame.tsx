@@ -30,6 +30,12 @@ export function PluginFrame({ plugin, slot, context = {}, height = 220 }: Plugin
   const nav = useNavigate();
   const qc = useQueryClient();
   const settingsQ = useQuery({ queryKey: qk.settings, queryFn: api.settings });
+  // Changing the sandbox attribute does not retroactively apply to an already
+  // loaded iframe. Remount when the global switch changes so isolation is
+  // effective immediately (and trusted access returns without a page reload).
+  // Fail closed until settings arrive: an enabled sandbox must not be
+  // bypassed by a slow or failed /api/settings request.
+  const sandboxed = settingsQ.data?.pluginUISandbox ?? true;
   const [frameHeight, setFrameHeight] = useState<number | string>(height);
   const contextRef = useRef(context);
   contextRef.current = context;
@@ -82,14 +88,11 @@ export function PluginFrame({ plugin, slot, context = {}, height = 220 }: Plugin
 
   return (
     <iframe
+      key={sandboxed ? 'sandboxed' : 'trusted'}
       ref={frameRef}
       title={plugin.ui?.title || plugin.name}
       src={pluginUIURL(plugin, slot)}
-      sandbox={
-        settingsQ.data?.pluginUISandbox
-          ? 'allow-scripts allow-forms allow-popups allow-downloads'
-          : undefined
-      }
+      sandbox={sandboxed ? 'allow-scripts allow-forms allow-popups allow-downloads' : undefined}
       referrerPolicy="no-referrer"
       onLoad={sendContext}
       style={{
@@ -118,7 +121,7 @@ export function PluginSlot({
   const plugins = pluginsForSlot((pluginsQ.data ?? []) as PluginInfo[], name);
   if (plugins.length === 0) return null;
   return (
-    <div className="col" style={{ gap: 10, marginBottom: 12 }}>
+    <div className="col" style={{ gap: 10 }}>
       {plugins.map((plugin) => (
         <PluginFrame
           key={`${plugin.id}:${name}`}

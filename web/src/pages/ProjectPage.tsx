@@ -516,7 +516,7 @@ export default function ProjectPage() {
           <span className="ellipsis">{p?.name ?? '…'}</span>
         </Crumbs>
 
-      <div className="row mb" style={{ flexWrap: 'wrap', gap: 8 }}>
+      <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
         <div className="grow">
           <h1>{p?.name ?? '加载中…'}</h1>
           {p?.description && <div className="muted small">{p.description}</div>}
@@ -643,7 +643,6 @@ export default function ProjectPage() {
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))',
           gap: 12,
-          marginBottom: 14,
         }}
       >
         <div className="panel">

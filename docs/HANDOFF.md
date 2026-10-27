@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.36` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.37` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.36`
+- **最新发布版本**: `v0.2.37`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -294,6 +294,12 @@
 - **配置**: 新增顶层 `pluginUISandbox`（默认 `false`）。关闭时插件 iframe 无 `sandbox`、与主应用同源，可访问宿主；开启时 iframe 使用 `allow-scripts allow-forms allow-popups allow-downloads`（无 `allow-same-origin`），只能走 `postMessage` 桥。
 - **设置入口**: 设置 → 通用 →「🧩 插件 UI → 插件 UI 沙盒模式」，保存后写入 `config.yaml`；`GET/PATCH /api/settings` 返回/接受 `pluginUISandbox`。
 - **验证**: 设置往返测试确认 `pluginUISandbox: true` 写入 `config.yaml` 并由 API 返回；真实 Chromium 验证开关关闭时 `parent.location` 可读，开启后 iframe 出现 sandbox 且父页面访问被浏览器阻止。
+
+### 2.31 项目页头部间距收紧（v0.2.37）
+
+- **问题**: 项目标题行自身带 `mb`（12px），外层 header 又有 12px gap，标题到仓库/监控面板实际 24px；仓库/监控网格又额外 `marginBottom: 14px`，与页面 12px gap 叠加成 26px，视觉上中间空白偏大。
+- **修复**: 移除标题行的 `mb` 与仓库/监控网格的额外 `marginBottom`，统一由 `.project-header-section` 和 `.project-page` 的 12px gap 控制。标题→面板与面板→看板均为 12px。
+- **验证**: 1568×900 Chromium 实测标题行 60–105、面板 117–226、看板 238 起；间距从 24/26px 收紧到 12/12px。
 
 ## 3. 核心架构与关键代码索引
 

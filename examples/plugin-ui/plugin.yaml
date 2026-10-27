@@ -1,7 +1,7 @@
 apiVersion: 1
 name: ui-demo
 version: 1.0.0
-description: Sandboxed plugin UI demo with page and project slot
+description: Plugin UI demo with standalone page and project/issue slots
 author: xissue
 entrypoint: run.py
 events:

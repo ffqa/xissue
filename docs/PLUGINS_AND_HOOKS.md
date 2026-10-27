@@ -140,7 +140,7 @@ xissue plugin enable my-plugin
 - 插件目录即工作目录；状态文件应写入插件目录或显式配置的路径。
 - Layer 2 项目 Hook 仍仅对本地目录仓库执行；远程镜像与 run worktree 中的脚本不会被执行。
 
-### 3.5 插件 UI（沙箱 iframe + 插槽）
+### 3.5 插件 UI（同源 iframe + 插槽）
 
 在 manifest 中声明 UI：
 
@@ -155,11 +155,12 @@ ui:
 
 - 独立页面：`/plugins/<id>`，由顶栏「🧩 插件管理」中的「打开插件页面」进入；
 - 插槽：`project.header` / `project.page` / `issue.actions` / `issue.page`，由宿主页面自动挂载同一 UI；
-- 隔离：iframe 使用 `sandbox="allow-scripts allow-forms allow-popups allow-downloads"`，**不包含** `allow-same-origin`，因此无法读取父页面 DOM、Cookie、localStorage，也不能直接调用同源 API；
+- 权限：插件是操作者自行安装的可信扩展。iframe 与主应用同源，**不设置 sandbox**，可访问 `parent.document`、Cookie、localStorage、`fetch` 等主应用权限；`postMessage` 只是便捷桥，不是安全边界；
 - 静态资源只从 `<plugin>/ui/` 提供（`GET /api/plugins/{id}/ui/{path...}`），后端拒绝 `..` 与符号链接逃逸；
 - `postMessage` 小桥：
   - 插件 → 宿主：`xissue:ready`、`xissue:notify{kind,message}`、`xissue:open{path}`（仅接受 `/` 开头的站内路径）、`xissue:reload`、`xissue:resize{height}`；
-  - 宿主 → 插件：`xissue:context{slot,context}`，`context` 只包含页面 id/key/状态等公开字段；
+  - 宿主 → 插件：`xissue:context{slot,context}`，`context` 包含页面 id/key/状态等字段；
+  - 需要更多能力时，插件可直接在同源 iframe 内操作宿主页面或调用 `/api/*`；
 - 示例 plugin 见 [`examples/plugin-ui`](../examples/plugin-ui)。
 
 ### 4. Web 全局管理与 `config.json`

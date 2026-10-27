@@ -21,10 +21,10 @@ interface PluginMessage {
   height?: number;
 }
 
-// PluginFrame hosts untrusted plugin UI in a sandboxed iframe. The sandbox
-// deliberately omits allow-same-origin, so the frame cannot read the host DOM,
-// cookies, or local storage. Communication is limited to a small postMessage
-// bridge (context, notify, navigate, reload, resize).
+// PluginFrame hosts trusted plugin UI in a same-origin iframe. Plugins are
+// installed by the operator for their own use, so they intentionally have the
+// same privileges as the main app: parent.document, cookies, fetch, storage,
+// etc. The postMessage bridge below is a convenience, not a security boundary.
 export function PluginFrame({ plugin, slot, context = {}, height = 220 }: PluginFrameProps) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const nav = useNavigate();
@@ -84,7 +84,6 @@ export function PluginFrame({ plugin, slot, context = {}, height = 220 }: Plugin
       ref={frameRef}
       title={plugin.ui?.title || plugin.name}
       src={pluginUIURL(plugin, slot)}
-      sandbox="allow-scripts allow-forms allow-popups allow-downloads"
       referrerPolicy="no-referrer"
       onLoad={sendContext}
       style={{

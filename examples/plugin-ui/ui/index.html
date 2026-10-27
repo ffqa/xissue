@@ -26,16 +26,23 @@
       <span id="slot" class="muted"></span>
     </div>
     <div id="context" style="opacity:.75;margin-top:4px">等待宿主上下文…</div>
+    <div id="host" style="opacity:.75;margin-top:2px">宿主访问：检测中…</div>
     <div class="row" style="margin-top:8px">
       <button id="notify">发送通知</button>
       <button id="open">打开项目列表</button>
       <button id="grow">加高</button>
+      <button id="host-title">读取宿主标题</button>
     </div>
   </div>
   <script>
     let context = {};
     let height = 180;
     const post = (msg) => parent.postMessage(msg, '*');
+    try {
+      document.getElementById('host').textContent = '宿主访问：✓ ' + parent.location.pathname;
+    } catch (err) {
+      document.getElementById('host').textContent = '宿主访问：✗ ' + err.message;
+    }
     window.addEventListener('message', (event) => {
       const data = event.data || {};
       if (data.type !== 'xissue:context') return;
@@ -48,6 +55,9 @@
     document.getElementById('grow').onclick = () => {
       height = height >= 360 ? 180 : height + 90;
       post({ type: 'xissue:resize', height });
+    };
+    document.getElementById('host-title').onclick = () => {
+      document.getElementById('host').textContent = '宿主标题：' + parent.document.title;
     };
     post({ type: 'xissue:ready' });
   </script>

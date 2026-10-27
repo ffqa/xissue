@@ -10,7 +10,7 @@ export interface SlotPlugin {
   ui?: PluginUI;
 }
 
-// pluginUIURL points the sandboxed iframe at the plugin's UI entry. The
+// pluginUIURL points the trusted same-origin iframe at the plugin's UI entry. The
 // backend requires entries to live below ui/, so the prefix is stripped.
 export function pluginUIURL(plugin: { id: string; ui?: PluginUI }, slot?: string): string {
   const entry = (plugin.ui?.entry || 'ui/index.html').replace(/^ui\//, '');

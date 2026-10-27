@@ -15,9 +15,10 @@ ui:
     - issue.actions      # issue.actions | issue.page
 ```
 
-The host renders the entry in a sandboxed iframe without
-`allow-same-origin`, so plugins cannot read the parent DOM or storage.
-Communication uses `postMessage`:
+The host renders the entry in a same-origin iframe. Plugins are trusted,
+operator-installed extensions, so they can read `parent.document`, cookies and
+localStorage, and call `/api/*` directly. Communication can also use
+`postMessage`:
 
 | Direction | Message |
 |---|---|

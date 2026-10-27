@@ -15,10 +15,12 @@ ui:
     - issue.actions      # issue.actions | issue.page
 ```
 
-The host renders the entry in a same-origin iframe. Plugins are trusted,
-operator-installed extensions, so they can read `parent.document`, cookies and
-localStorage, and call `/api/*` directly. Communication can also use
-`postMessage`:
+The host renders the entry in a same-origin iframe by default. Plugins are
+trusted, operator-installed extensions, so they can read `parent.document`,
+cookies and localStorage, and call `/api/*` directly. The global
+**插件 UI 沙盒模式** (Settings → General → 🧩 插件 UI) can turn on a
+same-origin-blocking sandbox for less trusted plugins. Communication can also
+use `postMessage`:
 
 | Direction | Message |
 |---|---|

@@ -50,6 +50,7 @@ func (s *Server) handleMonitorStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"autoUpdate":            s.cfg.AutoUpdateEnabled(),
+		"pluginUISandbox":       s.cfg.PluginUISandboxEnabled(),
 		"defaultAgent":          s.cfg.DefaultAgentName(),
 		"agentRoles":            s.cfg.AgentRolesSnapshot(),
 		"globalAutomationRules": s.cfg.GlobalAutomationRulesSnapshot(),
@@ -59,6 +60,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		AutoUpdate            *bool                    `json:"autoUpdate"`
+		PluginUISandbox       *bool                    `json:"pluginUISandbox"`
 		DefaultAgent          *string                  `json:"defaultAgent"`
 		AgentRoles            *config.AgentRolesConfig `json:"agentRoles"`
 		GlobalAutomationRules *[]domain.AutomationRule `json:"globalAutomationRules"`
@@ -70,6 +72,10 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	changed := false
 	if body.AutoUpdate != nil {
 		s.cfg.SetAutoUpdate(*body.AutoUpdate)
+		changed = true
+	}
+	if body.PluginUISandbox != nil {
+		s.cfg.SetPluginUISandbox(*body.PluginUISandbox)
 		changed = true
 	}
 	if body.DefaultAgent != nil {
@@ -92,6 +98,7 @@ func (s *Server) handlePatchSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"autoUpdate":            s.cfg.AutoUpdateEnabled(),
+		"pluginUISandbox":       s.cfg.PluginUISandboxEnabled(),
 		"defaultAgent":          s.cfg.DefaultAgentName(),
 		"agentRoles":            s.cfg.AgentRolesSnapshot(),
 		"globalAutomationRules": s.cfg.GlobalAutomationRulesSnapshot(),

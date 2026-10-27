@@ -526,6 +526,7 @@ export interface AgentRoles {
 
 export interface AppSettings {
   autoUpdate: boolean;
+  pluginUISandbox: boolean;
   defaultAgent: string;
   agentRoles: AgentRoles;
   globalAutomationRules: AutomationRule[];

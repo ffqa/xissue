@@ -29,6 +29,7 @@ export function PluginFrame({ plugin, slot, context = {}, height = 220 }: Plugin
   const frameRef = useRef<HTMLIFrameElement>(null);
   const nav = useNavigate();
   const qc = useQueryClient();
+  const settingsQ = useQuery({ queryKey: qk.settings, queryFn: api.settings });
   const [frameHeight, setFrameHeight] = useState<number | string>(height);
   const contextRef = useRef(context);
   contextRef.current = context;
@@ -84,6 +85,11 @@ export function PluginFrame({ plugin, slot, context = {}, height = 220 }: Plugin
       ref={frameRef}
       title={plugin.ui?.title || plugin.name}
       src={pluginUIURL(plugin, slot)}
+      sandbox={
+        settingsQ.data?.pluginUISandbox
+          ? 'allow-scripts allow-forms allow-popups allow-downloads'
+          : undefined
+      }
       referrerPolicy="no-referrer"
       onLoad={sendContext}
       style={{

@@ -155,12 +155,13 @@ ui:
 
 - 独立页面：`/plugins/<id>`，由顶栏「🧩 插件管理」中的「打开插件页面」进入；
 - 插槽：`project.header` / `project.page` / `issue.actions` / `issue.page`，由宿主页面自动挂载同一 UI；
-- 权限：插件是操作者自行安装的可信扩展。iframe 与主应用同源，**不设置 sandbox**，可访问 `parent.document`、Cookie、localStorage、`fetch` 等主应用权限；`postMessage` 只是便捷桥，不是安全边界；
+- 权限：插件是操作者自行安装的可信扩展。默认 iframe 与主应用同源、**不设置 sandbox**，可访问 `parent.document`、Cookie、localStorage、`fetch` 等主应用权限；`postMessage` 只是便捷桥，不是安全边界；
+- 全局开关：设置 → 通用 → 🧩 插件 UI →「插件 UI 沙盒模式」。默认关闭；开启后 iframe 使用 `sandbox="allow-scripts allow-forms allow-popups allow-downloads"`（不含 `allow-same-origin`），插件只能通过 `postMessage` 桥通信。配置字段为 `pluginUISandbox`（默认 `false`）；
 - 静态资源只从 `<plugin>/ui/` 提供（`GET /api/plugins/{id}/ui/{path...}`），后端拒绝 `..` 与符号链接逃逸；
 - `postMessage` 小桥：
   - 插件 → 宿主：`xissue:ready`、`xissue:notify{kind,message}`、`xissue:open{path}`（仅接受 `/` 开头的站内路径）、`xissue:reload`、`xissue:resize{height}`；
   - 宿主 → 插件：`xissue:context{slot,context}`，`context` 包含页面 id/key/状态等字段；
-  - 需要更多能力时，插件可直接在同源 iframe 内操作宿主页面或调用 `/api/*`；
+  - 未开启沙盒时，插件可直接在同源 iframe 内操作宿主页面或调用 `/api/*`；开启后只能使用上述消息桥；
 - 示例 plugin 见 [`examples/plugin-ui`](../examples/plugin-ui)。
 
 ### 4. Web 全局管理与 `config.json`

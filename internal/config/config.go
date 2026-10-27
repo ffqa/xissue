@@ -82,6 +82,7 @@ type Config struct {
 	ExportMarkdown        bool                    `yaml:"exportMarkdown"`
 	AutoUpdate            bool                    `yaml:"autoUpdate" json:"autoUpdate"`
 	DefaultAgent          string                  `yaml:"defaultAgent,omitempty" json:"defaultAgent,omitempty"`
+	PluginUISandbox       bool                    `yaml:"pluginUISandbox" json:"pluginUISandbox"`
 	AgentRoles            AgentRolesConfig        `yaml:"agentRoles,omitempty" json:"agentRoles,omitempty"`
 	Agents                map[string]AgentConfig  `yaml:"agents"`
 	Permissions           PermissionPolicy        `yaml:"permissions"`
@@ -490,6 +491,7 @@ func (c *Config) Reload() error {
 	c.Permissions = fresh.Permissions
 	c.Runner = fresh.Runner
 	c.Monitor = fresh.Monitor
+	c.PluginUISandbox = fresh.PluginUISandbox
 	c.EditorURLTemplate = fresh.EditorURLTemplate
 	c.ExportMarkdown = fresh.ExportMarkdown
 	return nil
@@ -672,6 +674,20 @@ func (c *Config) SetAgentRoles(roles AgentRolesConfig) {
 		PRReview:     strings.TrimSpace(roles.PRReview),
 		AutoMerge:    strings.TrimSpace(roles.AutoMerge),
 	}
+}
+
+// PluginUISandboxEnabled reports whether plugin UI is rendered in a
+// same-origin-blocking sandbox. Default false: plugins are trusted.
+func (c *Config) PluginUISandboxEnabled() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.PluginUISandbox
+}
+
+func (c *Config) SetPluginUISandbox(v bool) {
+	c.mu.Lock()
+	c.PluginUISandbox = v
+	c.mu.Unlock()
 }
 
 // AutoUpdateEnabled reports whether the hourly self-update check is enabled.

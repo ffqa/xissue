@@ -132,7 +132,7 @@ interface RunEvent {
 |---|---|---|
 | GET | `/api/health` | `{ ok, version, editorUrlTemplate }`。`editorUrlTemplate` 如 `vscode://file{path}`，前端替换 `{path}` 为绝对路径 |
 | GET | `/api/status` | 实时运行状态：版本、PID、uptime、堆内存、进程 CPU、磁盘、`dataUsed`/`runWorkspaces`/`database`、`queue.pending/running/maxConcurrent/maxQueued`、GC、goroutine、自动更新状态；WebSocket 每 2 秒推送同结构 |
-| GET / PATCH | `/api/settings` | 全局设置；PATCH `{ autoUpdate?, defaultAgent?, agentRoles?, globalAutomationRules? }`。`agentRoles` 为 Agent 身份分配 `{ issueReview?, issueDevelop?, prReview?, autoMerge? }`（留空跟随 `defaultAgent`；全局自动化规则支持 `projectIds` 限定项目，空数组表示全部项目） |
+| GET / PATCH | `/api/settings` | 全局设置；PATCH `{ autoUpdate?, pluginUISandbox?, defaultAgent?, agentRoles?, globalAutomationRules? }`；`pluginUISandbox` 默认 `false`（插件 iframe 同源、可访问宿主），设为 `true` 时启用无同源权限的 sandbox。`agentRoles` 为 Agent 身份分配 `{ issueReview?, issueDevelop?, prReview?, autoMerge? }`（留空跟随 `defaultAgent`；全局自动化规则支持 `projectIds` 限定项目，空数组表示全部项目） |
 | GET / PUT / PATCH | `/api/monitor/config` | 监控与通知配置；`notificationRoutes` 为按事件分通道的路由表 |
 | GET | `/api/plugins` | 已安装插件 → `PluginInfo[]`（`apiVersion`、`events`、`permissions`、`enabled`、`hasReadme`、`hasConfig`、`error`）；CLI 为 `xissue plugin list` |
 | PATCH | `/api/plugins/{id}` | `{ enabled }` 即时启用/停用（写/删 `.disabled`）→ `PluginInfo[]`；manifest 无效时不能启用 |

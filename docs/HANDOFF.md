@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.35` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.36` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.35`
+- **最新发布版本**: `v0.2.36`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -279,7 +279,7 @@
 - **GitLab v4 Provider**：新增 `internal/provider/gitlab.go`，支持 Issues（列表/创建/标签/评论/仓库级评论同步）、Merge Requests（列表/创建/合并/关闭/按 URL 查询状态与详情）、CI 状态汇总与审批记录。连接信息只读环境变量：`XISSUE_GITLAB_URL` / `XISSUE_GITLAB_TOKEN`（兼容 `GITLAB_URL`、`GITLAB_TOKEN`、`GITLAB_PRIVATE_TOKEN`）；支持嵌套 `group/subgroup/project` 路径，URL 主机不匹配时不会发送 Token。`CheckPRStatus` / `GetPRDetails` 会优先识别 Gitea，再识别 GitLab，最后回退 GitHub CLI。
 - **远程 Agent 能力探测**：远程 Runner 连接后，服务端通过新增的 `agents` RPC 让节点解析所有已配置 Agent 的 `command`；结果缓存在 `GET /api/runners` 的 `agents` / `agentsKnown` 中。探测完成后，`StartRun` 会拒绝节点上不存在的 Agent 并返回可用列表；`AvailableAgentForProject` 会优先从远程可用列表选择。项目页与 Issue 页只展示远程实际可用的 Agent，探测完成前保持宽松，避免阻塞启动。
 - **前端测试**：引入 Vitest（`web/vitest.config.ts`），把默认 Agent 选择、远程 Agent 过滤、本地 Git 路径判断与插件 URL/插槽筛选抽到 `web/src/logic/` 并覆盖 24 个用例；`make build` 会先跑 `web-test`，GitHub Release 工作流在 Go 测试前执行 `pnpm test`。
-- **插件 UI（同源 iframe + 插槽）**：`plugin.yaml` 新增可选 `ui.entry`（必须位于 `ui/`）、`ui.title`、`ui.slots`；后端校验路径/槽位并通过 `GET /api/plugins/{id}/ui/{path...}` 只读提供 `<plugin>/ui/` 静态资源（拒绝 `..` 与符号链接逃逸）。前端新增 `/plugins/:id` 页面、`project.header` / `project.page` / `issue.actions` / `issue.page` 槽位与 `PluginFrame`；`postMessage` 的 `context/notify/open/reload/resize` 作为便捷桥。v0.2.35 起插件是操作者自行安装的可信扩展，iframe 与主应用同源且不设置 sandbox，可直接访问 `parent.document`、Cookie、localStorage 与 `/api/*`。示例见 `examples/plugin-ui`。
+- **插件 UI（同源 iframe + 插槽）**：`plugin.yaml` 新增可选 `ui.entry`（必须位于 `ui/`）、`ui.title`、`ui.slots`；后端校验路径/槽位并通过 `GET /api/plugins/{id}/ui/{path...}` 只读提供 `<plugin>/ui/` 静态资源（拒绝 `..` 与符号链接逃逸）。前端新增 `/plugins/:id` 页面、`project.header` / `project.page` / `issue.actions` / `issue.page` 槽位与 `PluginFrame`；`postMessage` 的 `context/notify/open/reload/resize` 作为便捷桥。v0.2.35 起插件是操作者自行安装的可信扩展，默认 iframe 与主应用同源且不设置 sandbox，可直接访问 `parent.document`、Cookie、localStorage 与 `/api/*`；v0.2.36 增加全局 `pluginUISandbox` 开关（设置 → 通用 → 🧩 插件 UI），开启后恢复无同源权限的 sandbox。示例见 `examples/plugin-ui`。
 - **验证**：`go test -race ./...`、`go vet ./...`、`tsc --noEmit`、`vitest run` 全部通过；本地以临时 HOME/DataDir 启动服务，真实 Chromium 验证插件独立页、`project.page` 插槽、通知与加高消息桥均生效。
 
 ### 2.29 插件 UI 改为同源可信扩展（v0.2.35）
@@ -287,7 +287,13 @@
 - **背景**: v0.2.34 的插件 iframe 使用 sandbox 且不含 `allow-same-origin`，插件只能通过 `postMessage` 获取有限上下文。该边界是为不可信第三方设计的；本项目插件均由操作者自行安装，需要直接操作宿主与调用 API。
 - **变更**: `PluginFrame` 移除 iframe `sandbox` 属性。插件 UI 现在与主应用同源，可直接访问 `parent.document`、Cookie、localStorage，并可直接 `fetch('/api/...')`；`postMessage` 的 `context/notify/open/reload/resize` 保留为便捷桥，不再是安全边界。
 - **插槽不变**: `project.header` / `project.page` / `issue.actions` / `issue.page` 仍由宿主挂载；插件权限与是否使用 iframe 解耦。
-- **验证**: 真实 Chromium 中 iframe 无 `sandbox` 属性，插件成功读取 `parent.location.pathname`、`parent.document.title`，并完成通知与 resize 消息桥。
+- **验证**: 真实 Chromium 中默认 iframe 无 `sandbox` 属性，插件成功读取 `parent.location.pathname`、`parent.document.title`，并完成通知与 resize 消息桥。
+
+### 2.30 插件 UI 全局沙盒开关（v0.2.36）
+
+- **配置**: 新增顶层 `pluginUISandbox`（默认 `false`）。关闭时插件 iframe 无 `sandbox`、与主应用同源，可访问宿主；开启时 iframe 使用 `allow-scripts allow-forms allow-popups allow-downloads`（无 `allow-same-origin`），只能走 `postMessage` 桥。
+- **设置入口**: 设置 → 通用 →「🧩 插件 UI → 插件 UI 沙盒模式」，保存后写入 `config.yaml`；`GET/PATCH /api/settings` 返回/接受 `pluginUISandbox`。
+- **验证**: 设置往返测试确认 `pluginUISandbox: true` 写入 `config.yaml` 并由 API 返回；真实 Chromium 验证开关关闭时 `parent.location` 可读，开启后 iframe 出现 sandbox 且父页面访问被浏览器阻止。
 
 ## 3. 核心架构与关键代码索引
 

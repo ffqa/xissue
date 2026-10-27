@@ -36,7 +36,7 @@ export default function PluginPage() {
         <h1 style={{ margin: 0 }}>🧩 {plugin.ui.title || plugin.name}</h1>
         <span className="dim small">v{plugin.version}</span>
         <span className="grow" />
-        <span className="small dim">同源 iframe · 可直接访问宿主，也可通过 postMessage 通信</span>
+        <span className="small dim">插件 iframe · 访问权限由全局「插件 UI 沙盒模式」控制</span>
       </div>
       <PluginFrame
         plugin={plugin}

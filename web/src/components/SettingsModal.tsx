@@ -47,6 +47,7 @@ export function SettingsModal({
   const [cfgTgChatId, setCfgTgChatId] = useState('');
   const [cfgWebhookUrl, setCfgWebhookUrl] = useState('');
   const [autoUpdate, setAutoUpdate] = useState(true);
+  const [pluginUISandbox, setPluginUISandbox] = useState(false);
   const [defaultAgent, setDefaultAgent] = useState('');
   const [agentRoles, setAgentRoles] = useState<AgentRoles>({
     issueReview: '',
@@ -88,6 +89,7 @@ export function SettingsModal({
   useEffect(() => {
     if (settingsQ.data) {
       setAutoUpdate(settingsQ.data.autoUpdate);
+      setPluginUISandbox(settingsQ.data.pluginUISandbox);
       setDefaultAgent(settingsQ.data.defaultAgent || '');
       setAgentRoles({
         issueReview: settingsQ.data.agentRoles?.issueReview || '',
@@ -117,7 +119,7 @@ export function SettingsModal({
 
   const saveGeneralMut = useMutation({
     mutationFn: async () => {
-      await api.patchSettings({ autoUpdate, defaultAgent, agentRoles });
+      await api.patchSettings({ autoUpdate, pluginUISandbox, defaultAgent, agentRoles });
       return api.patchMonitorConfig({ publicUrl });
     },
     onSuccess: (updated) => {
@@ -320,6 +322,21 @@ export function SettingsModal({
                 </label>
                 <p className="small dim" style={{ marginBottom: 0 }}>
                   自动检查更新只检查版本，不会未经确认安装；浏览器通知是当前浏览器的本地偏好。
+                </p>
+              </section>
+
+              <section className="settings-card">
+                <h3>🧩 插件 UI</h3>
+                <label className="row" style={{ gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={pluginUISandbox}
+                    onChange={(e) => setPluginUISandbox(e.target.checked)}
+                  />
+                  <span>插件 UI 沙盒模式</span>
+                </label>
+                <p className="small dim" style={{ marginBottom: 0 }}>
+                  默认关闭：插件与主应用同源，可直接访问宿主 DOM、Cookie 与 API。开启后插件 iframe 不再允许同源访问，只能通过 postMessage 桥通信；适用于不完全信任的插件。
                 </p>
               </section>
             </div>

@@ -635,6 +635,7 @@ export default function ProjectPage() {
       <PluginSlot
         name="project.header"
         context={{ projectId: id, projectName: p?.name, runnerId: p?.runnerId }}
+        marginBottom={0}
       />
 
       {/* 仓库与分支监控双栏面板 */}
@@ -2256,6 +2257,7 @@ export default function ProjectPage() {
         name="project.page"
         context={{ projectId: id, projectName: p?.name, runnerId: p?.runnerId }}
         height={280}
+        marginBottom={0}
       />
     </div>
   );

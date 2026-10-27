@@ -112,16 +112,18 @@ export function PluginSlot({
   name,
   context,
   height,
+  marginBottom = 12,
 }: {
   name: string;
   context?: Record<string, unknown>;
   height?: number | string;
+  marginBottom?: number;
 }) {
   const pluginsQ = useQuery({ queryKey: qk.plugins, queryFn: api.plugins });
   const plugins = pluginsForSlot((pluginsQ.data ?? []) as PluginInfo[], name);
   if (plugins.length === 0) return null;
   return (
-    <div className="col" style={{ gap: 10 }}>
+    <div className="col" style={{ gap: 10, marginBottom }}>
       {plugins.map((plugin) => (
         <PluginFrame
           key={`${plugin.id}:${name}`}

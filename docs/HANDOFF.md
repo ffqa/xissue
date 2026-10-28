@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.39` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.40` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.39`
+- **最新发布版本**: `v0.2.40`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -307,6 +307,13 @@
 - **沙盒加载期 fail-closed**: `/api/settings` 尚未返回时按“沙盒开启”处理，避免开启沙盒后因设置请求慢或失败而短暂以同源权限加载插件；设置返回后再按真实值重建。
 - **插槽外边距**: `PluginSlot` 默认仍保留 12px 底距（Issue 页需要）；项目页的 `project.header` / `project.page` 显式传 `marginBottom={0}`，避免与页面 flex gap 叠加。项目页头部到面板、面板到看板的间距保持 12px。
 - **文档**: 同步插件目录列表（`commit-file-linker`、`ui-demo`）；插件模板库补 UI 契约与校验，目录库新增 `ui-demo` 并更新校验器。
+
+### 2.33 插件 UI 设置查询与回归测试（v0.2.40）
+
+- **设置查询缓存**: `PluginFrame` 的 `/api/settings` 查询增加 `staleTime: 60_000`。一个页面有多个插件插槽时不再因为默认 `staleTime: 0` 反复请求；设置页保存仍通过 `invalidateQueries` 立即刷新。
+- **沙盒重建回归测试**: 新增 `web/src/components/PluginFrame.test.tsx`（Vitest + jsdom）。测试切换 `qk.settings` 的 `pluginUISandbox`，断言 iframe 元素被替换、`sandbox` 属性正确，并断言设置缓存有效时不会额外请求 `/api/settings`。
+- **测试有效性**: 临时移除 iframe 的 `key` 后该测试失败，恢复后通过，证明它确实覆盖了“属性变了但旧 iframe 仍保留权限”的回归。
+- **验证**: `tsc --noEmit`、`vitest run`（25 用例）与 `make build` 通过。
 
 ## 3. 核心架构与关键代码索引
 

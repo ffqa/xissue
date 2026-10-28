@@ -29,7 +29,7 @@ export function PluginFrame({ plugin, slot, context = {}, height = 220 }: Plugin
   const frameRef = useRef<HTMLIFrameElement>(null);
   const nav = useNavigate();
   const qc = useQueryClient();
-  const settingsQ = useQuery({ queryKey: qk.settings, queryFn: api.settings });
+  const settingsQ = useQuery({ queryKey: qk.settings, queryFn: api.settings, staleTime: 60_000 });
   // Changing the sandbox attribute does not retroactively apply to an already
   // loaded iframe. Remount when the global switch changes so isolation is
   // effective immediately (and trusted access returns without a page reload).

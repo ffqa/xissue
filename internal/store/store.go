@@ -89,6 +89,7 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN pr_state TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN change_record TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`)
+	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN parent_issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN dev_mode TEXT NOT NULL DEFAULT 'single_main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN target_branch TEXT NOT NULL DEFAULT 'main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1`)
@@ -523,7 +524,7 @@ func (s *Store) DeleteRepo(ctx context.Context, projectID, repoID int64) error {
 
 // ---------- Issues ----------
 
-const issueCols = `i.id, i.project_id, i.key, i.source, i.repo_id, i.remote_number, i.remote_url, i.title, i.body, i.labels, i.priority, i.status, i.created_at, i.updated_at,
+const issueCols = `i.id, i.project_id, i.key, i.source, i.repo_id, i.parent_issue_id, i.remote_number, i.remote_url, i.title, i.body, i.labels, i.priority, i.status, i.created_at, i.updated_at,
   (SELECT r.id FROM runs r WHERE r.issue_id=i.id ORDER BY r.id DESC LIMIT 1),
   (SELECT r.status FROM runs r WHERE r.issue_id=i.id ORDER BY r.id DESC LIMIT 1),
   COALESCE((SELECT r.pr_url FROM runs r WHERE r.issue_id=i.id AND r.pr_url != '' ORDER BY r.id DESC LIMIT 1), ''),
@@ -531,14 +532,14 @@ const issueCols = `i.id, i.project_id, i.key, i.source, i.repo_id, i.remote_numb
 
 func scanIssue(sc interface{ Scan(...any) error }) (domain.Issue, error) {
 	var i domain.Issue
-	var repoID, num, runID sql.NullInt64
+	var repoID, parentID, num, runID sql.NullInt64
 	var labels, c, u string
 	var runStatus sql.NullString
-	err := sc.Scan(&i.ID, &i.ProjectID, &i.Key, &i.Source, &repoID, &num, &i.RemoteURL, &i.Title, &i.Body, &labels, &i.Priority, &i.Status, &c, &u, &runID, &runStatus, &i.PRURL, &i.PRState)
+	err := sc.Scan(&i.ID, &i.ProjectID, &i.Key, &i.Source, &repoID, &parentID, &num, &i.RemoteURL, &i.Title, &i.Body, &labels, &i.Priority, &i.Status, &c, &u, &runID, &runStatus, &i.PRURL, &i.PRState)
 	if err != nil {
 		return i, err
 	}
-	i.RepoID, i.RemoteNumber, i.ActiveRunID = nullInt(repoID), nullInt(num), nullInt(runID)
+	i.RepoID, i.ParentIssueID, i.RemoteNumber, i.ActiveRunID = nullInt(repoID), nullInt(parentID), nullInt(num), nullInt(runID)
 	i.Awaiting = runStatus.String == string(domain.RunAwaiting)
 	i.CreatedAt, i.UpdatedAt = parseTime(c), parseTime(u)
 	_ = json.Unmarshal([]byte(labels), &i.Labels)
@@ -627,6 +628,21 @@ func (s *Store) CreateLocalIssue(ctx context.Context, projectID int64, title, bo
 // CreateLocalIssueInRepo creates a local issue optionally scoped to one repo.
 // A nil repoID means the issue is project-wide and the agent may choose.
 func (s *Store) CreateLocalIssueInRepo(ctx context.Context, projectID int64, repoID *int64, title, body string, labels []string, priorities ...domain.IssuePriority) (*domain.Issue, error) {
+	priority := domain.IssuePriorityNormal
+	if len(priorities) > 0 && domain.ValidIssuePriority(priorities[0]) {
+		priority = priorities[0]
+	}
+	return s.createLocalIssue(ctx, projectID, repoID, nil, title, body, labels, priority)
+}
+
+func (s *Store) CreateSubIssue(ctx context.Context, projectID, parentID int64, repoID *int64, title, body string, labels []string, priority domain.IssuePriority) (*domain.Issue, error) {
+	if priority == "" || !domain.ValidIssuePriority(priority) {
+		priority = domain.IssuePriorityNormal
+	}
+	return s.createLocalIssue(ctx, projectID, repoID, &parentID, title, body, labels, priority)
+}
+
+func (s *Store) createLocalIssue(ctx context.Context, projectID int64, repoID, parentID *int64, title, body string, labels []string, priority domain.IssuePriority) (*domain.Issue, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -642,18 +658,17 @@ func (s *Store) CreateLocalIssueInRepo(ctx context.Context, projectID int64, rep
 	if labels == nil {
 		labels = []string{}
 	}
-	priority := domain.IssuePriorityNormal
-	if len(priorities) > 0 && domain.ValidIssuePriority(priorities[0]) {
-		priority = priorities[0]
-	}
 	lb, _ := json.Marshal(labels)
 	t := now()
-	var repoArg any
+	var repoArg, parentArg any
 	if repoID != nil {
 		repoArg = *repoID
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO issues(project_id, key, source, repo_id, title, body, labels, priority, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		projectID, fmt.Sprintf("LOCAL-%d", seq), "local", repoArg, title, body, string(lb), string(priority), domain.IssueTodo, t, t)
+	if parentID != nil {
+		parentArg = *parentID
+	}
+	res, err := tx.ExecContext(ctx, `INSERT INTO issues(project_id, key, source, repo_id, parent_issue_id, title, body, labels, priority, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		projectID, fmt.Sprintf("LOCAL-%d", seq), "local", repoArg, parentArg, title, body, string(lb), string(priority), domain.IssueTodo, t, t)
 	if err != nil {
 		return nil, err
 	}
@@ -755,6 +770,23 @@ func (s *Store) UpdateIssue(ctx context.Context, id int64, p IssuePatch) (*domai
 		_ = s.AddIssueEvent(ctx, id, "labels", "system", "标签: "+strings.Join(*p.Labels, ", "))
 	}
 	return issue, nil
+}
+
+func (s *Store) ListSubIssues(ctx context.Context, parentID int64) ([]domain.Issue, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+issueCols+` FROM issues i WHERE i.parent_issue_id=? ORDER BY i.updated_at DESC`, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.Issue{}
+	for rows.Next() {
+		i, err := scanIssue(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) AddIssueEvent(ctx context.Context, issueID int64, kind, actor, message string) error {

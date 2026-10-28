@@ -32,6 +32,7 @@ import type {
   Project,
   ProjectReadme,
   RemotePR,
+  MergedBranch,
   Repo,
   RepoPullStatus,
   RepoChanges,
@@ -270,6 +271,9 @@ export const api = {
     post<CherryPickResult>(`/api/projects/${projectId}/cherry-pick`, b),
 
   repoBranches: (repoId: number, refresh = false) => get<string[]>(`/api/repos/${repoId}/branches?refresh=${refresh ? 1 : 0}`),
+  mergedBranches: (repoId: number, refresh = true) => get<MergedBranch[]>(`/api/repos/${repoId}/merged-branches?refresh=${refresh ? 1 : 0}`),
+  deleteMergedBranches: (repoId: number, branches: string[]) =>
+    post<{ deleted: string[] }>(`/api/repos/${repoId}/branches/delete`, { branches }),
   repoCommits: (repoId: number, branch?: string, limit = 30, refresh = false) =>
     get<CommitInfo[]>(`/api/repos/${repoId}/commits?${q({ branch: branch ?? '', limit, refresh: refresh ? 1 : 0 })}`),
   repoCommitDetail: (repoId: number, sha: string) =>
@@ -284,6 +288,7 @@ export const api = {
       labels?: string[];
       priority?: IssuePriority;
       repoId?: number | null;
+      parentId?: number | null;
       syncRemote?: boolean;
     },
   ) => post<Issue>(`/api/projects/${projectId}/issues`, b),
@@ -291,6 +296,7 @@ export const api = {
   updateIssue: (id: number, b: { title?: string; body?: string; labels?: string[]; priority?: IssuePriority; status?: IssueStatus }) =>
     patch<Issue>(`/api/issues/${id}`, b),
   issueEvents: (issueId: number) => get<IssueEvent[]>(`/api/issues/${issueId}/events`),
+  subIssues: (issueId: number) => get<Issue[]>(`/api/issues/${issueId}/subissues`),
   attachments: (issueId: number) => get<Attachment[]>(`/api/issues/${issueId}/attachments`),
   uploadAttachment: (issueId: number, file: File) => {
     const form = new FormData();
@@ -381,12 +387,14 @@ export const qk = {
   docDetail: (projectId: number, docId: string) => ['docDetail', projectId, docId] as const,
   watches: (projectId: number) => ['watches', projectId] as const,
   repoBranches: (repoId: number) => ['repoBranches', repoId] as const,
+  mergedBranches: (repoId: number) => ['mergedBranches', repoId] as const,
   repoCommits: (repoId: number, branch: string) => ['repoCommits', repoId, branch] as const,
   repoCommitDetail: (repoId: number, sha: string) => ['repoCommitDetail', repoId, sha] as const,
   issues: (projectId: number) => ['issues', projectId] as const,
   issue: (id: number) => ['issue', id] as const,
   comments: (issueId: number) => ['comments', issueId] as const,
   issueEvents: (issueId: number) => ['issueEvents', issueId] as const,
+  subIssues: (issueId: number) => ['subIssues', issueId] as const,
   attachments: (issueId: number) => ['attachments', issueId] as const,
   runs: (issueId: number) => ['runs', issueId] as const,
   run: (id: number) => ['run', id] as const,

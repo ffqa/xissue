@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { PluginSlot } from '../components/PluginFrame';
+import { LabelPicker, splitLabels } from '../components/LabelPicker';
 import { availableRemoteAgentNames } from '../logic/agents';
 import { isLocalGitPath } from '../logic/repos';
 import {
@@ -50,12 +51,6 @@ function isImageAttachment(a: Attachment): boolean {
   return a.mime.startsWith('image/') && a.mime !== 'image/svg+xml';
 }
 
-function splitIssueLabels(raw: string): string[] {
-  return raw
-    .split(/[,，\n]/)
-    .map((label) => label.trim())
-    .filter(Boolean);
-}
 
 function timelineIcon(kind: string): string {
   switch (kind) {
@@ -98,6 +93,12 @@ export default function IssuePage() {
 
   const commentsQ = useQuery({ queryKey: qk.comments(id), queryFn: () => api.comments(id) });
   const issueEventsQ = useQuery({ queryKey: qk.issueEvents(id), queryFn: () => api.issueEvents(id) });
+  const subIssuesQ = useQuery({ queryKey: qk.subIssues(id), queryFn: () => api.subIssues(id), enabled: !!issue });
+  const parentQ = useQuery({
+    queryKey: qk.issue(issue?.parentIssueId ?? 0),
+    queryFn: () => api.issue(issue!.parentIssueId!),
+    enabled: !!issue?.parentIssueId,
+  });
   const attachmentsQ = useQuery({ queryKey: qk.attachments(id), queryFn: () => api.attachments(id) });
   const runsQ = useQuery({ queryKey: qk.runs(id), queryFn: () => api.runs(id) });
   const agentsQ = useQuery({ queryKey: qk.agents, queryFn: api.agents });
@@ -317,6 +318,12 @@ export default function IssuePage() {
   const [editBody, setEditBody] = useState('');
   const [editLabels, setEditLabels] = useState('');
   const [editPriority, setEditPriority] = useState<IssuePriority>('normal');
+  const [subOpen, setSubOpen] = useState(false);
+  const [subTitle, setSubTitle] = useState('');
+  const [subBody, setSubBody] = useState('');
+  const [subLabels, setSubLabels] = useState('');
+  const [subPriority, setSubPriority] = useState<IssuePriority>('normal');
+  const [attachDrag, setAttachDrag] = useState(false);
 
   const updateIssue = useMutation({
     mutationFn: (b: {
@@ -342,12 +349,55 @@ export default function IssuePage() {
     },
   });
 
-  const uploadAttachment = useMutation({
-    mutationFn: (file: File) => api.uploadAttachment(id, file),
-    onSuccess: () => {
+  const createSubIssue = useMutation({
+    mutationFn: () =>
+      api.createIssue(issue!.projectId, {
+        title: subTitle.trim(),
+        body: subBody,
+        labels: splitLabels(subLabels),
+        priority: subPriority,
+        parentId: id,
+        repoId: issue?.repoId ?? undefined,
+        syncRemote: Boolean(
+          issue?.repoId &&
+          (project?.repos ?? []).find((repo) => repo.id === issue.repoId)?.provider !== 'plain',
+        ),
+      }),
+    onSuccess: (child) => {
+      qc.invalidateQueries({ queryKey: qk.subIssues(id) });
+      qc.invalidateQueries({ queryKey: qk.issues(child.projectId) });
+      qc.invalidateQueries({ queryKey: qk.issueEvents(id) });
+      setSubOpen(false);
+      setSubTitle('');
+      setSubBody('');
+      setSubLabels('');
+      setSubPriority('normal');
+      if (child.syncError) {
+        toast.error(`已创建子任务 ${child.key}，但同步远程失败：${child.syncError}`);
+      } else {
+        toast.success(`已创建子任务 ${child.key}`);
+      }
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const uploadAttachments = useMutation({
+    mutationFn: async (files: File[]) => {
+      const errors: string[] = [];
+      for (const file of files) {
+        try {
+          await api.uploadAttachment(id, file);
+        } catch (e) {
+          errors.push(`${file.name}: ${(e as Error).message}`);
+        }
+      }
+      if (errors.length) throw new Error(errors.join('; '));
+      return files.length;
+    },
+    onSuccess: (count) => {
       qc.invalidateQueries({ queryKey: qk.attachments(id) });
       qc.invalidateQueries({ queryKey: qk.issueEvents(id) });
-      toast.success('附件已上传');
+      toast.success(`已上传 ${count} 个附件`);
     },
     onError: (e) => toast.error(`附件上传失败：${(e as Error).message}`),
   });
@@ -475,6 +525,11 @@ export default function IssuePage() {
                     📦 {(project?.repos ?? []).find((r) => r.id === issue.repoId)?.name || 'repo'}
                   </span>
                 )}
+                {issue?.parentIssueId && (
+                  <Link to={`/issues/${issue.parentIssueId}`} className="badge" title="父任务">
+                    ↳ {parentQ.data?.key || '父任务'}
+                  </Link>
+                )}
                 {issue?.prUrl && (
                   <a href={issue.prUrl} target="_blank" rel="noreferrer" className="small">
                     PR ↗
@@ -531,6 +586,9 @@ export default function IssuePage() {
             >
               编辑
             </button>
+            <button className="sm" onClick={() => setSubOpen(true)}>
+              ＋ 子任务
+            </button>
             {issue?.source === 'local' && (project?.repos?.length ?? 0) > 0 && (
               <button className="sm" onClick={() => setPubOpen(true)}>
                 发布到平台…
@@ -546,23 +604,61 @@ export default function IssuePage() {
 
           <div className="panel">
             <div className="panel-h">
+              <h3 className="grow">🧩 子任务 ({subIssuesQ.data?.length ?? 0})</h3>
+              <button type="button" className="sm ghost" onClick={() => setSubOpen(true)}>+ 新建子任务</button>
+            </div>
+            <div className="panel-b">
+              {(subIssuesQ.data ?? []).length === 0 ? (
+                <span className="dim small">暂无子任务；可以把大 Issue 拆成可独立处理的子任务。</span>
+              ) : (
+                <div className="col" style={{ gap: 6 }}>
+                  {(subIssuesQ.data ?? []).map((child) => (
+                    <Link key={child.id} to={`/issues/${child.id}`} className="row" style={{ gap: 8, color: 'inherit' }}>
+                      <span className="mono small">{child.key}</span>
+                      <span className={`badge priority-${child.priority || 'normal'}`}>{PRIORITY_LABEL[child.priority] ?? '普通'}</span>
+                      <span className="badge">{ISSUE_STATUS_LABEL[child.status]}</span>
+                      <span className="grow ellipsis">{child.title}</span>
+                      <span className="dim small">{fmtTime(child.updatedAt)}</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-h">
               <h3 className="grow">📎 附件 ({attachmentsQ.data?.length ?? 0})</h3>
               <label className="sm ghost" style={{ cursor: 'pointer' }}>
-                {uploadAttachment.isPending ? '上传中…' : '+ 上传附件 / 贴图'}
+                {uploadAttachments.isPending ? '上传中…' : '+ 上传附件 / 贴图'}
                 <input
                   type="file"
                   style={{ display: 'none' }}
+                  multiple
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) uploadAttachment.mutate(file);
+                    const files = Array.from(e.target.files ?? []);
+                    if (files.length) uploadAttachments.mutate(files);
                     e.target.value = '';
                   }}
                 />
               </label>
             </div>
-            <div className="panel-b">
+            <div
+              className={`panel-b attachment-drop${attachDrag ? ' drag-over' : ''}`}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setAttachDrag(true);
+              }}
+              onDragLeave={() => setAttachDrag(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setAttachDrag(false);
+                const files = Array.from(e.dataTransfer.files);
+                if (files.length) uploadAttachments.mutate(files);
+              }}
+            >
               {(attachmentsQ.data ?? []).length === 0 ? (
-                <span className="dim small">暂无附件；图片会直接预览，其他文件可下载。</span>
+                <span className="dim small">暂无附件；拖入文件或点击右上角上传，图片会直接预览。</span>
               ) : (
                 <div className="col" style={{ gap: 8 }}>
                   <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
@@ -974,6 +1070,43 @@ export default function IssuePage() {
       {agentMgrOpen && <AgentManagerModal onClose={() => setAgentMgrOpen(false)} />}
 
       {/* 编辑 Issue 弹窗 */}
+      {subOpen && (
+        <Modal
+          title="新建子任务"
+          onClose={() => setSubOpen(false)}
+          footer={
+            <>
+              <button onClick={() => setSubOpen(false)}>取消</button>
+              <button
+                className="primary"
+                disabled={!subTitle.trim() || createSubIssue.isPending}
+                onClick={() => createSubIssue.mutate()}
+              >
+                {createSubIssue.isPending ? '创建中…' : '创建子任务'}
+              </button>
+            </>
+          }
+        >
+          <label className="field">
+            标题
+            <input autoFocus value={subTitle} onChange={(e) => setSubTitle(e.target.value)} />
+          </label>
+          <LabelPicker value={subLabels} onChange={setSubLabels} />
+          <label className="field">
+            紧要程度
+            <select value={subPriority} onChange={(e) => setSubPriority(e.target.value as IssuePriority)}>
+              {ISSUE_PRIORITIES.map((item) => (
+                <option key={item.id} value={item.id}>{item.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            正文（Markdown）
+            <textarea rows={8} className="mono" value={subBody} onChange={(e) => setSubBody(e.target.value)} />
+          </label>
+        </Modal>
+      )}
+
       {editOpen && (
         <Modal
           title="编辑 Issue"
@@ -988,7 +1121,7 @@ export default function IssuePage() {
                   updateIssue.mutate({
                     title: editTitle.trim(),
                     body: editBody,
-                    labels: splitIssueLabels(editLabels),
+                    labels: splitLabels(editLabels),
                     priority: editPriority,
                   })
                 }
@@ -1003,10 +1136,9 @@ export default function IssuePage() {
             <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
           </label>
           <div className="row" style={{ gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-            <label className="field grow" style={{ minWidth: 220 }}>
-              标签（逗号分隔）
-              <input value={editLabels} onChange={(e) => setEditLabels(e.target.value)} />
-            </label>
+            <div className="grow" style={{ minWidth: 260 }}>
+              <LabelPicker value={editLabels} onChange={setEditLabels} />
+            </div>
             <label className="field" style={{ minWidth: 140 }}>
               紧要程度
               <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as IssuePriority)}>

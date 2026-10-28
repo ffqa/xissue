@@ -189,3 +189,49 @@ func TestCreateIssueSyncsRemoteAndBindsNumber(t *testing.T) {
 		t.Fatalf("duplicate or stale issue: %+v", list)
 	}
 }
+
+func TestSubIssueCreateAndList(t *testing.T) {
+	srv, st, _ := newTestServer(t)
+	proj, _ := st.CreateProject(t.Context(), "Sub", "")
+	parent, err := st.CreateLocalIssue(t.Context(), proj.ID, "parent", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := doJSON(t, srv, http.MethodPost, "/api/projects/"+itoa(proj.ID)+"/issues", map[string]any{
+		"title": "child", "body": "child body", "parentId": parent.ID, "priority": "high",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create child: %d %s", w.Code, w.Body.String())
+	}
+	var child domain.Issue
+	if err := json.Unmarshal(w.Body.Bytes(), &child); err != nil {
+		t.Fatal(err)
+	}
+	if child.ParentIssueID == nil || *child.ParentIssueID != parent.ID {
+		t.Fatalf("parent id = %+v", child.ParentIssueID)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/issues/"+itoa(parent.ID)+"/subissues", nil)
+	req.Host = "127.0.0.1:7789"
+	w = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", w.Code, w.Body.String())
+	}
+	var children []domain.Issue
+	if err := json.Unmarshal(w.Body.Bytes(), &children); err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 || children[0].ID != child.ID {
+		t.Fatalf("children = %+v", children)
+	}
+	events, _ := st.ListIssueEvents(t.Context(), parent.ID)
+	found := false
+	for _, e := range events {
+		if e.Kind == "subissue" && strings.Contains(e.Message, child.Key) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("parent timeline missing subissue event: %+v", events)
+	}
+}

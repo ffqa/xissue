@@ -158,25 +158,26 @@ func ValidIssuePriority(p IssuePriority) bool {
 }
 
 type Issue struct {
-	ID           int64         `json:"id"`
-	ProjectID    int64         `json:"projectId"`
-	Key          string        `json:"key"`
-	Source       string        `json:"source"` // local | remote
-	RepoID       *int64        `json:"repoId"`
-	RemoteNumber *int64        `json:"remoteNumber"`
-	RemoteURL    string        `json:"remoteUrl"`
-	Title        string        `json:"title"`
-	Body         string        `json:"body"`
-	Labels       []string      `json:"labels"`
-	Priority     IssuePriority `json:"priority"`
-	Status       IssueStatus   `json:"status"`
-	ActiveRunID  *int64        `json:"activeRunId"`
-	Awaiting     bool          `json:"awaiting"`
-	PRURL        string        `json:"prUrl"`
-	PRState      string        `json:"prState"` // "" | "open" | "merged" | "closed"
-	CreatedAt    time.Time     `json:"createdAt"`
-	UpdatedAt    time.Time     `json:"updatedAt"`
-	SyncError    string        `json:"syncError,omitempty"` // transient response field, not persisted
+	ID            int64         `json:"id"`
+	ProjectID     int64         `json:"projectId"`
+	Key           string        `json:"key"`
+	Source        string        `json:"source"` // local | remote
+	RepoID        *int64        `json:"repoId"`
+	ParentIssueID *int64        `json:"parentIssueId"`
+	RemoteNumber  *int64        `json:"remoteNumber"`
+	RemoteURL     string        `json:"remoteUrl"`
+	Title         string        `json:"title"`
+	Body          string        `json:"body"`
+	Labels        []string      `json:"labels"`
+	Priority      IssuePriority `json:"priority"`
+	Status        IssueStatus   `json:"status"`
+	ActiveRunID   *int64        `json:"activeRunId"`
+	Awaiting      bool          `json:"awaiting"`
+	PRURL         string        `json:"prUrl"`
+	PRState       string        `json:"prState"` // "" | "open" | "merged" | "closed"
+	CreatedAt     time.Time     `json:"createdAt"`
+	UpdatedAt     time.Time     `json:"updatedAt"`
+	SyncError     string        `json:"syncError,omitempty"` // transient response field, not persisted
 }
 
 type IssueEvent struct {

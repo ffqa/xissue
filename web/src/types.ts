@@ -23,6 +23,15 @@ export interface RepoPullStatus {
   reason: string;
 }
 
+export interface MergedBranch {
+  name: string;
+  sha: string;
+  author: string;
+  email: string;
+  subject: string;
+  date: string;
+}
+
 export interface Repo {
   id: number;
   projectId: number;
@@ -164,6 +173,7 @@ export interface Issue {
   key: string;
   source: 'local' | 'remote';
   repoId: number | null;
+  parentIssueId: number | null;
   remoteNumber: number | null;
   remoteUrl: string;
   title: string;

@@ -273,7 +273,7 @@ function SystemMenu({
         ⚙️
       </button>
       {open && (
-        <div className="dropdown-menu" style={{ minWidth: 190 }}>
+        <div className="dropdown-menu">
           {item('⚙️ 全局设置', onSettings, '通知、浏览器提醒、更新与自动化概览')}
           {item('📡 监控中心', onMonitor, '查看监控状态、日志与通知配置')}
           {item('📊 用量统计', onUsage, '查看 Agent Token、上下文与费用汇总')}

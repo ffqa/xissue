@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.3.0` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.4.0` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.3.0`
+- **最新发布版本**: `v0.4.0`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -338,6 +338,16 @@
 - **创建即同步远程**: 创建 Issue 时可选目标仓库；仓库支持 Issue 时默认勾选「同步到远程」。后端先建本地 Issue，再调用 Provider `CreateIssue`，成功后用 `MarkIssuePublished` 写入远程 key/number/url；失败返回 201 + `syncError`，本地文本不丢失。后续远程同步按 key 更新绑定行，避免重复导入。
 - **时间线**: 新增 `issue_events` 表与 `GET /api/issues/{id}/events`；创建、状态变化、优先级、标签、远程同步/失败、附件等写入事件。前端详情页把事件、评论、Run 起止和 PR 合并成统一时间线，实时更新时失效事件查询。
 - **验证**: 新增优先级/事件、附件上传/下载/删除、远程创建并绑定/重复导入不新增等后端测试；`go test -race ./...`、`tsc --noEmit`、`vitest run`、真实 Chromium 冒烟通过。
+
+### 2.37 子任务、拖放附件、常用标签、卡片布局与分支清理（v0.4.0）
+
+- **子任务**: `issues.parent_issue_id` + `GET /api/issues/{id}/subissues`；创建 Issue 支持 `parentId`，父任务详情显示子任务列表、子任务详情显示父任务链接。父任务时间线记录「创建子任务」事件。
+- **附件拖放**: 新建 Issue 与详情页附件区都支持拖入文件；详情页多文件顺序上传，图片预览，其他文件下载。
+- **常用标签**: 新增 `LabelPicker`，`feature`/`bug`/`enhancement`/`question`/`documentation`/`ui`/`api` 可点击选中/取消，并保留自由输入。
+- **看板卡片**: 首行仓库名 + 远程/本地链接；标题加粗；摘要两行截断；底行标签/状态/优先级居左、更新时间居右，全部小字灰色。
+- **分支清理**: 新增 `GET /api/repos/{id}/merged-branches` 与 `POST /api/repos/{id}/branches/delete`；仅列出已合并到默认分支、且分支 tip 作者匹配本机 Git 身份（repo 本地配置或 global）的远程分支，支持单选/多选删除，不满足条件的 branch 在服务端也会被拒绝。
+- **菜单宽度**: 顶栏系统菜单去掉固定 190px 最小宽度，改为 `width: max-content`，按文字宽度收缩。
+- **验证**: 新增子任务 API 测试、标签 helper 测试、已合并/未合并/他人分支过滤与删除测试；`go test -race ./...`、`tsc --noEmit`、`vitest run`、Chromium 冒烟通过。
 
 ## 3. 核心架构与关键代码索引
 

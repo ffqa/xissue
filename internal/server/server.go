@@ -20,7 +20,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.3.0"
+const Version = "0.4.0"
 
 type Server struct {
 	cfg    *config.Config
@@ -235,6 +235,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/issues/{id}/comments", s.handleListComments)
 	m.HandleFunc("POST /api/issues/{id}/comments", s.handleAddComment)
 	m.HandleFunc("GET /api/issues/{id}/events", s.handleListIssueEvents)
+	m.HandleFunc("GET /api/issues/{id}/subissues", s.handleListSubIssues)
 	m.HandleFunc("GET /api/issues/{id}/attachments", s.handleListAttachments)
 	m.HandleFunc("POST /api/issues/{id}/attachments", s.handleUploadAttachment)
 	m.HandleFunc("GET /api/issues/{id}/attachments/{attachmentID}", s.handleGetAttachment)
@@ -307,6 +308,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/maintenance/prune", s.handlePruneRunStorage)
 
 	m.HandleFunc("GET /api/repos/{repoId}/branches", s.handleRepoBranches)
+	m.HandleFunc("GET /api/repos/{repoId}/merged-branches", s.handleListMergedBranches)
+	m.HandleFunc("POST /api/repos/{repoId}/branches/delete", s.handleDeleteMergedBranches)
 	m.HandleFunc("GET /api/repos/{repoId}/commits", s.handleRepoCommits)
 	m.HandleFunc("GET /api/repos/{repoId}/commits/{sha}", s.handleRepoCommitDetail)
 

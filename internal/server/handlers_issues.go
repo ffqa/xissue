@@ -39,6 +39,7 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		Labels     []string             `json:"labels"`
 		Priority   domain.IssuePriority `json:"priority"`
 		RepoID     *int64               `json:"repoId"`
+		ParentID   *int64               `json:"parentId"`
 		SyncRemote bool                 `json:"syncRemote"`
 	}
 	if err := readJSON(r, &body); err != nil {
@@ -56,6 +57,22 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 	if !domain.ValidIssuePriority(priority) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid priority %q", priority))
 		return
+	}
+	var err error
+	var parent *domain.Issue
+	if body.ParentID != nil && *body.ParentID > 0 {
+		parent, err = s.st.GetIssue(r.Context(), *body.ParentID)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		if parent.ProjectID != projectID {
+			writeErr(w, http.StatusBadRequest, errors.New("parent issue does not belong to this project"))
+			return
+		}
+		if body.RepoID == nil {
+			body.RepoID = parent.RepoID
+		}
 	}
 	var repoID *int64
 	var targetRepo *domain.Repo
@@ -82,10 +99,18 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	issue, err := s.st.CreateLocalIssueInRepo(r.Context(), projectID, repoID, strings.TrimSpace(body.Title), body.Body, body.Labels, priority)
+	var issue *domain.Issue
+	if parent != nil {
+		issue, err = s.st.CreateSubIssue(r.Context(), projectID, parent.ID, repoID, strings.TrimSpace(body.Title), body.Body, body.Labels, priority)
+	} else {
+		issue, err = s.st.CreateLocalIssueInRepo(r.Context(), projectID, repoID, strings.TrimSpace(body.Title), body.Body, body.Labels, priority)
+	}
 	if err != nil {
 		writeStoreErr(w, err)
 		return
+	}
+	if parent != nil {
+		_ = s.st.AddIssueEvent(r.Context(), parent.ID, "subissue", "me", "创建子任务 "+issue.Key)
 	}
 	if body.SyncRemote && targetRepo != nil {
 		issue = s.syncNewIssueToRemote(r.Context(), issue, *targetRepo, body.Labels)
@@ -118,6 +143,19 @@ func (s *Server) syncNewIssueToRemote(ctx context.Context, issue *domain.Issue, 
 		return issue
 	}
 	return updated
+}
+
+func (s *Server) handleListSubIssues(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	list, err := s.st.ListSubIssues(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
 }
 
 func (s *Server) handleListIssueEvents(w http.ResponseWriter, r *http.Request) {

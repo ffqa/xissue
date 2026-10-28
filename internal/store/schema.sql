@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS issues (
     key           TEXT NOT NULL,
     source        TEXT NOT NULL,
     repo_id       INTEGER REFERENCES repos(id) ON DELETE SET NULL,
+    parent_issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL,
     remote_number INTEGER,
     remote_url    TEXT NOT NULL DEFAULT '',
     title         TEXT NOT NULL,

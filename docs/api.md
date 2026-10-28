@@ -20,6 +20,11 @@
 type Provider = "github" | "gitlab" | "gitea" | "plain";
 // github、gitea 与 gitlab 均实现 Issue/PR API。
 
+interface MergedBranch {
+  name: string; sha: string; author: string; email: string;
+  subject: string; date: string;
+}
+
 interface Repo {
   id: number; projectId: number;
   name: string;            // 工作区内的目录名，如 "frontend"
@@ -72,6 +77,7 @@ interface Issue {
   key: string;             // "LOCAL-42" 或 "owner/name#12"
   source: "local" | "remote";
   repoId: number | null;   // remote issue 所在仓库
+  parentIssueId: number | null; // 父任务；子任务创建后不可成环
   remoteNumber: number | null;
   remoteUrl: string;
   title: string; body: string;  // body 为 Markdown
@@ -162,6 +168,8 @@ interface RunEvent {
 | GET / PATCH / DELETE | `/api/projects/{id}` | PATCH `{ name?, description? }` |
 | POST | `/api/projects/{id}/repos` | `{ name, provider, remoteUrl, ownerRepo, defaultBranch, testCommand }` → `Repo`；`name` 会去除首尾空白，必须是单个目录名（字母数字开头，可含空格、`.`、`-`、`_`，禁止 `/`、`\`、`..`、`.git`） |
 | DELETE | `/api/projects/{id}/repos/{repoId}` | 仓库仍被 Issue 引用时返回 409，避免 `repo_id` 被置空后执行范围丢失 |
+| GET | `/api/repos/{repoId}/merged-branches?refresh=1` | 已合并到默认分支、且 tip 作者匹配本机 Git 身份的远程分支 → `MergedBranch[]` |
+| POST | `/api/repos/{repoId}/branches/delete` | `{ branches: string[] }` → `{ deleted: string[] }`；只允许删除上列分支 |
 | POST | `/api/projects/{id}/sync` | 从平台导入 open issues → `{ imported: number }` |
 | POST | `/api/projects/{id}/pull` | 刷新所有仓库镜像；仅当本地当前分支等于目标分支且工作区干净时执行 `git pull --ff-only origin <target>`。返回 `{ ok, pulledRepos, repos, message }`，`repos[]` 逐仓说明 `mirrorUpdated`、`localUpdated`、`reason`、`error`；任一仓库 Git 失败返回 502 |
 | GET | `/api/projects/{id}/prs` | 查询项目 PR 列表（`?state=open\|merged\|closed\|all`）→ `RemotePR[]`；含可选 CI 汇总 `ciState`/`ciPassed`/`ciFailed`/`ciPending` |
@@ -177,11 +185,12 @@ interface RunEvent {
 | POST | `/api/mcp` | MCP Streamable HTTP JSON-RPC（`Accept: application/json` 或 `text/event-stream`）；无状态，所有客户端共享一个服务 |
 | DELETE | `/api/mcp` | 无状态 MCP 会话终止，返回 204 |
 | GET | `/api/projects/{id}/issues` | `Issue[]` |
-| POST | `/api/projects/{id}/issues` | `{ title, body, labels?, priority?, repoId?, syncRemote? }` → `Issue`。`syncRemote=true` 且仓库支持 Issue 时，后端创建远程 Issue 并把 `source/key/remoteNumber/remoteUrl` 绑定到本地行；失败返回 201 + `syncError`，本地 Issue 保留 |
+| POST | `/api/projects/{id}/issues` | `{ title, body, labels?, priority?, repoId?, parentId?, syncRemote? }` → `Issue`。`syncRemote=true` 且仓库支持 Issue 时，后端创建远程 Issue 并把 `source/key/remoteNumber/remoteUrl` 绑定到本地行；失败返回 201 + `syncError`，本地 Issue 保留 |
 | GET / PATCH | `/api/issues/{id}` | PATCH `{ title?, body?, labels?, priority?, status? }` |
 | POST | `/api/issues/{id}/publish` | `{ repoId }` 把本地 Issue 发布到平台 → `Issue`；`repoId` 必须属于 Issue 所在项目，否则 400 |
 | GET / POST | `/api/issues/{id}/comments` | POST `{ body }` |
 | GET | `/api/issues/{id}/events` | `IssueEvent[]`（状态/优先级/标签/远程同步/附件等时间线事件） |
+| GET | `/api/issues/{id}/subissues` | 子任务 `Issue[]` |
 | GET / POST | `/api/issues/{id}/attachments` | GET → `Attachment[]`；POST multipart `file`（单文件 ≤10MB）→ `Attachment` |
 | GET / DELETE | `/api/issues/{id}/attachments/{attachmentID}` | 下载/预览附件或删除附件 |
 | GET | `/api/issues/{id}/runs` | `Run[]`（新的在前） |

@@ -437,7 +437,8 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
   top: calc(100% + 4px);
   right: 0;
   z-index: 50;
-  min-width: 150px;
+  width: max-content;
+  max-width: min(260px, 90vw);
   background: var(--bg-1);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -599,3 +600,30 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .timeline-body { flex: 1; min-width: 0; }
 .timeline-head { display: flex; align-items: baseline; gap: 8px; }
 .timeline-body .markdown { margin-top: 3px; font-size: 12px; }
+
+.label-chip {
+  height: 18px;
+  padding: 0 7px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-3);
+}
+.label-chip:hover { border-color: var(--accent); color: var(--accent); }
+.label-chip.selected { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+
+.attachment-drop { border: 1px dashed var(--border); border-radius: 8px; padding: 10px; transition: border-color .12s, background .12s; }
+.attachment-drop.drag-over { border-color: var(--accent); background: var(--accent-bg); }
+
+.issue-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--text-3); }
+.issue-card-repo { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.issue-card-sync { font-size: 10px; opacity: .8; }
+.issue-card-link { flex: none; font-size: 11px; color: var(--text-3); cursor: pointer; }
+.issue-card-link:hover { color: var(--accent); }
+.issue-card-link.local { cursor: default; }
+.issue-card-title { font-weight: 700; font-size: 13.5px; line-height: 1.4; word-break: break-word; color: var(--text); }
+.issue-card-footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+.issue-card-meta { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; }
+.issue-card-meta .badge { font-size: 10px; height: 16px; padding: 0 5px; }
+.issue-card-status { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+.issue-card-time { font-size: 11px; color: var(--text-3); white-space: nowrap; }

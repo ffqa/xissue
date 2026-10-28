@@ -3,12 +3,14 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { PluginSlot } from '../components/PluginFrame';
+import { LabelPicker, splitLabels } from '../components/LabelPicker';
 import { availableRemoteAgentNames, filterRemoteCapable, pickDefaultAgent } from '../logic/agents';
 import { filterPRs } from '../logic/prs';
-import { Crumbs, fmtTime, Modal } from '../components/common';
+import { Crumbs, fmtTime, ISSUE_STATUS_LABEL, Modal } from '../components/common';
 import { LocalDirPickerModal } from '../components/LocalDirPicker';
 import { CherryPickModal } from '../components/CherryPickModal';
 import { PRModal } from '../components/PRModal';
+import { BranchCleanupModal } from '../components/BranchCleanupModal';
 import { CommitsModal } from '../components/CommitsModal';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
@@ -56,12 +58,6 @@ function issueCanSyncText(provider?: Provider): string {
   return `同步到 ${provider.toUpperCase()} 远程 Issue。`;
 }
 
-function splitLabels(raw: string): string[] {
-  return raw
-    .split(/[,，\n]/)
-    .map((label) => label.trim())
-    .filter(Boolean);
-}
 
 interface StageColumn {
   id: 'todo' | 'running' | 'review' | 'done';
@@ -140,6 +136,7 @@ export default function ProjectPage() {
   const [issuePriority, setIssuePriority] = useState<IssuePriority>('normal');
   const [syncRemote, setSyncRemote] = useState(false);
   const [issueFiles, setIssueFiles] = useState<DraftAttachment[]>([]);
+  const [attachDrag, setAttachDrag] = useState(false);
 
   const [watchRepoId, setWatchRepoId] = useState<number>(0);
   const [watchBranch, setWatchBranch] = useState('');
@@ -158,6 +155,7 @@ export default function ProjectPage() {
 
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [prModalOpen, setPrModalOpen] = useState(false);
+  const [branchCleanupOpen, setBranchCleanupOpen] = useState(false);
   const [commitsModal, setCommitsModal] = useState<{ repoId?: number; branch?: string; sha?: string } | null>(null);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [readmeOpen, setReadmeOpen] = useState(false);
@@ -440,6 +438,7 @@ export default function ProjectPage() {
   const closeIssueModal = () => {
     issueFiles.forEach((draft) => draft.preview && URL.revokeObjectURL(draft.preview));
     setIssueFiles([]);
+    setAttachDrag(false);
     setIssueOpen(false);
   };
 
@@ -750,6 +749,14 @@ export default function ProjectPage() {
             >
               {refreshReposMut.isPending ? '刷新中…' : '↻ 刷新'}
             </button>
+            <button
+              className="sm"
+              disabled={(p?.repos ?? []).length === 0}
+              onClick={() => setBranchCleanupOpen(true)}
+              title="清理已经合并到默认分支、但尚未删除的远程分支（只显示你的提交）"
+            >
+              🧹 清理已合并分支
+            </button>
             <button className="sm" onClick={() => setPickerOpen(true)}>
               📂 选择仓库
             </button>
@@ -1051,39 +1058,62 @@ export default function ProjectPage() {
                       draggingId === it.id ? ' dragging' : ''
                     }`}
                   >
-                    <div className="issue-card-head">
-                      <span className="title">{it.title}</span>
-                      {it.awaiting ? (
-                        <span className="badge awaiting">待审批</span>
-                      ) : (
-                        <span className="mono dim small">{it.key}</span>
-                      )}
-                      <span className={`badge priority-${it.priority || 'normal'}`}>
-                        {PRIORITY_LABEL[it.priority] ?? it.priority ?? '普通'}
+                    <div className="issue-card-top">
+                      <span className="issue-card-repo">
+                        {it.repoId
+                          ? (p?.repos ?? []).find((r) => r.id === it.repoId)?.name || 'repo'
+                          : '未绑定仓库'}
+                        {it.repoId && (
+                          <span
+                            className={`issue-card-sync ${it.source === 'remote' ? 'synced' : 'pending'}`}
+                            title={it.source === 'remote' ? `已同步远程${it.remoteNumber ? ` #${it.remoteNumber}` : ''}` : '尚未同步到远程平台'}
+                          >
+                            {it.source === 'remote' ? '☁️' : '⚠️'}
+                          </span>
+                        )}
                       </span>
-                      {it.repoId && (
+                      {it.remoteUrl ? (
                         <span
-                          className={`badge ${it.source === 'remote' ? 'sync-ok' : 'sync-pending'}`}
-                          title={it.source === 'remote' ? `已同步远程${it.remoteNumber ? ` #${it.remoteNumber}` : ''}` : '尚未同步到远程平台'}
+                          className="issue-card-link"
+                          role="link"
+                          tabIndex={0}
+                          title="在远程平台打开"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            window.open(it.remoteUrl, '_blank', 'noopener,noreferrer');
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              window.open(it.remoteUrl, '_blank', 'noopener,noreferrer');
+                            }
+                          }}
                         >
-                          ☁️
+                          远程 ↗
                         </span>
-                      )}
-                      {it.repoId && (
-                        <span className="repo-chip" style={{ margin: 0, padding: '1px 5px', fontSize: 10 }}>
-                          {(p?.repos ?? []).find((r) => r.id === it.repoId)?.name || 'repo'}
-                        </span>
+                      ) : (
+                        <span className="issue-card-link local">本地</span>
                       )}
                     </div>
+                    <div className="issue-card-title" title={it.key}>{it.title}</div>
                     <div className="issue-card-summary">{summarizeIssue(it)}</div>
-                    {(it.labels?.length ?? 0) > 0 && (
-                      <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
-                        {it.labels.slice(0, 3).map((label) => (
-                          <span className="badge" key={label} style={{ fontSize: 10, height: 16 }}>{label}</span>
+                    <div className="issue-card-footer">
+                      <div className="issue-card-meta">
+                        {(it.labels ?? []).slice(0, 3).map((label) => (
+                          <span className="badge" key={label}>{label}</span>
                         ))}
-                        {it.labels.length > 3 && <span className="dim small">+{it.labels.length - 3}</span>}
+                        {(it.labels?.length ?? 0) > 3 && <span className="dim">+{it.labels.length - 3}</span>}
+                        <span className="issue-card-status">{ISSUE_STATUS_LABEL[it.status]}</span>
+                        <span className={`badge priority-${it.priority || 'normal'}`}>
+                          {PRIORITY_LABEL[it.priority] ?? '普通'}
+                        </span>
+                        {it.awaiting && <span className="badge awaiting">待审批</span>}
+                        {it.parentIssueId && <span className="badge">子任务</span>}
                       </div>
-                    )}
+                      <span className="issue-card-time">{fmtTime(it.updatedAt)}</span>
+                    </div>
                   </Link>
                 ))}
                 {isDoneCol && list.length > 10 && (
@@ -1247,21 +1277,9 @@ export default function ProjectPage() {
           </label>
 
           <div className="row" style={{ gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-            <label className="field grow" style={{ minWidth: 220 }}>
-              标签（逗号分隔）
-              <input
-                value={issueLabels}
-                placeholder="bug, frontend, urgent"
-                onChange={(e) => setIssueLabels(e.target.value)}
-              />
-              {splitLabels(issueLabels).length > 0 && (
-                <span className="row" style={{ gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
-                  {splitLabels(issueLabels).map((label) => (
-                    <span className="badge" key={label}>{label}</span>
-                  ))}
-                </span>
-              )}
-            </label>
+            <div className="grow" style={{ minWidth: 260 }}>
+              <LabelPicker value={issueLabels} onChange={setIssueLabels} />
+            </div>
             <label className="field" style={{ minWidth: 140 }}>
               紧要程度
               <select value={issuePriority} onChange={(e) => setIssuePriority(e.target.value as IssuePriority)}>
@@ -1277,10 +1295,24 @@ export default function ProjectPage() {
             <textarea rows={8} className="mono" value={body} onChange={(e) => setBody(e.target.value)} />
           </label>
 
-          <label className="field">
-            附件 / 贴图（可选，单个最大 10MB）
-            <input type="file" multiple onChange={(e) => { addIssueFiles(e.target.files); e.target.value = ''; }} />
-          </label>
+          <div
+            className={`attachment-drop${attachDrag ? ' drag-over' : ''}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setAttachDrag(true);
+            }}
+            onDragLeave={() => setAttachDrag(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setAttachDrag(false);
+              addIssueFiles(e.dataTransfer.files);
+            }}
+          >
+            <label className="field" style={{ margin: 0 }}>
+              附件 / 贴图（可拖入，单个最大 10MB）
+              <input type="file" multiple onChange={(e) => { addIssueFiles(e.target.files); e.target.value = ''; }} />
+            </label>
+          </div>
           {issueFiles.length > 0 && (
             <div className="col" style={{ gap: 6 }}>
               {issueFiles.map((draft, index) => (
@@ -2416,6 +2448,14 @@ export default function ProjectPage() {
       )}
 
       {prModalOpen && <PRModal projectId={id} onClose={() => setPrModalOpen(false)} />}
+      {branchCleanupOpen && (
+        <Modal title="🧹 清理已合并分支" size="xl" onClose={() => setBranchCleanupOpen(false)} style={{ height: 'min(760px, 90vh)' }}>
+          <BranchCleanupModal
+            repos={p?.repos ?? []}
+            onClose={() => setBranchCleanupOpen(false)}
+          />
+        </Modal>
+      )}
       {commitsModal && (
         <CommitsModal
           projectId={id}

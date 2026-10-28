@@ -20,7 +20,8 @@ export function PRPanel({ projectId }: { projectId: number }) {
     enabled: !!projectId,
     staleTime: 30_000,
     gcTime: 30 * 60_000,
-    refetchInterval: 60_000,
+    // ProjectPage owns the single 60s timer for this shared query. Adding a
+    // second observer timer here would make provider calls land out of phase.
   });
   const prs: RemotePR[] = prsQ.data ?? [];
   const filteredPRs = filterPRs(prs, filterState);

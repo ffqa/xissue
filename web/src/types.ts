@@ -632,6 +632,15 @@ export interface DocSearchResult extends DocItem {
 
 
 
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  interval: string;
+  detail: string;
+  enabled: boolean;
+  nextRun?: string;
+}
+
 export interface SystemStatus {
   version: string;
   goVersion: string;

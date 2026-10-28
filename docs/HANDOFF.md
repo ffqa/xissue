@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.4.1` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.5.0` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.4.1`
+- **最新发布版本**: `v0.5.0`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -354,6 +354,14 @@
 - **问题**: 看板卡片整个 `<Link>` 包裹，点击任意位置都会跳转，影响拖动/选择。
 - **修复**: 卡片改为普通 `<div>`，仅右上角「详情」和「外链 ↗」是可点击链接；卡片本身保留拖拽。
 - **验证**: `tsc --noEmit`、Chromium 冒烟通过。
+
+### 2.39 Cherry-Pick 保护分支、定时任务面板与紧凑布局（v0.5.0）
+
+- **Cherry-Pick 来源保护**: 前端来源分支列表排除 `main/master/dev/develop/production/staging`，默认自动选择第一个非保护分支；后端 `Runner.CherryPick` 同样拒绝这些来源分支，防止绕过 UI。目标基准分支仍可选 main/dev。
+- **定时任务面板**: 顶栏 `⚙️ → ⏱ 定时任务` 新增 `GET /api/schedules`，列出分支/PR 监控（90s）、远程 Issue 同步（n 分钟）、版本检查（1h）、运行数据清理（6h）、监控日志裁剪（1h），显示启用状态、间隔和已知的下次运行时间；监控中心继续展示最近一次执行结果。
+- **项目头部**: 项目名与路径/描述改为同一行，减少标题区高度。
+- **看板列头**: header padding 从 10px 12px 收紧到 7px 10px，列标题与 subtitle 间距改为 2px，subtitle 字号 11px。
+- **验证**: 定时任务 API 测试、保护分支 helper 测试、`tsc`、Vitest、Chromium 冒烟。
 
 ## 3. 核心架构与关键代码索引
 

@@ -856,6 +856,16 @@ type CherryPickRequest struct {
 	Remark       string   `json:"remark"`
 }
 
+// IsProtectedCherrySource rejects primary/integration branches as a
+// cherry-pick source. Target branches may still be main/dev.
+func IsProtectedCherrySource(branch string) bool {
+	switch strings.ToLower(strings.TrimSpace(branch)) {
+	case "main", "master", "dev", "develop", "production", "prod", "staging":
+		return true
+	}
+	return false
+}
+
 type CherryPickResult struct {
 	IssueID      int64  `json:"issueId"`
 	IssueKey     string `json:"issueKey"`
@@ -870,6 +880,9 @@ type CherryPickResult struct {
 func (r *Runner) CherryPick(ctx context.Context, req CherryPickRequest) (*CherryPickResult, error) {
 	if len(req.SHAs) == 0 {
 		return nil, fmt.Errorf("请至少选择一个要 Cherry-Pick 的 Commit")
+	}
+	if IsProtectedCherrySource(req.SourceBranch) {
+		return nil, fmt.Errorf("不能从受保护分支 %q Cherry-Pick；请选择 feature/fix 等改动分支", strings.TrimSpace(req.SourceBranch))
 	}
 	repo, err := r.st.GetRepo(ctx, req.RepoID)
 	if err != nil {

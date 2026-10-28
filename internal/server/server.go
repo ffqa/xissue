@@ -20,7 +20,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.4.1"
+const Version = "0.5.0"
 
 type Server struct {
 	cfg    *config.Config
@@ -293,6 +293,7 @@ func (s *Server) routes() {
 	m.HandleFunc("PUT /api/projects/{id}/docs/save", s.handleSaveProjectDoc)
 
 	m.HandleFunc("GET /api/monitor/status", s.handleMonitorStatus)
+	m.HandleFunc("GET /api/schedules", s.handleListSchedules)
 	m.HandleFunc("GET /api/usage", s.handleUsage)
 	m.HandleFunc("GET /api/settings", s.handleGetSettings)
 	m.HandleFunc("PATCH /api/settings", s.handlePatchSettings)

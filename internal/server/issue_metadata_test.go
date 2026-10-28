@@ -235,3 +235,27 @@ func TestSubIssueCreateAndList(t *testing.T) {
 		t.Fatalf("parent timeline missing subissue event: %+v", events)
 	}
 }
+
+func TestSchedulesEndpointListsLoops(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/schedules", nil)
+	req.Host = "127.0.0.1:7789"
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("schedules: %d %s", w.Code, w.Body.String())
+	}
+	var tasks []ScheduledTask
+	if err := json.Unmarshal(w.Body.Bytes(), &tasks); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, task := range tasks {
+		ids[task.ID] = true
+	}
+	for _, want := range []string{"watcher", "issue-sync", "auto-update", "retention", "log-prune"} {
+		if !ids[want] {
+			t.Fatalf("missing schedule %q: %+v", want, tasks)
+		}
+	}
+}

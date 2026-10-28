@@ -6,6 +6,9 @@ import { toast } from '../toast';
 import { copyText } from '../clipboard';
 import type { CherryPickResult, Repo } from '../types';
 
+const PROTECTED_SOURCES = new Set(['main', 'master', 'dev', 'develop', 'production', 'prod', 'staging']);
+const isProtectedSource = (branch: string) => PROTECTED_SOURCES.has(branch.trim().toLowerCase());
+
 export function formatChangeRecord(
   items: string[],
   sourceBranch: string,
@@ -61,9 +64,10 @@ export function CherryPickModal({
     enabled: repoId > 0,
   });
   const branches = branchesQ.data ?? [];
+  const sourceBranches = branches.filter((branch) => !isProtectedSource(branch));
 
   const [sourceBranch, setSourceBranch] = useState(
-    initialSourceBranch || currentRepo?.defaultBranch || 'main',
+    initialSourceBranch && !isProtectedSource(initialSourceBranch) ? initialSourceBranch : '',
   );
   const [targetBranch, setTargetBranch] = useState(currentRepo?.defaultBranch || 'main');
   const [newBranch, setNewBranch] = useState('');
@@ -73,6 +77,13 @@ export function CherryPickModal({
   const [itemsText, setItemsText] = useState('');
   const [remark, setRemark] = useState('');
   const [result, setResult] = useState<CherryPickResult | null>(null);
+
+  useEffect(() => {
+    if (!sourceBranch || isProtectedSource(sourceBranch)) {
+      setSourceBranch(sourceBranches[0] ?? '');
+      setSelectedShas([]);
+    }
+  }, [repoId, sourceBranches.join('\u0000'), sourceBranch]);
 
   const commitsQ = useQuery({
     queryKey: qk.repoCommits(repoId, sourceBranch),
@@ -180,7 +191,7 @@ export function CherryPickModal({
             <button
               type="button"
               className="primary"
-              disabled={cpMut.isPending || selectedShas.length === 0 || !repoId}
+              disabled={cpMut.isPending || selectedShas.length === 0 || !repoId || !sourceBranch || isProtectedSource(sourceBranch)}
               onClick={() => cpMut.mutate()}
             >
               {cpMut.isPending
@@ -242,6 +253,7 @@ export function CherryPickModal({
                   const id = Number(e.target.value);
                   setRepoId(id);
                   setSelectedShas([]);
+                  setSourceBranch('');
                   const r = repos.find((x) => x.id === id);
                   if (r) {
                     setTargetBranch(r.defaultBranch || 'main');
@@ -266,13 +278,16 @@ export function CherryPickModal({
                   setSourceBranch(e.target.value);
                   setSelectedShas([]);
                 }}
-                placeholder="例如：dev / feat-xxx"
+                placeholder="例如：feature/xxx（不能是 main/dev/develop）"
               />
               <datalist id="cp-source-branches">
-                {branches.map((b) => (
+                {sourceBranches.map((b) => (
                   <option key={b} value={b} />
                 ))}
               </datalist>
+              {isProtectedSource(sourceBranch) && (
+                <span className="small" style={{ color: 'var(--orange)' }}>不能从主分支/集成分支选取提交</span>
+              )}
             </label>
 
             <label className="field">

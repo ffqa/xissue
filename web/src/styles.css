@@ -216,11 +216,12 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
   transition: border-color .15s, background .15s, box-shadow .15s;
 }
 .board-col.drag-over { border-color: var(--accent); background: var(--accent-bg); box-shadow: 0 0 0 1px var(--accent); }
+.board-col-h > .small { font-size: 11px; line-height: 1.25; }
 .board-col-h {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: 2px;
+  padding: 7px 10px;
   font-weight: 600;
   font-size: 13px;
   color: var(--text);

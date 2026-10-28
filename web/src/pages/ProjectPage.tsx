@@ -609,9 +609,13 @@ export default function ProjectPage() {
         </Crumbs>
 
       <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <div className="grow">
-          <h1>{p?.name ?? '加载中…'}</h1>
-          {p?.description && <div className="muted small">{p.description}</div>}
+        <div className="grow" style={{ minWidth: 0 }}>
+          <div className="row" style={{ gap: 10, alignItems: 'baseline', minWidth: 0 }}>
+            <h1 style={{ flex: 'none' }}>{p?.name ?? '加载中…'}</h1>
+            {p?.description && (
+              <span className="muted small ellipsis" style={{ flex: 1, minWidth: 0 }}>{p.description}</span>
+            )}
+          </div>
           {p?.runnerId && (() => {
             const r = (runnersQ.data?.runners ?? []).find((x) => x.id === p.runnerId);
             return (
@@ -974,7 +978,7 @@ export default function ProjectPage() {
                 }
               }}
             >
-              <div className="board-col-h" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+              <div className="board-col-h" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 2 }}>
                 <div className="row">
                   <span className="grow">{col.title}</span>
                   {col.id === 'todo' && (

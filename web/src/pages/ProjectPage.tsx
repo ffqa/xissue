@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { PluginSlot } from '../components/PluginFrame';
 import { availableRemoteAgentNames, filterRemoteCapable, pickDefaultAgent } from '../logic/agents';
+import { filterPRs } from '../logic/prs';
 import { Crumbs, fmtTime, Modal } from '../components/common';
 import { LocalDirPickerModal } from '../components/LocalDirPicker';
 import { CherryPickModal } from '../components/CherryPickModal';
@@ -329,6 +330,7 @@ export default function ProjectPage() {
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: qk.watches(id) });
       qc.invalidateQueries({ queryKey: qk.issues(id) });
+      qc.invalidateQueries({ queryKey: qk.projectPRs(id) });
       qc.invalidateQueries({ queryKey: qk.notifications });
       toast.success(
         `已检查分支与 PR 状态：${r.watchesTriggered} 个分支有新推送，${r.prsUpdated} 个 PR 状态已更新`,
@@ -337,11 +339,18 @@ export default function ProjectPage() {
     onError: (e) => toast.error((e as Error).message),
   });
 
-  const openPRsQ = useQuery({
-    queryKey: qk.projectPRs(id, 'open'),
-    queryFn: () => api.projectPRs(id, 'open'),
+  // Keep the full PR list warm while the project page is open. The PR modal
+  // reads the same cache, so opening it or switching to Merged/Closed is
+  // instant; open PRs still refresh every 60s and update the badge.
+  const projectPRsQ = useQuery({
+    queryKey: qk.projectPRs(id, 'all'),
+    queryFn: () => api.projectPRs(id, 'all'),
+    enabled: !!id,
+    staleTime: 30_000,
+    gcTime: 30 * 60_000,
+    refetchInterval: 60_000,
   });
-  const openPRCount = openPRsQ.data?.length ?? 0;
+  const openPRCount = filterPRs(projectPRsQ.data ?? [], 'open').length;
 
   const pullMut = useMutation({
     mutationFn: () => api.pullProject(id),

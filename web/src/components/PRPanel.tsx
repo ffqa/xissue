@@ -4,18 +4,26 @@ import { api, qk } from '../api';
 import { fmtTime } from './common';
 import { toast } from '../toast';
 import type { RemotePR } from '../types';
+import { filterPRs, type PRFilter } from '../logic/prs';
 
 export function PRPanel({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
-  const [filterState, setFilterState] = useState<'open' | 'merged' | 'closed' | 'all'>('open');
+  const [filterState, setFilterState] = useState<PRFilter>('open');
   const [mergeMethods, setMergeMethods] = useState<Record<number, 'squash' | 'merge' | 'rebase'>>({});
 
+  // One query for every tab. ProjectPage keeps it warm and refreshes it every
+  // 60s, so opening the modal shows the cached list immediately; switching to
+  // Merged/Closed never waits for another provider request.
   const prsQ = useQuery({
-    queryKey: qk.projectPRs(projectId, filterState),
-    queryFn: () => api.projectPRs(projectId, filterState),
+    queryKey: qk.projectPRs(projectId, 'all'),
+    queryFn: () => api.projectPRs(projectId, 'all'),
     enabled: !!projectId,
+    staleTime: 30_000,
+    gcTime: 30 * 60_000,
+    refetchInterval: 60_000,
   });
   const prs: RemotePR[] = prsQ.data ?? [];
+  const filteredPRs = filterPRs(prs, filterState);
 
   const pullMut = useMutation({
     mutationFn: () => api.pullProject(projectId),
@@ -86,7 +94,8 @@ export function PRPanel({ projectId }: { projectId: number }) {
             {t.label}
           </button>
         ))}
-        <span className="small muted">共 {prs.length} 个 PR</span>
+        <span className="small muted">共 {filteredPRs.length} 个 PR</span>
+        <span className="small dim">每 60 秒自动刷新</span>
         <span className="grow" />
         <button
           className="primary sm"
@@ -97,14 +106,14 @@ export function PRPanel({ projectId }: { projectId: number }) {
           {pullMut.isPending ? '正在拉取…' : '📥 拉取最新代码'}
         </button>
         <button className="sm ghost" onClick={() => prsQ.refetch()} disabled={prsQ.isFetching}>
-          ↻ 刷新
+          {prsQ.isFetching ? '刷新中…' : '↻ 刷新'}
         </button>
       </div>
 
       <div className="panel pr-panel">
         <div className="pr-list">
           {prsQ.isLoading && <div className="empty">正在获取项目 Pull Request 列表…</div>}
-          {!prsQ.isLoading && prs.length === 0 && (
+          {!prsQ.isLoading && filteredPRs.length === 0 && (
             <div className="empty">
               当前状态下无 Pull Request。
               {filterState !== 'all' && (
@@ -115,7 +124,7 @@ export function PRPanel({ projectId }: { projectId: number }) {
             </div>
           )}
 
-          {prs.map((pr) => {
+          {filteredPRs.map((pr) => {
             const isMerged = pr.state === 'merged';
             const isOpen = pr.state === 'open';
             return (

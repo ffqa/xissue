@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.40` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.41` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.40`
+- **最新发布版本**: `v0.2.41`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -314,6 +314,14 @@
 - **沙盒重建回归测试**: 新增 `web/src/components/PluginFrame.test.tsx`（Vitest + jsdom）。测试切换 `qk.settings` 的 `pluginUISandbox`，断言 iframe 元素被替换、`sandbox` 属性正确，并断言设置缓存有效时不会额外请求 `/api/settings`。
 - **测试有效性**: 临时移除 iframe 的 `key` 后该测试失败，恢复后通过，证明它确实覆盖了“属性变了但旧 iframe 仍保留权限”的回归。
 - **验证**: `tsc --noEmit`、`vitest run`（25 用例）与 `make build` 通过。
+
+### 2.34 PR 列表定时刷新与状态缓存（v0.2.41）
+
+- **单一缓存**: 项目页后台每 60 秒请求一次 `state=all` 的 PR 列表，PR 弹窗复用同一个 React Query 缓存；打开弹窗或切换 Open/Merged/Closed/All 时直接展示已有数据，只在后台刷新，不再每次点击都阻塞等待。
+- **已合并/已关闭缓存**: 一次 `all` 请求同时缓存所有状态；弹窗内过滤在客户端完成。实测打开弹窗后切换全部四个标签，`/api/projects/2/prs` 请求数保持为 1。
+- **缓存生命周期**: `staleTime` 30 秒、`gcTime` 30 分钟；项目页保持挂载时每 60 秒自动刷新，打开 PR 按钮角标也随之更新。合并、关闭、拉取和「检查状态」操作仍会主动失效缓存。
+- **首屏**: 第一次进入项目页仍需一次真实 provider 请求；之后打开弹窗/切换标签走缓存，后台刷新不遮挡旧列表。
+- **验证**: 新增 `filterPRs` 单元测试；`vitest run` 27 用例、`tsc --noEmit`、`make build` 通过。真实页面确认弹窗显示「每 60 秒自动刷新」，切换标签无新增 PR 请求。
 
 ## 3. 核心架构与关键代码索引
 

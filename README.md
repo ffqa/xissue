@@ -98,6 +98,7 @@ chmod +x ~/.local/bin/xissue
 
 ## ✨ 核心特性
 
+- **Issue 元数据与时间线**：创建/编辑 Issue 支持标签、优先级（低/普通/高/紧急）、附件与贴图；绑定仓库时可在创建时同步远程 Issue 并回填远程编号，后续同步按远程 key 更新而不是重复导入。详情页提供状态、仓库、远程/PR 关联以及由创建、状态、优先级、标签、评论、Run、附件组成的统一时间线。
 - **Git 平台适配**：GitHub 复用本机 `gh`；Gitea/Forgejo 与 GitLab 使用 REST API（Issue/评论/标签/PR 或 MR 创建/合并/关闭/状态同步）。连接信息只从环境变量读取：Gitea 用 `XISSUE_GITEA_URL`（或 `GITEA_URL`）与 `XISSUE_GITEA_TOKEN`（或 `GITEA_TOKEN` / `GITEA_ACCESS_TOKEN`）；GitLab 用 `XISSUE_GITLAB_URL`（或 `GITLAB_URL`，如 `https://gitlab.com`）与 `XISSUE_GITLAB_TOKEN`（或 `GITLAB_TOKEN` / `GITLAB_PRIVATE_TOKEN`）。Token 不写入数据库或 Web UI，也不会传给 Agent 子进程。PR/MR 列表会展示 CI 汇总徽标；GitLab 支持嵌套 group/project 路径。
 - **🖥️ 远程执行节点**：项目可把 Run 派发到另一台机器上的 `xissue runner`；节点主动拨出 WebSocket，无需公网入口。远程 Run 支持事件流、权限审批、会话续跑、Diff 编辑、提交/提 PR，服务端负责状态与 PR 编排。
 - **单仓 / 多仓统一模型**：一个 Project 包含 `1..N` 个 Git 仓库。每次 Run 为各仓库从本地 bare mirror 创建独立 `git worktree` 放在同一父目录下，Agent 可跨仓库修改；提交时按仓库分别 commit / push / 提 PR。

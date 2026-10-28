@@ -22,13 +22,21 @@ import {
   type HookStatus,
   type InspectResult,
   type Issue,
+  type IssuePriority,
   type IssueStatus,
+  ISSUE_PRIORITIES,
   type Provider,
   type RepoInput,
   type RuleAction,
 } from '../types';
 
 const PROVIDERS: Provider[] = ['github', 'gitlab', 'gitea', 'plain'];
+const PRIORITY_LABEL: Record<IssuePriority, string> = {
+  low: '低',
+  normal: '普通',
+  high: '高',
+  urgent: '紧急',
+};
 const emptyRepo: RepoInput = {
   name: '',
   provider: 'github',
@@ -37,6 +45,23 @@ const emptyRepo: RepoInput = {
   defaultBranch: 'main',
   testCommand: '',
 };
+
+interface DraftAttachment {
+  file: File;
+  preview?: string;
+}
+
+function issueCanSyncText(provider?: Provider): string {
+  if (!provider || provider === 'plain') return '该仓库不支持远程 Issue。';
+  return `同步到 ${provider.toUpperCase()} 远程 Issue。`;
+}
+
+function splitLabels(raw: string): string[] {
+  return raw
+    .split(/[,，\n]/)
+    .map((label) => label.trim())
+    .filter(Boolean);
+}
 
 interface StageColumn {
   id: 'todo' | 'running' | 'review' | 'done';
@@ -111,6 +136,10 @@ export default function ProjectPage() {
   const [body, setBody] = useState('');
   const [autoRunNew, setAutoRunNew] = useState(false);
   const [issueRepoId, setIssueRepoId] = useState(0);
+  const [issueLabels, setIssueLabels] = useState('');
+  const [issuePriority, setIssuePriority] = useState<IssuePriority>('normal');
+  const [syncRemote, setSyncRemote] = useState(false);
+  const [issueFiles, setIssueFiles] = useState<DraftAttachment[]>([]);
 
   const [watchRepoId, setWatchRepoId] = useState<number>(0);
   const [watchBranch, setWatchBranch] = useState('');
@@ -241,6 +270,8 @@ export default function ProjectPage() {
     ? filterRemoteCapable(agentsQ.data ?? [], remoteRunner?.agents, Boolean(remoteRunner?.agentsKnown))
     : (agentsQ.data ?? []).filter((a) => a.available);
   const defaultAgent = pickDefaultAgent(configuredAgent, usableAgents);
+  const selectedIssueRepo = (project.data?.repos ?? []).find((repo) => repo.id === issueRepoId);
+  const issueRepoCanSync = Boolean(selectedIssueRepo && selectedIssueRepo.provider !== 'plain');
 
   const refreshProject = () => {
     qc.invalidateQueries({ queryKey: qk.project(id) });
@@ -387,20 +418,73 @@ export default function ProjectPage() {
     onError: (e) => toast.error((e as Error).message),
   });
 
+  const addIssueFiles = (files: FileList | null) => {
+    if (!files) return;
+    setIssueFiles((prev) => [
+      ...prev,
+      ...Array.from(files).map((file) => ({
+        file,
+        preview: file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined,
+      })),
+    ]);
+  };
+
+  const removeIssueFile = (index: number) => {
+    setIssueFiles((prev) => {
+      const removed = prev[index];
+      if (removed?.preview) URL.revokeObjectURL(removed.preview);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
+  const closeIssueModal = () => {
+    issueFiles.forEach((draft) => draft.preview && URL.revokeObjectURL(draft.preview));
+    setIssueFiles([]);
+    setIssueOpen(false);
+  };
+
   const createIssue = useMutation({
     mutationFn: async () => {
-      const iss = await api.createIssue(id, { title: title.trim(), body, repoId: issueRepoId || undefined });
+      const iss = await api.createIssue(id, {
+        title: title.trim(),
+        body,
+        labels: splitLabels(issueLabels),
+        priority: issuePriority,
+        repoId: issueRepoId || undefined,
+        syncRemote: syncRemote && issueRepoId > 0,
+      });
+      let attachmentError = '';
+      for (const draft of issueFiles) {
+        try {
+          await api.uploadAttachment(iss.id, draft.file);
+        } catch (e) {
+          attachmentError = (e as Error).message;
+        }
+      }
       if (autoRunNew) {
         await api.startRun(iss.id, { agent: defaultAgent });
       }
-      return iss;
+      return { iss, attachmentError };
     },
-    onSuccess: (iss) => {
+    onSuccess: ({ iss, attachmentError }) => {
       qc.invalidateQueries({ queryKey: qk.issues(id) });
+      qc.invalidateQueries({ queryKey: qk.issueEvents(iss.id) });
+      qc.invalidateQueries({ queryKey: qk.attachments(iss.id) });
+      issueFiles.forEach((draft) => draft.preview && URL.revokeObjectURL(draft.preview));
+      setIssueFiles([]);
       setTitle('');
       setBody('');
+      setIssueLabels('');
+      setIssuePriority('normal');
       setIssueRepoId(0);
+      setSyncRemote(false);
       setIssueOpen(false);
+      if (iss.syncError) {
+        toast.error(`已创建 ${iss.key}，但同步远程失败：${iss.syncError}`);
+      } else if (iss.source === 'remote') {
+        toast.success(`已创建并同步远程 Issue ${iss.key}`);
+      }
+      if (attachmentError) toast.error(`附件上传失败：${attachmentError}`);
       if (autoRunNew) {
         toast.success(`已创建 ${iss.key} 并立即启动 Agent 执行`);
         nav(`/issues/${iss.id}`);
@@ -888,7 +972,20 @@ export default function ProjectPage() {
                   <span className="grow">{col.title}</span>
                   {col.id === 'todo' && (
                     <div className="row" style={{ gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                      <button type="button" className="sm ghost" onClick={() => setIssueOpen(true)} title="新建一个待办 Issue">
+                      <button
+                        type="button"
+                        className="sm ghost"
+                        onClick={() => {
+                          const onlyRepo = (p?.repos ?? []).length === 1 ? p?.repos?.[0] : undefined;
+                          setIssueRepoId(onlyRepo?.id ?? 0);
+                          setSyncRemote(Boolean(onlyRepo && onlyRepo.provider !== 'plain'));
+                          setIssueLabels('');
+                          setIssuePriority('normal');
+                          setIssueFiles([]);
+                          setIssueOpen(true);
+                        }}
+                        title="新建一个待办 Issue"
+                      >
                         + 新建
                       </button>
                       <button
@@ -961,6 +1058,17 @@ export default function ProjectPage() {
                       ) : (
                         <span className="mono dim small">{it.key}</span>
                       )}
+                      <span className={`badge priority-${it.priority || 'normal'}`}>
+                        {PRIORITY_LABEL[it.priority] ?? it.priority ?? '普通'}
+                      </span>
+                      {it.repoId && (
+                        <span
+                          className={`badge ${it.source === 'remote' ? 'sync-ok' : 'sync-pending'}`}
+                          title={it.source === 'remote' ? `已同步远程${it.remoteNumber ? ` #${it.remoteNumber}` : ''}` : '尚未同步到远程平台'}
+                        >
+                          ☁️
+                        </span>
+                      )}
                       {it.repoId && (
                         <span className="repo-chip" style={{ margin: 0, padding: '1px 5px', fontSize: 10 }}>
                           {(p?.repos ?? []).find((r) => r.id === it.repoId)?.name || 'repo'}
@@ -968,6 +1076,14 @@ export default function ProjectPage() {
                       )}
                     </div>
                     <div className="issue-card-summary">{summarizeIssue(it)}</div>
+                    {(it.labels?.length ?? 0) > 0 && (
+                      <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+                        {it.labels.slice(0, 3).map((label) => (
+                          <span className="badge" key={label} style={{ fontSize: 10, height: 16 }}>{label}</span>
+                        ))}
+                        {it.labels.length > 3 && <span className="dim small">+{it.labels.length - 3}</span>}
+                      </div>
+                    )}
                   </Link>
                 ))}
                 {isDoneCol && list.length > 10 && (
@@ -1060,7 +1176,7 @@ export default function ProjectPage() {
       {issueOpen && (
         <Modal
           title="新建 Issue"
-          onClose={() => setIssueOpen(false)}
+          onClose={closeIssueModal}
           footer={
             <>
               <label className="row small" style={{ gap: 6, cursor: 'pointer', marginRight: 'auto' }}>
@@ -1071,7 +1187,7 @@ export default function ProjectPage() {
                 />
                 创建后立即启动 Agent ({defaultAgent}) 自动执行
               </label>
-              <button onClick={() => setIssueOpen(false)}>取消</button>
+              <button onClick={closeIssueModal}>取消</button>
               <button
                 className="primary"
                 disabled={!title.trim() || createIssue.isPending}
@@ -1082,30 +1198,105 @@ export default function ProjectPage() {
             </>
           }
         >
-          {(p?.repos ?? []).length > 1 && (
+          {(p?.repos ?? []).length > 0 && (
             <label className="field">
-              目标仓库（可选）
-              <select value={issueRepoId} onChange={(e) => setIssueRepoId(Number(e.target.value))}>
-                <option value={0}>不限定 / 由 Agent 判断（加载全部仓库）</option>
+              目标仓库
+              <select
+                value={issueRepoId}
+                onChange={(e) => {
+                  const next = Number(e.target.value);
+                  setIssueRepoId(next);
+                  const repo = (p?.repos ?? []).find((r) => r.id === next);
+                  setSyncRemote(Boolean(repo && repo.provider !== 'plain'));
+                }}
+              >
+                <option value={0}>不绑定仓库 / 由 Agent 判断</option>
                 {(p?.repos ?? []).map((repo) => (
                   <option key={repo.id} value={repo.id}>
-                    {repo.name} · {repo.ownerRepo || repo.remoteUrl}
+                    {repo.name} · {repo.provider} · {repo.ownerRepo || repo.remoteUrl}
                   </option>
                 ))}
               </select>
               <span className="small dim">
-                选择后只检出该仓库，Agent 只能修改它；不选则加载项目全部仓库，由 Agent 自行判断。
+                选择后只检出该仓库，Agent 只能修改它；不选则加载项目全部仓库。
               </span>
             </label>
           )}
+
+          {(p?.repos ?? []).length > 0 && issueRepoId === 0 && (
+            <span className="small dim">选择仓库后可勾选同步到远程平台。</span>
+          )}
+          {issueRepoId > 0 && (
+            <label className="row small" style={{ gap: 8, cursor: issueRepoCanSync ? 'pointer' : 'not-allowed' }}>
+              <input
+                type="checkbox"
+                checked={syncRemote && issueRepoCanSync}
+                disabled={!issueRepoCanSync}
+                onChange={(e) => setSyncRemote(e.target.checked)}
+              />
+              <span>
+                {issueCanSyncText(selectedIssueRepo?.provider)}
+                {issueRepoCanSync && ' 创建后自动绑定远程 Issue，避免后续同步重复导入。'}
+              </span>
+            </label>
+          )}
+
           <label className="field">
             标题
             <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} />
           </label>
+
+          <div className="row" style={{ gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <label className="field grow" style={{ minWidth: 220 }}>
+              标签（逗号分隔）
+              <input
+                value={issueLabels}
+                placeholder="bug, frontend, urgent"
+                onChange={(e) => setIssueLabels(e.target.value)}
+              />
+              {splitLabels(issueLabels).length > 0 && (
+                <span className="row" style={{ gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                  {splitLabels(issueLabels).map((label) => (
+                    <span className="badge" key={label}>{label}</span>
+                  ))}
+                </span>
+              )}
+            </label>
+            <label className="field" style={{ minWidth: 140 }}>
+              紧要程度
+              <select value={issuePriority} onChange={(e) => setIssuePriority(e.target.value as IssuePriority)}>
+                {ISSUE_PRIORITIES.map((item) => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
           <label className="field">
             正文（Markdown）
-            <textarea rows={10} className="mono" value={body} onChange={(e) => setBody(e.target.value)} />
+            <textarea rows={8} className="mono" value={body} onChange={(e) => setBody(e.target.value)} />
           </label>
+
+          <label className="field">
+            附件 / 贴图（可选，单个最大 10MB）
+            <input type="file" multiple onChange={(e) => { addIssueFiles(e.target.files); e.target.value = ''; }} />
+          </label>
+          {issueFiles.length > 0 && (
+            <div className="col" style={{ gap: 6 }}>
+              {issueFiles.map((draft, index) => (
+                <div key={`${draft.file.name}-${index}`} className="row small" style={{ gap: 8 }}>
+                  {draft.preview ? (
+                    <img src={draft.preview} alt={draft.file.name} style={{ width: 46, height: 46, objectFit: 'cover', borderRadius: 4 }} />
+                  ) : (
+                    <span>📎</span>
+                  )}
+                  <span className="grow ellipsis">{draft.file.name}</span>
+                  <span className="dim">{Math.ceil(draft.file.size / 1024)} KB</span>
+                  <button type="button" className="ghost sm" onClick={() => removeIssueFile(index)}>移除</button>
+                </div>
+              ))}
+            </div>
+          )}
         </Modal>
       )}
 

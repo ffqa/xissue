@@ -3,9 +3,14 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
+	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/provider"
 	"github.com/xpier/xissue/internal/store"
 )
@@ -29,10 +34,12 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Title  string   `json:"title"`
-		Body   string   `json:"body"`
-		Labels []string `json:"labels"`
-		RepoID *int64   `json:"repoId"`
+		Title      string               `json:"title"`
+		Body       string               `json:"body"`
+		Labels     []string             `json:"labels"`
+		Priority   domain.IssuePriority `json:"priority"`
+		RepoID     *int64               `json:"repoId"`
+		SyncRemote bool                 `json:"syncRemote"`
 	}
 	if err := readJSON(r, &body); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -42,7 +49,16 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, errors.New("title is required"))
 		return
 	}
+	priority := body.Priority
+	if priority == "" {
+		priority = domain.IssuePriorityNormal
+	}
+	if !domain.ValidIssuePriority(priority) {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid priority %q", priority))
+		return
+	}
 	var repoID *int64
+	var targetRepo *domain.Repo
 	if body.RepoID != nil && *body.RepoID > 0 {
 		repo, err := s.st.GetRepo(r.Context(), *body.RepoID)
 		if err != nil {
@@ -54,15 +70,67 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		repoID = &repo.ID
+		targetRepo = repo
 	}
-	issue, err := s.st.CreateLocalIssueInRepo(r.Context(), projectID, repoID, strings.TrimSpace(body.Title), body.Body, body.Labels)
+	if body.SyncRemote {
+		if targetRepo == nil {
+			writeErr(w, http.StatusBadRequest, errors.New("syncRemote requires a repository"))
+			return
+		}
+		if !provider.For(targetRepo.Provider).Caps().Issues {
+			writeErr(w, http.StatusBadRequest, errors.New("this repository provider does not support remote issues"))
+			return
+		}
+	}
+	issue, err := s.st.CreateLocalIssueInRepo(r.Context(), projectID, repoID, strings.TrimSpace(body.Title), body.Body, body.Labels, priority)
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
+	if body.SyncRemote && targetRepo != nil {
+		issue = s.syncNewIssueToRemote(r.Context(), issue, *targetRepo, body.Labels)
+	}
 	s.runner.ExportIssueMarkdown(r.Context(), issue.ID)
 	s.hub.BroadcastIssueUpdated(issue)
 	writeJSON(w, http.StatusCreated, issue)
+}
+
+// syncNewIssueToRemote creates the platform issue and binds its number/key to
+// the local row. The local issue is kept on failure so the user does not lose
+// their text; the transient SyncError is shown by the create dialog.
+func (s *Server) syncNewIssueToRemote(ctx context.Context, issue *domain.Issue, repo domain.Repo, labels []string) *domain.Issue {
+	p := provider.For(repo.Provider)
+	ri, err := p.CreateIssue(ctx, repo, issue.Title, issue.Body)
+	if err != nil {
+		issue.SyncError = err.Error()
+		_ = s.st.AddIssueEvent(ctx, issue.ID, "remote_sync_failed", "system", "远程 Issue 创建失败: "+err.Error())
+		return issue
+	}
+	if len(labels) > 0 {
+		if err := p.AddLabels(ctx, repo, ri.Number, labels); err != nil {
+			_ = s.st.AddIssueEvent(ctx, issue.ID, "remote_sync_warning", "system", "远程标签写入失败: "+err.Error())
+		}
+	}
+	updated, err := s.st.MarkIssuePublished(ctx, issue.ID, repo.ID, ri.Number, provider.IssueKey(repo, ri.Number), ri.URL)
+	if err != nil {
+		issue.SyncError = err.Error()
+		_ = s.st.AddIssueEvent(ctx, issue.ID, "remote_sync_failed", "system", "远程 Issue 已创建但本地绑定失败: "+err.Error())
+		return issue
+	}
+	return updated
+}
+
+func (s *Server) handleListIssueEvents(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	list, err := s.st.ListIssueEvents(r.Context(), id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
 }
 
 func (s *Server) handleGetIssue(w http.ResponseWriter, r *http.Request) {
@@ -116,6 +184,7 @@ func (s *Server) handleDeleteIssue(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	_ = os.RemoveAll(filepath.Join(s.cfg.AttachmentsDir(), strconv.FormatInt(id, 10)))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -131,6 +200,9 @@ func (s *Server) handleBatchDeleteIssues(w http.ResponseWriter, r *http.Request)
 		s.cancelIssueRuns(r.Context(), id)
 	}
 	n, err := s.st.BatchDeleteIssues(r.Context(), body.IDs)
+	for _, id := range body.IDs {
+		_ = os.RemoveAll(filepath.Join(s.cfg.AttachmentsDir(), strconv.FormatInt(id, 10)))
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return

@@ -642,6 +642,8 @@ func (c *Config) RunsDir() string    { return filepath.Join(c.DataDir, "runs") }
 func (c *Config) IssuesDir() string  { return filepath.Join(c.DataDir, "issues") }
 func (c *Config) PluginsDir() string { return filepath.Join(c.DataDir, "plugins") }
 
+func (c *Config) AttachmentsDir() string { return filepath.Join(c.DataDir, "attachments") }
+
 // DefaultAgentName returns the globally preferred agent, if configured.
 func (c *Config) DefaultAgentName() string {
 	c.mu.RLock()

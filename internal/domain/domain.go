@@ -140,24 +140,62 @@ func ValidIssueStatus(s IssueStatus) bool {
 	return false
 }
 
+type IssuePriority string
+
+const (
+	IssuePriorityLow    IssuePriority = "low"
+	IssuePriorityNormal IssuePriority = "normal"
+	IssuePriorityHigh   IssuePriority = "high"
+	IssuePriorityUrgent IssuePriority = "urgent"
+)
+
+func ValidIssuePriority(p IssuePriority) bool {
+	switch p {
+	case IssuePriorityLow, IssuePriorityNormal, IssuePriorityHigh, IssuePriorityUrgent:
+		return true
+	}
+	return false
+}
+
 type Issue struct {
-	ID           int64       `json:"id"`
-	ProjectID    int64       `json:"projectId"`
-	Key          string      `json:"key"`
-	Source       string      `json:"source"` // local | remote
-	RepoID       *int64      `json:"repoId"`
-	RemoteNumber *int64      `json:"remoteNumber"`
-	RemoteURL    string      `json:"remoteUrl"`
-	Title        string      `json:"title"`
-	Body         string      `json:"body"`
-	Labels       []string    `json:"labels"`
-	Status       IssueStatus `json:"status"`
-	ActiveRunID  *int64      `json:"activeRunId"`
-	Awaiting     bool        `json:"awaiting"`
-	PRURL        string      `json:"prUrl"`
-	PRState      string      `json:"prState"` // "" | "open" | "merged" | "closed"
-	CreatedAt    time.Time   `json:"createdAt"`
-	UpdatedAt    time.Time   `json:"updatedAt"`
+	ID           int64         `json:"id"`
+	ProjectID    int64         `json:"projectId"`
+	Key          string        `json:"key"`
+	Source       string        `json:"source"` // local | remote
+	RepoID       *int64        `json:"repoId"`
+	RemoteNumber *int64        `json:"remoteNumber"`
+	RemoteURL    string        `json:"remoteUrl"`
+	Title        string        `json:"title"`
+	Body         string        `json:"body"`
+	Labels       []string      `json:"labels"`
+	Priority     IssuePriority `json:"priority"`
+	Status       IssueStatus   `json:"status"`
+	ActiveRunID  *int64        `json:"activeRunId"`
+	Awaiting     bool          `json:"awaiting"`
+	PRURL        string        `json:"prUrl"`
+	PRState      string        `json:"prState"` // "" | "open" | "merged" | "closed"
+	CreatedAt    time.Time     `json:"createdAt"`
+	UpdatedAt    time.Time     `json:"updatedAt"`
+	SyncError    string        `json:"syncError,omitempty"` // transient response field, not persisted
+}
+
+type IssueEvent struct {
+	ID        int64     `json:"id"`
+	IssueID   int64     `json:"issueId"`
+	Kind      string    `json:"kind"`
+	Actor     string    `json:"actor"`
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type Attachment struct {
+	ID        int64     `json:"id"`
+	IssueID   int64     `json:"issueId"`
+	Name      string    `json:"name"`
+	MIME      string    `json:"mime"`
+	Size      int64     `json:"size"`
+	URL       string    `json:"url"`
+	CreatedAt time.Time `json:"createdAt"`
 }
 
 type Comment struct {

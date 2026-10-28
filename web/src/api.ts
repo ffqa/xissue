@@ -16,7 +16,10 @@ import type {
   HookStatus,
   InspectResult,
   Issue,
+  IssueEvent,
+  IssuePriority,
   IssueStatus,
+  Attachment,
   MCPStatus,
   RepoPullResult,
   MonitorLogEntry,
@@ -123,6 +126,37 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
       setStoredToken('');
       throw new ApiError(401, '未授权访问 (401)：请在服务端配置文件核对 Token，或在 URL 附带 ?token=xxx 重新授权');
     }
+    const msg =
+      data && typeof data === 'object' && 'error' in data
+        ? String((data as { error: unknown }).error)
+        : typeof data === 'string' && data
+          ? data
+          : `${res.status} ${res.statusText}`;
+    throw new ApiError(res.status, msg);
+  }
+  return data as T;
+}
+
+async function upload<T>(path: string, form: FormData): Promise<T> {
+  const headers: Record<string, string> = { 'X-XIssue': '1' };
+  const token = getStoredToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  let res: Response;
+  try {
+    res = await fetch(path, { method: 'POST', credentials: 'same-origin', headers, body: form });
+  } catch (e) {
+    throw new ApiError(0, `网络错误：${(e as Error).message}`);
+  }
+  const text = await res.text();
+  let data: unknown;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+  if (!res.ok) {
     const msg =
       data && typeof data === 'object' && 'error' in data
         ? String((data as { error: unknown }).error)
@@ -242,11 +276,29 @@ export const api = {
     get<CommitDetail>(`/api/repos/${repoId}/commits/${encodeURIComponent(sha)}`),
 
   issues: (projectId: number) => get<Issue[]>(`/api/projects/${projectId}/issues`),
-  createIssue: (projectId: number, b: { title: string; body: string; labels?: string[]; repoId?: number | null }) =>
-    post<Issue>(`/api/projects/${projectId}/issues`, b),
+  createIssue: (
+    projectId: number,
+    b: {
+      title: string;
+      body: string;
+      labels?: string[];
+      priority?: IssuePriority;
+      repoId?: number | null;
+      syncRemote?: boolean;
+    },
+  ) => post<Issue>(`/api/projects/${projectId}/issues`, b),
   issue: (id: number) => get<Issue>(`/api/issues/${id}`),
-  updateIssue: (id: number, b: { title?: string; body?: string; status?: IssueStatus }) =>
+  updateIssue: (id: number, b: { title?: string; body?: string; labels?: string[]; priority?: IssuePriority; status?: IssueStatus }) =>
     patch<Issue>(`/api/issues/${id}`, b),
+  issueEvents: (issueId: number) => get<IssueEvent[]>(`/api/issues/${issueId}/events`),
+  attachments: (issueId: number) => get<Attachment[]>(`/api/issues/${issueId}/attachments`),
+  uploadAttachment: (issueId: number, file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return upload<Attachment>(`/api/issues/${issueId}/attachments`, form);
+  },
+  deleteAttachment: (issueId: number, attachmentId: number) =>
+    del<void>(`/api/issues/${issueId}/attachments/${attachmentId}`),
   deleteIssue: (id: number) => del<void>(`/api/issues/${id}`),
   batchDeleteIssues: (ids: number[]) => post<{ deleted: number }>('/api/issues/batch-delete', { ids }),
   publishIssue: (id: number, repoId: number) => post<Issue>(`/api/issues/${id}/publish`, { repoId }),
@@ -334,6 +386,8 @@ export const qk = {
   issues: (projectId: number) => ['issues', projectId] as const,
   issue: (id: number) => ['issue', id] as const,
   comments: (issueId: number) => ['comments', issueId] as const,
+  issueEvents: (issueId: number) => ['issueEvents', issueId] as const,
+  attachments: (issueId: number) => ['attachments', issueId] as const,
   runs: (issueId: number) => ['runs', issueId] as const,
   run: (id: number) => ['run', id] as const,
   events: (runId: number) => ['events', runId] as const,

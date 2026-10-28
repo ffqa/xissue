@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
@@ -28,13 +28,59 @@ import { copyText } from '../clipboard';
 import { toast } from '../toast';
 import {
   ACTIVE_RUN_STATUSES,
+  ISSUE_PRIORITIES,
   ISSUE_STATUSES,
+  type Attachment,
   type DevMode,
+  type IssuePriority,
   type IssueStatus,
   type RepoChanges,
   type Run,
   type SubmitResult,
 } from '../types';
+
+const PRIORITY_LABEL: Record<IssuePriority, string> = {
+  low: '低',
+  normal: '普通',
+  high: '高',
+  urgent: '紧急',
+};
+
+function isImageAttachment(a: Attachment): boolean {
+  return a.mime.startsWith('image/') && a.mime !== 'image/svg+xml';
+}
+
+function splitIssueLabels(raw: string): string[] {
+  return raw
+    .split(/[,，\n]/)
+    .map((label) => label.trim())
+    .filter(Boolean);
+}
+
+function timelineIcon(kind: string): string {
+  switch (kind) {
+    case 'created':
+      return '🆕';
+    case 'status':
+      return '🔄';
+    case 'priority':
+      return '🚩';
+    case 'labels':
+      return '🏷️';
+    case 'remote_sync':
+      return '☁️';
+    case 'remote_sync_failed':
+      return '⚠️';
+    case 'attachment':
+      return '📎';
+    case 'comment':
+      return '💬';
+    case 'run':
+      return '▶️';
+    default:
+      return '•';
+  }
+}
 
 export default function IssuePage() {
   const id = Number(useParams().id);
@@ -51,6 +97,8 @@ export default function IssuePage() {
   const project = projectQ.data;
 
   const commentsQ = useQuery({ queryKey: qk.comments(id), queryFn: () => api.comments(id) });
+  const issueEventsQ = useQuery({ queryKey: qk.issueEvents(id), queryFn: () => api.issueEvents(id) });
+  const attachmentsQ = useQuery({ queryKey: qk.attachments(id), queryFn: () => api.attachments(id) });
   const runsQ = useQuery({ queryKey: qk.runs(id), queryFn: () => api.runs(id) });
   const agentsQ = useQuery({ queryKey: qk.agents, queryFn: api.agents });
   const runnersQ = useQuery({ queryKey: qk.runners, queryFn: api.runners, refetchInterval: 15000 });
@@ -84,6 +132,74 @@ export default function IssuePage() {
   }, [runs, issue?.activeRunId, selectedRunId]);
 
   const currentRun: Run | undefined = runs.find((r) => r.id === selectedRunId) ?? runs[0];
+
+  const timeline = useMemo(() => {
+    const items: {
+      key: string;
+      at: string;
+      icon: string;
+      title: string;
+      body?: string;
+      markdown?: boolean;
+    }[] = [];
+    if (issue) {
+      items.push({
+        key: 'created',
+        at: issue.createdAt,
+        icon: '🆕',
+        title: '创建 Issue',
+        body: `优先级 ${PRIORITY_LABEL[issue.priority] ?? '普通'}${
+          issue.labels.length ? ` · 标签 ${issue.labels.join(', ')}` : ''
+        }`,
+      });
+    }
+    for (const e of issueEventsQ.data ?? []) {
+      if (e.kind === 'created') continue;
+      items.push({
+        key: `event-${e.id}`,
+        at: e.createdAt,
+        icon: timelineIcon(e.kind),
+        title: e.message || e.kind,
+        body: e.actor === 'system' ? undefined : e.actor,
+      });
+    }
+    for (const c of commentsQ.data ?? []) {
+      items.push({
+        key: `comment-${c.id}`,
+        at: c.createdAt,
+        icon: timelineIcon('comment'),
+        title: c.author === 'me' ? '我' : c.author === 'agent' ? 'Agent' : c.author === 'system' ? '系统' : c.author,
+        body: c.body,
+        markdown: true,
+      });
+    }
+    for (const r of runs) {
+      items.push({
+        key: `run-start-${r.id}`,
+        at: r.createdAt,
+        icon: timelineIcon('run'),
+        title: `启动 Run #${r.id} (${r.agent}${r.model ? ` · ${r.model}` : ''})`,
+      });
+      if (r.endedAt) {
+        items.push({
+          key: `run-end-${r.id}`,
+          at: r.endedAt,
+          icon: timelineIcon('run'),
+          title: `Run #${r.id} ${r.status}`,
+          body: r.error || undefined,
+        });
+      }
+      if (r.prUrl) {
+        items.push({
+          key: `run-pr-${r.id}`,
+          at: r.endedAt || r.createdAt,
+          icon: '🔀',
+          title: `PR ${r.prState || 'open'}: ${r.prUrl}`,
+        });
+      }
+    }
+    return items.sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+  }, [issue, issueEventsQ.data, commentsQ.data, runs]);
 
   const [tab, setTab] = useState<'log' | 'diff'>('log');
   const [agent, setAgent] = useState<string>('');
@@ -199,12 +315,21 @@ export default function IssuePage() {
   const [editOpen, setEditOpen] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editBody, setEditBody] = useState('');
+  const [editLabels, setEditLabels] = useState('');
+  const [editPriority, setEditPriority] = useState<IssuePriority>('normal');
 
   const updateIssue = useMutation({
-    mutationFn: (b: { title?: string; body?: string; status?: IssueStatus }) => api.updateIssue(id, b),
+    mutationFn: (b: {
+      title?: string;
+      body?: string;
+      labels?: string[];
+      priority?: IssuePriority;
+      status?: IssueStatus;
+    }) => api.updateIssue(id, b),
     onSuccess: (u) => {
       qc.setQueryData(qk.issue(id), u);
       qc.invalidateQueries({ queryKey: qk.issues(u.projectId) });
+      qc.invalidateQueries({ queryKey: qk.issueEvents(id) });
       setEditOpen(false);
     },
   });
@@ -215,6 +340,26 @@ export default function IssuePage() {
       setCommentText('');
       qc.invalidateQueries({ queryKey: qk.comments(id) });
     },
+  });
+
+  const uploadAttachment = useMutation({
+    mutationFn: (file: File) => api.uploadAttachment(id, file),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.attachments(id) });
+      qc.invalidateQueries({ queryKey: qk.issueEvents(id) });
+      toast.success('附件已上传');
+    },
+    onError: (e) => toast.error(`附件上传失败：${(e as Error).message}`),
+  });
+
+  const deleteAttachment = useMutation({
+    mutationFn: (attachmentId: number) => api.deleteAttachment(id, attachmentId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.attachments(id) });
+      qc.invalidateQueries({ queryKey: qk.issueEvents(id) });
+      toast.info('附件已删除');
+    },
+    onError: (e) => toast.error(`删除失败：${(e as Error).message}`),
   });
 
   const publish = useMutation({
@@ -308,6 +453,33 @@ export default function IssuePage() {
               <div className="row small muted mb" style={{ gap: 6, marginBottom: 4 }}>
                 <span className="mono">{issue?.key}</span>
                 <span className="badge">{issue?.source === 'local' ? '本地' : '平台'}</span>
+                {issue && (
+                  <span className={`badge priority-${issue.priority || 'normal'}`}>
+                    {PRIORITY_LABEL[issue.priority] ?? '普通' ?? '普通'}
+                  </span>
+                )}
+                {issue?.repoId && (
+                  issue.source === 'remote' ? (
+                    <span className="badge sync-ok" title="已绑定远程 Issue，后续同步不会重复创建">
+                      ☁️ 已同步{issue.remoteNumber ? ` #${issue.remoteNumber}` : ''}
+                    </span>
+                  ) : (
+                    <span className="badge sync-pending" title="已绑定仓库但尚未同步到远程平台">
+                      ☁️ 未同步
+                    </span>
+                  )
+                )}
+                {!issue?.repoId && <span className="badge">仅本地</span>}
+                {issue?.repoId && (
+                  <span className="badge">
+                    📦 {(project?.repos ?? []).find((r) => r.id === issue.repoId)?.name || 'repo'}
+                  </span>
+                )}
+                {issue?.prUrl && (
+                  <a href={issue.prUrl} target="_blank" rel="noreferrer" className="small">
+                    PR ↗
+                  </a>
+                )}
                 {issue?.remoteUrl && (
                   <a href={issue.remoteUrl} target="_blank" rel="noreferrer" className="small">
                     打开原链接 ↗
@@ -316,6 +488,13 @@ export default function IssuePage() {
                 {issue?.awaiting && <span className="badge awaiting">待审批</span>}
               </div>
               <h1>{issue?.title ?? '加载中…'}</h1>
+              {(issue?.labels?.length ?? 0) > 0 && (
+                <div className="row" style={{ gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                  {issue!.labels.map((label) => (
+                    <span className="badge" key={label}>{label}</span>
+                  ))}
+                </div>
+              )}
             </div>
             {issue && (
               <select
@@ -345,6 +524,8 @@ export default function IssuePage() {
                 if (!issue) return;
                 setEditTitle(issue.title);
                 setEditBody(issue.body);
+                setEditLabels(issue.labels.join(', '));
+                setEditPriority(issue.priority || 'normal');
                 setEditOpen(true);
               }}
             >
@@ -363,28 +544,74 @@ export default function IssuePage() {
             </div>
           </div>
 
+          <div className="panel">
+            <div className="panel-h">
+              <h3 className="grow">📎 附件 ({attachmentsQ.data?.length ?? 0})</h3>
+              <label className="sm ghost" style={{ cursor: 'pointer' }}>
+                {uploadAttachment.isPending ? '上传中…' : '+ 上传附件 / 贴图'}
+                <input
+                  type="file"
+                  style={{ display: 'none' }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) uploadAttachment.mutate(file);
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </div>
+            <div className="panel-b">
+              {(attachmentsQ.data ?? []).length === 0 ? (
+                <span className="dim small">暂无附件；图片会直接预览，其他文件可下载。</span>
+              ) : (
+                <div className="col" style={{ gap: 8 }}>
+                  <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                    {(attachmentsQ.data ?? []).filter(isImageAttachment).map((a) => (
+                      <a key={a.id} href={a.url} target="_blank" rel="noreferrer" title={a.name}>
+                        <img
+                          src={a.url}
+                          alt={a.name}
+                          style={{ maxWidth: 220, maxHeight: 160, borderRadius: 6, border: '1px solid var(--border)' }}
+                        />
+                      </a>
+                    ))}
+                  </div>
+                  {(attachmentsQ.data ?? []).map((a) => (
+                    <div key={a.id} className="row small" style={{ gap: 8 }}>
+                      <span>{isImageAttachment(a) ? '🖼️' : '📎'}</span>
+                      <a className="grow ellipsis" href={a.url} target="_blank" rel="noreferrer">{a.name}</a>
+                      <span className="dim">{Math.ceil(a.size / 1024)} KB</span>
+                      <button
+                        type="button"
+                        className="ghost sm"
+                        onClick={() => confirm(`删除附件 ${a.name}？`) && deleteAttachment.mutate(a.id)}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="col" style={{ marginTop: 8 }}>
-            <h3>评论 / 回顾记录 ({commentsQ.data?.length ?? 0})</h3>
-            {(commentsQ.data ?? []).map((c) => (
-              <div
-                key={c.id}
-                className={`comment ${c.author === 'me' || c.author === 'agent' || c.author === 'system' ? c.author : ''}`}
-              >
-                <div className="comment-h">
-                  <b>{c.author === 'me' ? '我' : c.author === 'agent' ? 'Agent 总结' : c.author === 'system' ? '系统' : c.author}</b>
-                  {c.remoteUrl && (
-                    <a className="small dim" href={c.remoteUrl} target="_blank" rel="noreferrer">
-                      原评论
-                    </a>
-                  )}
-                  <span className="grow" />
-                  <span>{fmtTime(c.createdAt)}</span>
+            <h3>🕒 时间线 ({timeline.length})</h3>
+            <div className="timeline">
+              {timeline.map((item) => (
+                <div className="timeline-item" key={item.key}>
+                  <span className="timeline-dot">{item.icon}</span>
+                  <div className="timeline-body">
+                    <div className="timeline-head">
+                      <b>{item.title}</b>
+                      <span className="grow" />
+                      <span className="dim small">{fmtTime(item.at)}</span>
+                    </div>
+                    {item.body && (item.markdown ? <Markdown>{item.body}</Markdown> : <div className="small muted">{item.body}</div>)}
+                  </div>
                 </div>
-                <div className="comment-b">
-                  <Markdown>{c.body}</Markdown>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
             <div className="col" style={{ gap: 6 }}>
               <textarea
                 rows={3}
@@ -757,7 +984,14 @@ export default function IssuePage() {
               <button
                 className="primary"
                 disabled={!editTitle.trim() || updateIssue.isPending}
-                onClick={() => updateIssue.mutate({ title: editTitle.trim(), body: editBody })}
+                onClick={() =>
+                  updateIssue.mutate({
+                    title: editTitle.trim(),
+                    body: editBody,
+                    labels: splitIssueLabels(editLabels),
+                    priority: editPriority,
+                  })
+                }
               >
                 保存
               </button>
@@ -768,6 +1002,20 @@ export default function IssuePage() {
             标题
             <input value={editTitle} onChange={(e) => setEditTitle(e.target.value)} />
           </label>
+          <div className="row" style={{ gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <label className="field grow" style={{ minWidth: 220 }}>
+              标签（逗号分隔）
+              <input value={editLabels} onChange={(e) => setEditLabels(e.target.value)} />
+            </label>
+            <label className="field" style={{ minWidth: 140 }}>
+              紧要程度
+              <select value={editPriority} onChange={(e) => setEditPriority(e.target.value as IssuePriority)}>
+                {ISSUE_PRIORITIES.map((item) => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
+                ))}
+              </select>
+            </label>
+          </div>
           <label className="field">
             正文（Markdown）
             <textarea rows={12} className="mono" value={editBody} onChange={(e) => setEditBody(e.target.value)} />

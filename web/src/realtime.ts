@@ -92,6 +92,7 @@ function handleMessage(qc: QueryClient, msg: WsMessage) {
         qc.invalidateQueries({ queryKey: qk.events(run.id) });
         qc.invalidateQueries({ queryKey: qk.changes(run.id) });
         qc.invalidateQueries({ queryKey: qk.comments(run.issueId) });
+        qc.invalidateQueries({ queryKey: qk.issueEvents(run.issueId) });
       }
       break;
     }
@@ -104,6 +105,7 @@ function handleMessage(qc: QueryClient, msg: WsMessage) {
       } else {
         qc.invalidateQueries({ queryKey: issuesKey });
       }
+      qc.invalidateQueries({ queryKey: qk.issueEvents(issue.id) });
       break;
     }
     case 'notification': {

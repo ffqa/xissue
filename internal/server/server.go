@@ -20,7 +20,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.2.43"
+const Version = "0.3.0"
 
 type Server struct {
 	cfg    *config.Config
@@ -234,6 +234,11 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /api/issues/{id}/comments", s.handleListComments)
 	m.HandleFunc("POST /api/issues/{id}/comments", s.handleAddComment)
+	m.HandleFunc("GET /api/issues/{id}/events", s.handleListIssueEvents)
+	m.HandleFunc("GET /api/issues/{id}/attachments", s.handleListAttachments)
+	m.HandleFunc("POST /api/issues/{id}/attachments", s.handleUploadAttachment)
+	m.HandleFunc("GET /api/issues/{id}/attachments/{attachmentID}", s.handleGetAttachment)
+	m.HandleFunc("DELETE /api/issues/{id}/attachments/{attachmentID}", s.handleDeleteAttachment)
 
 	m.HandleFunc("GET /api/issues/{id}/runs", s.handleListRuns)
 	m.HandleFunc("POST /api/issues/{id}/runs", s.handleStartRun)

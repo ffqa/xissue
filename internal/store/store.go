@@ -88,6 +88,7 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN pr_url TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN pr_state TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN change_record TEXT NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN dev_mode TEXT NOT NULL DEFAULT 'single_main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN target_branch TEXT NOT NULL DEFAULT 'main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1`)
@@ -522,7 +523,7 @@ func (s *Store) DeleteRepo(ctx context.Context, projectID, repoID int64) error {
 
 // ---------- Issues ----------
 
-const issueCols = `i.id, i.project_id, i.key, i.source, i.repo_id, i.remote_number, i.remote_url, i.title, i.body, i.labels, i.status, i.created_at, i.updated_at,
+const issueCols = `i.id, i.project_id, i.key, i.source, i.repo_id, i.remote_number, i.remote_url, i.title, i.body, i.labels, i.priority, i.status, i.created_at, i.updated_at,
   (SELECT r.id FROM runs r WHERE r.issue_id=i.id ORDER BY r.id DESC LIMIT 1),
   (SELECT r.status FROM runs r WHERE r.issue_id=i.id ORDER BY r.id DESC LIMIT 1),
   COALESCE((SELECT r.pr_url FROM runs r WHERE r.issue_id=i.id AND r.pr_url != '' ORDER BY r.id DESC LIMIT 1), ''),
@@ -533,7 +534,7 @@ func scanIssue(sc interface{ Scan(...any) error }) (domain.Issue, error) {
 	var repoID, num, runID sql.NullInt64
 	var labels, c, u string
 	var runStatus sql.NullString
-	err := sc.Scan(&i.ID, &i.ProjectID, &i.Key, &i.Source, &repoID, &num, &i.RemoteURL, &i.Title, &i.Body, &labels, &i.Status, &c, &u, &runID, &runStatus, &i.PRURL, &i.PRState)
+	err := sc.Scan(&i.ID, &i.ProjectID, &i.Key, &i.Source, &repoID, &num, &i.RemoteURL, &i.Title, &i.Body, &labels, &i.Priority, &i.Status, &c, &u, &runID, &runStatus, &i.PRURL, &i.PRState)
 	if err != nil {
 		return i, err
 	}
@@ -543,6 +544,9 @@ func scanIssue(sc interface{ Scan(...any) error }) (domain.Issue, error) {
 	_ = json.Unmarshal([]byte(labels), &i.Labels)
 	if i.Labels == nil {
 		i.Labels = []string{}
+	}
+	if i.Priority == "" {
+		i.Priority = domain.IssuePriorityNormal
 	}
 	return i, nil
 }
@@ -611,17 +615,18 @@ func (s *Store) AddIssueLabels(ctx context.Context, id int64, add ...string) (*d
 	if _, err := s.db.ExecContext(ctx, `UPDATE issues SET labels=?, updated_at=? WHERE id=?`, string(lb), now(), id); err != nil {
 		return nil, err
 	}
+	_ = s.AddIssueEvent(ctx, id, "labels", "system", "标签: "+strings.Join(issue.Labels, ", "))
 	return s.GetIssue(ctx, id)
 }
 
 // CreateLocalIssue allocates the next LOCAL-n key for the project.
-func (s *Store) CreateLocalIssue(ctx context.Context, projectID int64, title, body string, labels []string) (*domain.Issue, error) {
-	return s.CreateLocalIssueInRepo(ctx, projectID, nil, title, body, labels)
+func (s *Store) CreateLocalIssue(ctx context.Context, projectID int64, title, body string, labels []string, priority ...domain.IssuePriority) (*domain.Issue, error) {
+	return s.CreateLocalIssueInRepo(ctx, projectID, nil, title, body, labels, priority...)
 }
 
 // CreateLocalIssueInRepo creates a local issue optionally scoped to one repo.
 // A nil repoID means the issue is project-wide and the agent may choose.
-func (s *Store) CreateLocalIssueInRepo(ctx context.Context, projectID int64, repoID *int64, title, body string, labels []string) (*domain.Issue, error) {
+func (s *Store) CreateLocalIssueInRepo(ctx context.Context, projectID int64, repoID *int64, title, body string, labels []string, priorities ...domain.IssuePriority) (*domain.Issue, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -637,18 +642,26 @@ func (s *Store) CreateLocalIssueInRepo(ctx context.Context, projectID int64, rep
 	if labels == nil {
 		labels = []string{}
 	}
+	priority := domain.IssuePriorityNormal
+	if len(priorities) > 0 && domain.ValidIssuePriority(priorities[0]) {
+		priority = priorities[0]
+	}
 	lb, _ := json.Marshal(labels)
 	t := now()
 	var repoArg any
 	if repoID != nil {
 		repoArg = *repoID
 	}
-	res, err := tx.ExecContext(ctx, `INSERT INTO issues(project_id, key, source, repo_id, title, body, labels, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-		projectID, fmt.Sprintf("LOCAL-%d", seq), "local", repoArg, title, body, string(lb), domain.IssueTodo, t, t)
+	res, err := tx.ExecContext(ctx, `INSERT INTO issues(project_id, key, source, repo_id, title, body, labels, priority, status, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		projectID, fmt.Sprintf("LOCAL-%d", seq), "local", repoArg, title, body, string(lb), string(priority), domain.IssueTodo, t, t)
 	if err != nil {
 		return nil, err
 	}
 	id, _ := res.LastInsertId()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO issue_events(issue_id, kind, actor, message, created_at) VALUES(?,?,?,?,?)`,
+		id, "created", "system", "创建 Issue", t); err != nil {
+		return nil, err
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -680,36 +693,44 @@ func (s *Store) UpsertRemoteIssue(ctx context.Context, i domain.Issue) (created 
 		return false, err
 	}
 	if createdIssue, gerr := s.FindIssueByKey(ctx, i.ProjectID, i.Key); gerr == nil {
+		_ = s.AddIssueEvent(ctx, createdIssue.ID, "remote_imported", "system", "从远程平台同步 Issue")
 		s.emitIssueCreated(createdIssue)
 	}
 	return true, nil
 }
 
 type IssuePatch struct {
-	Title  *string             `json:"title"`
-	Body   *string             `json:"body"`
-	Status *domain.IssueStatus `json:"status"`
+	Title    *string               `json:"title"`
+	Body     *string               `json:"body"`
+	Labels   *[]string             `json:"labels"`
+	Priority *domain.IssuePriority `json:"priority"`
+	Status   *domain.IssueStatus   `json:"status"`
 }
 
 func (s *Store) UpdateIssue(ctx context.Context, id int64, p IssuePatch) (*domain.Issue, error) {
 	sets, args := []string{}, []any{}
-	previousStatus := domain.IssueStatus("")
-	if p.Status != nil {
-		if !domain.ValidIssueStatus(*p.Status) {
-			return nil, fmt.Errorf("invalid status %q", *p.Status)
-		}
-		if err := s.db.QueryRowContext(ctx, `SELECT status FROM issues WHERE id=?`, id).Scan(&previousStatus); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return nil, ErrNotFound
-			}
-			return nil, err
-		}
+	old, err := s.GetIssue(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if p.Status != nil && !domain.ValidIssueStatus(*p.Status) {
+		return nil, fmt.Errorf("invalid status %q", *p.Status)
+	}
+	if p.Priority != nil && !domain.ValidIssuePriority(*p.Priority) {
+		return nil, fmt.Errorf("invalid priority %q", *p.Priority)
 	}
 	if p.Title != nil {
 		sets, args = append(sets, "title=?"), append(args, *p.Title)
 	}
 	if p.Body != nil {
 		sets, args = append(sets, "body=?"), append(args, *p.Body)
+	}
+	if p.Labels != nil {
+		lb, _ := json.Marshal(*p.Labels)
+		sets, args = append(sets, "labels=?"), append(args, string(lb))
+	}
+	if p.Priority != nil {
+		sets, args = append(sets, "priority=?"), append(args, string(*p.Priority))
 	}
 	if p.Status != nil {
 		sets, args = append(sets, "status=?"), append(args, *p.Status)
@@ -723,10 +744,103 @@ func (s *Store) UpdateIssue(ctx context.Context, id int64, p IssuePatch) (*domai
 	if err != nil {
 		return nil, err
 	}
-	if p.Status != nil {
-		s.emitIssueStatusChanged(issue, previousStatus)
+	if p.Status != nil && old.Status != *p.Status {
+		s.emitIssueStatusChanged(issue, old.Status)
+		_ = s.AddIssueEvent(ctx, id, "status", "system", fmt.Sprintf("%s → %s", old.Status, *p.Status))
+	}
+	if p.Priority != nil && old.Priority != *p.Priority {
+		_ = s.AddIssueEvent(ctx, id, "priority", "system", fmt.Sprintf("优先级 %s → %s", old.Priority, *p.Priority))
+	}
+	if p.Labels != nil {
+		_ = s.AddIssueEvent(ctx, id, "labels", "system", "标签: "+strings.Join(*p.Labels, ", "))
 	}
 	return issue, nil
+}
+
+func (s *Store) AddIssueEvent(ctx context.Context, issueID int64, kind, actor, message string) error {
+	if actor == "" {
+		actor = "system"
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO issue_events(issue_id, kind, actor, message, created_at) VALUES(?,?,?,?,?)`,
+		issueID, kind, actor, message, now())
+	return err
+}
+
+func (s *Store) ListIssueEvents(ctx context.Context, issueID int64) ([]domain.IssueEvent, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, issue_id, kind, actor, message, created_at FROM issue_events WHERE issue_id=? ORDER BY created_at ASC, id ASC`, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.IssueEvent{}
+	for rows.Next() {
+		var e domain.IssueEvent
+		var created string
+		if err := rows.Scan(&e.ID, &e.IssueID, &e.Kind, &e.Actor, &e.Message, &created); err != nil {
+			return nil, err
+		}
+		e.CreatedAt = parseTime(created)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AddAttachment(ctx context.Context, a domain.Attachment, path string) (*domain.Attachment, error) {
+	t := now()
+	res, err := s.db.ExecContext(ctx, `INSERT INTO issue_attachments(issue_id, name, mime, size, path, created_at) VALUES(?,?,?,?,?,?)`,
+		a.IssueID, a.Name, a.MIME, a.Size, path, t)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	a.ID = id
+	a.CreatedAt = parseTime(t)
+	return &a, nil
+}
+
+func (s *Store) ListAttachments(ctx context.Context, issueID int64) ([]domain.Attachment, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, issue_id, name, mime, size, created_at FROM issue_attachments WHERE issue_id=? ORDER BY id ASC`, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.Attachment{}
+	for rows.Next() {
+		var a domain.Attachment
+		var created string
+		if err := rows.Scan(&a.ID, &a.IssueID, &a.Name, &a.MIME, &a.Size, &created); err != nil {
+			return nil, err
+		}
+		a.CreatedAt = parseTime(created)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetAttachment(ctx context.Context, issueID, attachmentID int64) (*domain.Attachment, string, error) {
+	var a domain.Attachment
+	var created, path string
+	err := s.db.QueryRowContext(ctx, `SELECT id, issue_id, name, mime, size, path, created_at FROM issue_attachments WHERE id=? AND issue_id=?`, attachmentID, issueID).
+		Scan(&a.ID, &a.IssueID, &a.Name, &a.MIME, &a.Size, &path, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, "", ErrNotFound
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	a.CreatedAt = parseTime(created)
+	return &a, path, nil
+}
+
+func (s *Store) DeleteAttachment(ctx context.Context, issueID, attachmentID int64) (string, error) {
+	_, path, err := s.GetAttachment(ctx, issueID, attachmentID)
+	if err != nil {
+		return "", err
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM issue_attachments WHERE id=? AND issue_id=?`, attachmentID, issueID); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // MarkIssuePublished converts a local issue into a remote one, keeping history.
@@ -736,6 +850,7 @@ func (s *Store) MarkIssuePublished(ctx context.Context, id, repoID, number int64
 	if err != nil {
 		return nil, err
 	}
+	_ = s.AddIssueEvent(ctx, id, "remote_sync", "system", fmt.Sprintf("已同步到远程 Issue #%d", number))
 	return s.GetIssue(ctx, id)
 }
 

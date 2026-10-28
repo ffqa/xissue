@@ -40,11 +40,34 @@ CREATE TABLE IF NOT EXISTS issues (
     title         TEXT NOT NULL,
     body          TEXT NOT NULL DEFAULT '',
     labels        TEXT NOT NULL DEFAULT '[]',
+    priority      TEXT NOT NULL DEFAULT 'normal',
     status        TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
     UNIQUE(project_id, key)
 );
+
+CREATE TABLE IF NOT EXISTS issue_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_id   INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    kind       TEXT NOT NULL,
+    actor      TEXT NOT NULL DEFAULT 'system',
+    message    TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS issue_attachments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_id   INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    mime       TEXT NOT NULL,
+    size       INTEGER NOT NULL,
+    path       TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_issue_events_issue ON issue_events(issue_id);
+CREATE INDEX IF NOT EXISTS idx_issue_attachments_issue ON issue_attachments(issue_id);
 
 CREATE TABLE IF NOT EXISTS comments (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

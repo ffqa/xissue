@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.43` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.3.0` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.43`
+- **最新发布版本**: `v0.3.0`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -330,6 +330,14 @@
 - **修复**: `GET /api/projects` 改为纯 SQLite 读取，不再同步探测仓库；`GET /api/projects/{id}` 的自动探测增加 1 秒总超时，超时直接返回已存数据；显式「刷新/检查」接口仍可完整探测。
 - **影响**: 首页不再等待任何 Git 命令；项目详情最坏多等 1 秒而不是无限/8 秒；仓库平台信息会在打开项目页或点刷新时更新。
 - **验证**: `go test ./internal/server -run Test.*Project` 通过；本机 `/api/projects` 连续 10 次均约 1–3ms；客户机需升级后复测首页。
+
+### 2.36 Issue 标签、优先级、附件、远程绑定与时间线（v0.3.0）
+
+- **元数据**: `issues.priority`（`low/normal/high/urgent`，默认 normal）与现有 `labels` 一起进入创建/编辑 UI、看板卡片和详情页；旧数据库启动时自动 `ALTER TABLE` 增加列。
+- **附件/贴图**: 新增 `issue_attachments` 表与 `POST/GET /api/issues/{id}/attachments`、`GET/DELETE /api/issues/{id}/attachments/{attachmentID}`；文件写入 `DataDir/attachments/<issueID>/`，单文件上限 10MB，图片内联预览，其他文件强制下载。删除 Issue 时清理附件目录。
+- **创建即同步远程**: 创建 Issue 时可选目标仓库；仓库支持 Issue 时默认勾选「同步到远程」。后端先建本地 Issue，再调用 Provider `CreateIssue`，成功后用 `MarkIssuePublished` 写入远程 key/number/url；失败返回 201 + `syncError`，本地文本不丢失。后续远程同步按 key 更新绑定行，避免重复导入。
+- **时间线**: 新增 `issue_events` 表与 `GET /api/issues/{id}/events`；创建、状态变化、优先级、标签、远程同步/失败、附件等写入事件。前端详情页把事件、评论、Run 起止和 PR 合并成统一时间线，实时更新时失效事件查询。
+- **验证**: 新增优先级/事件、附件上传/下载/删除、远程创建并绑定/重复导入不新增等后端测试；`go test -race ./...`、`tsc --noEmit`、`vitest run`、真实 Chromium 冒烟通过。
 
 ## 3. 核心架构与关键代码索引
 

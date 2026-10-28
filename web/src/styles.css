@@ -584,3 +584,18 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .terminal-host { width: 100%; height: 100%; }
 .terminal-host .xterm { height: 100%; }
 .terminal-host .xterm-viewport { background: transparent !important; }
+
+/* ---- issue priority, sync and timeline ---- */
+.badge.priority-low { background: rgba(156, 163, 175, .18); color: var(--text-2); border: 1px solid var(--border); }
+.badge.priority-normal { background: rgba(110, 123, 242, .16); color: var(--accent); border: 1px solid rgba(110, 123, 242, .35); }
+.badge.priority-high { background: rgba(210, 153, 34, .2); color: var(--orange); border: 1px solid rgba(210, 153, 34, .4); }
+.badge.priority-urgent { background: rgba(248, 81, 73, .18); color: var(--red); border: 1px solid rgba(248, 81, 73, .4); font-weight: 700; }
+.badge.sync-ok { background: rgba(46, 160, 67, .18); color: var(--green); border: 1px solid rgba(46, 160, 67, .4); }
+.badge.sync-pending { background: rgba(210, 153, 34, .18); color: var(--orange); border: 1px solid rgba(210, 153, 34, .4); }
+
+.timeline { display: flex; flex-direction: column; gap: 0; border-left: 2px solid var(--border); margin: 4px 0 8px 8px; }
+.timeline-item { position: relative; display: flex; gap: 10px; padding: 8px 0 8px 18px; }
+.timeline-dot { position: absolute; left: -11px; top: 8px; width: 20px; height: 20px; border-radius: 50%; background: var(--bg-1); border: 1px solid var(--border); display: inline-flex; align-items: center; justify-content: center; font-size: 10px; }
+.timeline-body { flex: 1; min-width: 0; }
+.timeline-head { display: flex; align-items: baseline; gap: 8px; }
+.timeline-body .markdown { margin-top: 3px; font-size: 12px; }

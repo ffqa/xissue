@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.42` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.2.43` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.2.42`
+- **最新发布版本**: `v0.2.43`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -322,6 +322,14 @@
 - **缓存生命周期**: `staleTime` 30 秒、`gcTime` 30 分钟；项目页的查询是唯一持有 60 秒定时器的 observer，PR 弹窗复用同一 key 但不重复设定时器，避免两个 observer 错峰触发两次 provider 请求。项目页保持挂载时自动刷新，PR 按钮角标也随之更新；合并、关闭、拉取和「检查状态」操作仍会主动失效缓存。
 - **首屏**: 第一次进入项目页仍需一次真实 provider 请求；之后打开弹窗/切换标签走缓存，后台刷新不遮挡旧列表。
 - **验证**: 新增 `filterPRs` 单元测试；`vitest run` 27 用例、`tsc --noEmit`、`make build` 通过。真实页面确认弹窗显示「每 60 秒自动刷新」，切换标签无新增 PR 请求。
+
+### 2.35 首页项目列表去掉同步仓库探测（v0.2.43）
+
+- **现象**: 客户机 `GET /api/projects` 偶发 8 秒无响应；同时 watcher 报 `context deadline exceeded`。首页项目接口不应依赖仓库网络/本地文件系统状态。
+- **根因**: `handleListProjects` 对每个项目的每个仓库同步执行 `DetectRepoRemote`（本地目录会执行 `git remote get-url`），随后才返回列表。一个卡住的本地路径或慢磁盘会把整个首页拖住；项目详情接口也无超时。
+- **修复**: `GET /api/projects` 改为纯 SQLite 读取，不再同步探测仓库；`GET /api/projects/{id}` 的自动探测增加 1 秒总超时，超时直接返回已存数据；显式「刷新/检查」接口仍可完整探测。
+- **影响**: 首页不再等待任何 Git 命令；项目详情最坏多等 1 秒而不是无限/8 秒；仓库平台信息会在打开项目页或点刷新时更新。
+- **验证**: `go test ./internal/server -run Test.*Project` 通过；本机 `/api/projects` 连续 10 次均约 1–3ms；客户机需升级后复测首页。
 
 ## 3. 核心架构与关键代码索引
 

@@ -7,11 +7,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/gitx"
 	"github.com/xpier/xissue/internal/store"
 )
+
+// Repo remote detection can touch slow or stale local filesystems. Project
+// pages cap it; the list endpoint never waits for it.
+const projectRepoDetectTimeout = time.Second
 
 func (s *Server) refreshProjectRepos(ctx context.Context, p *domain.Project) {
 	if p == nil {
@@ -35,9 +40,8 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []domain.Project{}
 	}
-	for i := range list {
-		s.refreshProjectRepos(r.Context(), &list[i])
-	}
+	// Keep GET /api/projects a pure database read. Remote detection used to run
+	// here synchronously; one stale local repo could delay the whole homepage.
 	writeJSON(w, http.StatusOK, list)
 }
 
@@ -78,7 +82,9 @@ func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("refresh") != "0" {
-		s.refreshProjectRepos(r.Context(), p)
+		ctx, cancel := context.WithTimeout(r.Context(), projectRepoDetectTimeout)
+		s.refreshProjectRepos(ctx, p)
+		cancel()
 	}
 	writeJSON(w, http.StatusOK, p)
 }
@@ -94,7 +100,9 @@ func (s *Server) handleRefreshRepos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("refresh") != "0" {
-		s.refreshProjectRepos(r.Context(), p)
+		ctx, cancel := context.WithTimeout(r.Context(), projectRepoDetectTimeout)
+		s.refreshProjectRepos(ctx, p)
+		cancel()
 	}
 	writeJSON(w, http.StatusOK, p)
 }

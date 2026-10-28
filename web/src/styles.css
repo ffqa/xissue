@@ -618,7 +618,7 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .issue-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--text-3); }
 .issue-card-repo { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .issue-card-sync { font-size: 10px; opacity: .8; }
-.issue-card-link { flex: none; font-size: 11px; color: var(--text-3); cursor: pointer; }
+.issue-card-link { flex: none; font-size: 11px; color: var(--text-3); cursor: pointer; padding: 1px 3px; border-radius: 4px; }
 .issue-card-link:hover { color: var(--accent); }
 .issue-card-link.local { cursor: default; }
 .issue-card-title { font-weight: 700; font-size: 13.5px; line-height: 1.4; word-break: break-word; color: var(--text); }
@@ -627,3 +627,5 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .issue-card-meta .badge { font-size: 10px; height: 16px; padding: 0 5px; }
 .issue-card-status { font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .issue-card-time { font-size: 11px; color: var(--text-3); white-space: nowrap; }
+
+.issue-card-links { display: inline-flex; align-items: center; gap: 8px; flex: none; }

@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.4.0` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.4.1` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.4.0`
+- **最新发布版本**: `v0.4.1`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -348,6 +348,12 @@
 - **分支清理**: 新增 `GET /api/repos/{id}/merged-branches` 与 `POST /api/repos/{id}/branches/delete`；仅列出已合并到默认分支、且分支 tip 作者匹配本机 Git 身份（repo 本地配置或 global）的远程分支，支持单选/多选删除，不满足条件的 branch 在服务端也会被拒绝。
 - **菜单宽度**: 顶栏系统菜单去掉固定 190px 最小宽度，改为 `width: max-content`，按文字宽度收缩。
 - **验证**: 新增子任务 API 测试、标签 helper 测试、已合并/未合并/他人分支过滤与删除测试；`go test -race ./...`、`tsc --noEmit`、`vitest run`、Chromium 冒烟通过。
+
+### 2.38 看板卡片只让链接可点击（v0.4.1）
+
+- **问题**: 看板卡片整个 `<Link>` 包裹，点击任意位置都会跳转，影响拖动/选择。
+- **修复**: 卡片改为普通 `<div>`，仅右上角「详情」和「外链 ↗」是可点击链接；卡片本身保留拖拽。
+- **验证**: `tsc --noEmit`、Chromium 冒烟通过。
 
 ## 3. 核心架构与关键代码索引
 

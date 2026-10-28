@@ -1041,9 +1041,8 @@ export default function ProjectPage() {
                   </div>
                 )}
                 {displayList.map((it) => (
-                  <Link
+                  <div
                     key={it.id}
-                    to={`/issues/${it.id}`}
                     draggable
                     onDragStart={(e) => {
                       setDraggingId(it.id);
@@ -1072,30 +1071,22 @@ export default function ProjectPage() {
                           </span>
                         )}
                       </span>
-                      {it.remoteUrl ? (
-                        <span
-                          className="issue-card-link"
-                          role="link"
-                          tabIndex={0}
-                          title="在远程平台打开"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            window.open(it.remoteUrl, '_blank', 'noopener,noreferrer');
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              window.open(it.remoteUrl, '_blank', 'noopener,noreferrer');
-                            }
-                          }}
-                        >
-                          远程 ↗
-                        </span>
-                      ) : (
-                        <span className="issue-card-link local">本地</span>
-                      )}
+                      <span className="issue-card-links">
+                        <Link to={`/issues/${it.id}`} className="issue-card-link" title="打开 Issue 详情">
+                          详情
+                        </Link>
+                        {it.remoteUrl && (
+                          <a
+                            className="issue-card-link"
+                            href={it.remoteUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="在远程平台打开"
+                          >
+                            外链 ↗
+                          </a>
+                        )}
+                      </span>
                     </div>
                     <div className="issue-card-title" title={it.key}>{it.title}</div>
                     <div className="issue-card-summary">{summarizeIssue(it)}</div>
@@ -1114,7 +1105,7 @@ export default function ProjectPage() {
                       </div>
                       <span className="issue-card-time">{fmtTime(it.updatedAt)}</span>
                     </div>
-                  </Link>
+                  </div>
                 ))}
                 {isDoneCol && list.length > 10 && (
                   <div

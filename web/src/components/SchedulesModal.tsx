@@ -3,11 +3,19 @@ import { api, qk } from '../api';
 import { fmtTime, Modal } from './common';
 import type { ScheduledTask } from '../types';
 
-export function SchedulesModal({ onClose }: { onClose: () => void }) {
+export function SchedulesModal({
+  onClose,
+  onOpenMonitor,
+  onOpenSettings,
+}: {
+  onClose: () => void;
+  onOpenMonitor: () => void;
+  onOpenSettings: () => void;
+}) {
   const tasksQ = useQuery({
     queryKey: qk.schedules,
     queryFn: api.schedules,
-    refetchInterval: 10_000,
+    // StatusBar owns the polling timer for this query.
   });
   const tasks = tasksQ.data ?? [];
   return (
@@ -33,6 +41,21 @@ export function SchedulesModal({ onClose }: { onClose: () => void }) {
             <div className="small muted" style={{ marginTop: 4 }}>{task.detail}</div>
             {task.nextRun && (
               <div className="small dim" style={{ marginTop: 2 }}>下次：{fmtTime(task.nextRun)}</div>
+            )}
+            {!task.enabled && task.settings && (
+              <div className="row" style={{ marginTop: 6, gap: 6 }}>
+                <span className="small" style={{ color: 'var(--orange)' }}>当前已停用</span>
+                <button
+                  type="button"
+                  className="sm"
+                  onClick={() => {
+                    if (task.settings === 'monitor') onOpenMonitor();
+                    else onOpenSettings();
+                  }}
+                >
+                  前往启用
+                </button>
+              </div>
             )}
           </div>
         ))}

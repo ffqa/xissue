@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `v0.5.0` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.1` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `v0.5.0`
+- **最新发布版本**: `0.5.1`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -362,6 +362,14 @@
 - **项目头部**: 项目名与路径/描述改为同一行，减少标题区高度。
 - **看板列头**: header padding 从 10px 12px 收紧到 7px 10px，列标题与 subtitle 间距改为 2px，subtitle 字号 11px。
 - **验证**: 定时任务 API 测试、保护分支 helper 测试、`tsc`、Vitest、Chromium 冒烟。
+
+### 2.40 状态栏定时任务、分支删除进度与版本策略（0.5.1）
+
+- **版本策略**: 从 `0.5.1` 起保持 patch 递增；未得到明确要求前不升级 0.6.0，至少再累积 20 个 patch 才考虑下一个 minor。此前 0.4.x→0.5.0 的升级不再重复。
+- **定时任务入口**: 顶栏菜单移除，状态栏新增可点击的 `⏱ <下一个任务> + 进度条 + 倒计时`，每 5 秒刷新；点击打开任务面板。停用任务在面板中显示「前往启用」，监控类跳监控中心，版本检查跳设置。
+- **分支删除**: `BranchCleanupModal` 改为固定 footer 关闭按钮；按分支逐个删除，显示 `正在删除 n/N：branch` 和进度条，每删一个立即从列表移除；删除中禁止关闭。
+- **卡片状态去重**: 看板卡片只在状态与列默认状态不同的时候显示状态文字（Todo 列 backlog、Running 列 failed、Review 列 pr_open）；Done/Review/Running 正常状态不再重复显示。
+- **验证**: 定时任务/保护分支测试、tsc、Vitest、Chromium 冒烟。
 
 ## 3. 核心架构与关键代码索引
 

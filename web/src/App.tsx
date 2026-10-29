@@ -227,7 +227,6 @@ function SystemMenu({
   onAgents,
   onMCP,
   onUsage,
-  onSchedules,
 }: {
   onSettings: () => void;
   onAutomation: () => void;
@@ -236,7 +235,6 @@ function SystemMenu({
   onAgents: () => void;
   onMCP: () => void;
   onUsage: () => void;
-  onSchedules: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -279,7 +277,6 @@ function SystemMenu({
         <div className="dropdown-menu">
           {item('⚙️ 全局设置', onSettings, '通知、浏览器提醒、更新与自动化概览')}
           {item('📡 监控中心', onMonitor, '查看监控状态、日志与通知配置')}
-          {item('⏱ 定时任务', onSchedules, '查看后台定时循环、间隔与下次运行')}
           {item('📊 用量统计', onUsage, '查看 Agent Token、上下文与费用汇总')}
           {item('🧩 插件管理', onPlugins, '启停插件、查看 README 与 config.json')}
           {item('🤖 Agent 管理', onAgents, '管理 Agent、默认模型与运行参数')}
@@ -347,7 +344,6 @@ export default function App() {
           onAgents={() => setAgentMgrOpen(true)}
           onMCP={() => setMcpOpen(true)}
           onUsage={() => setUsageOpen(true)}
-          onSchedules={() => setSchedulesOpen(true)}
         />
         <button
           className="ghost sm"
@@ -369,11 +365,25 @@ export default function App() {
           <Route path="*" element={<div className="page empty">页面不存在</div>} />
         </Routes>
       </main>
-      <StatusBar />
+      <StatusBar onOpenSchedules={() => setSchedulesOpen(true)} />
       {agentMgrOpen && <AgentManagerModal onClose={() => setAgentMgrOpen(false)} />}
       {mcpOpen && <MCPModal onClose={() => setMcpOpen(false)} />}
       {usageOpen && <UsageModal onClose={() => setUsageOpen(false)} />}
-      {schedulesOpen && <SchedulesModal onClose={() => setSchedulesOpen(false)} />}
+      {schedulesOpen && (
+        <SchedulesModal
+          onClose={() => setSchedulesOpen(false)}
+          onOpenMonitor={() => {
+            setSchedulesOpen(false);
+            setMonitorOpen(true);
+          }}
+          onOpenSettings={() => {
+            setSchedulesOpen(false);
+            setSettingsFromMonitor(false);
+            setSettingsTab('general');
+            setSettingsOpen(true);
+          }}
+        />
+      )}
       {monitorOpen && (
         <MonitorModal
           onClose={() => setMonitorOpen(false)}

@@ -1092,7 +1092,7 @@ export default function ProjectPage() {
                         )}
                       </span>
                     </div>
-                    <div className="issue-card-title" title={it.key}>{it.title}</div>
+                    <div className="issue-card-title" title={`${it.key} · ${ISSUE_STATUS_LABEL[it.status]}`}>{it.title}</div>
                     <div className="issue-card-summary">{summarizeIssue(it)}</div>
                     <div className="issue-card-footer">
                       <div className="issue-card-meta">
@@ -1100,7 +1100,11 @@ export default function ProjectPage() {
                           <span className="badge" key={label}>{label}</span>
                         ))}
                         {(it.labels?.length ?? 0) > 3 && <span className="dim">+{it.labels.length - 3}</span>}
-                        <span className="issue-card-status">{ISSUE_STATUS_LABEL[it.status]}</span>
+                        {((col.id === 'todo' && it.status === 'backlog') ||
+                          (col.id === 'running' && it.status === 'failed') ||
+                          (col.id === 'review' && it.status === 'pr_open')) && (
+                          <span className="issue-card-status">{ISSUE_STATUS_LABEL[it.status]}</span>
+                        )}
                         <span className={`badge priority-${it.priority || 'normal'}`}>
                           {PRIORITY_LABEL[it.priority] ?? '普通'}
                         </span>
@@ -2444,12 +2448,10 @@ export default function ProjectPage() {
 
       {prModalOpen && <PRModal projectId={id} onClose={() => setPrModalOpen(false)} />}
       {branchCleanupOpen && (
-        <Modal title="🧹 清理已合并分支" size="xl" onClose={() => setBranchCleanupOpen(false)} style={{ height: 'min(760px, 90vh)' }}>
-          <BranchCleanupModal
-            repos={p?.repos ?? []}
-            onClose={() => setBranchCleanupOpen(false)}
-          />
-        </Modal>
+        <BranchCleanupModal
+          repos={p?.repos ?? []}
+          onClose={() => setBranchCleanupOpen(false)}
+        />
       )}
       {commitsModal && (
         <CommitsModal

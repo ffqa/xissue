@@ -630,3 +630,9 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .issue-card-time { font-size: 11px; color: var(--text-3); white-space: nowrap; }
 
 .issue-card-links { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+
+.status-schedule > span:first-child { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-schedule { height: 19px; padding: 0 6px; border: 1px solid var(--border); border-radius: 5px; background: transparent; color: var(--text-2); font-size: 10px; font-family: var(--mono); cursor: pointer; }
+.status-schedule:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.status-progress { width: 42px; height: 4px; border-radius: 2px; background: var(--bg-3); overflow: hidden; display: inline-block; }
+.status-progress > span { display: block; height: 100%; background: var(--accent); transition: width .4s linear; }

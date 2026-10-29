@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { fmtTime } from './common';
+import { fmtTime, Modal } from './common';
 import { toast } from '../toast';
 import type { Repo } from '../types';
 
@@ -15,6 +15,7 @@ export function BranchCleanupModal({
   const qc = useQueryClient();
   const [repoId, setRepoId] = useState(repos[0]?.id ?? 0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [progress, setProgress] = useState<{ done: number; total: number; current: string } | null>(null);
 
   const branchesQ = useQuery({
     queryKey: qk.mergedBranches(repoId),
@@ -29,15 +30,37 @@ export function BranchCleanupModal({
   }, [repoId, branchesQ.dataUpdatedAt]);
 
   const deleteMut = useMutation({
-    mutationFn: (names: string[]) => api.deleteMergedBranches(repoId, names),
-    onSuccess: (res) => {
+    mutationFn: async (names: string[]) => {
+      let done = 0;
+      for (const name of names) {
+        setProgress({ done, total: names.length, current: name });
+        await api.deleteMergedBranches(repoId, [name]);
+        done++;
+        setProgress({ done, total: names.length, current: name });
+        setSelected((prev) => {
+          const next = new Set(prev);
+          next.delete(name);
+          return next;
+        });
+        qc.setQueryData(qk.mergedBranches(repoId), (old: typeof branches | undefined) =>
+          (old ?? []).filter((branch) => branch.name !== name),
+        );
+      }
+      return done;
+    },
+    onSuccess: (count) => {
       qc.invalidateQueries({ queryKey: qk.mergedBranches(repoId) });
       qc.invalidateQueries({ queryKey: qk.repoBranches(repoId) });
       qc.invalidateQueries({ queryKey: qk.repoCommits(repoId, '') });
-      toast.success(`已删除 ${res.deleted.length} 个分支`);
+      toast.success(`已删除 ${count} 个分支`);
       setSelected(new Set());
+      setProgress(null);
     },
-    onError: (e) => toast.error(`删除失败：${(e as Error).message}`),
+    onError: (e) => {
+      qc.invalidateQueries({ queryKey: qk.mergedBranches(repoId) });
+      setProgress(null);
+      toast.error(`删除失败：${(e as Error).message}`);
+    },
   });
 
   const allSelected = branches.length > 0 && branches.every((branch) => selected.has(branch.name));
@@ -110,7 +133,18 @@ export function BranchCleanupModal({
   }, [repoId, branchesQ.isLoading, branchesQ.isError, branchesQ.error, branches, selected, allSelected]);
 
   return (
-    <div className="col" style={{ gap: 10, minHeight: 0 }}>
+    <Modal
+      title="🧹 清理已合并分支"
+      size="xl"
+      onClose={deleteMut.isPending ? () => {} : onClose}
+      style={{ height: 'min(760px, 90vh)' }}
+      footer={
+        <button onClick={onClose} disabled={deleteMut.isPending}>
+          {deleteMut.isPending ? '删除进行中…' : '关闭'}
+        </button>
+      }
+    >
+      <div className="col" style={{ gap: 10, minHeight: 0 }}>
       <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
         <label className="field grow" style={{ margin: 0, minWidth: 240 }}>
           仓库
@@ -134,11 +168,19 @@ export function BranchCleanupModal({
       <div className="small dim">
         只列出「已经合并到 {repos.find((repo) => repo.id === repoId)?.defaultBranch || '默认分支'}」且提交者是你的远程分支。
       </div>
+      {progress && (
+        <div className="col" style={{ gap: 4 }}>
+          <div className="small">
+            正在删除 {Math.min(progress.done + 1, progress.total)}/{progress.total}：
+            <code className="mono">{progress.current}</code>
+          </div>
+          <div className="status-progress" style={{ width: '100%', height: 6 }}>
+            <span style={{ width: `${(progress.done / progress.total) * 100}%` }} />
+          </div>
+        </div>
+      )}
       {body}
-      <div className="row">
-        <span className="grow" />
-        <button onClick={onClose}>关闭</button>
       </div>
-    </div>
+    </Modal>
   );
 }

@@ -176,7 +176,7 @@ interface RunEvent {
 | POST | `/api/projects/{id}/prs/{number}/merge` | 合并项目内仓库的 PR，刷新镜像并尝试快进本地目标分支；`message` 包含逐仓本地更新结果。`repoId` 必须属于路径中的项目，否则 400 → `{ ok, merged, message }` |
 | POST | `/api/projects/{id}/prs/{number}/close` | 在项目中直接关闭 PR → `{ ok, closed }` |
 | GET | `/api/repos/{repoId}/commits/{sha}` | 单个 Commit 详情：元信息、文件增删统计、统一 diff（超过 512KB 截断） |
-| GET | `/api/schedules` | 后台定时任务列表：`{ id, name, interval, detail, enabled, nextRun? }[]` |
+| GET | `/api/schedules` | 后台定时任务列表：`{ id, name, interval, intervalSeconds, detail, enabled, settings?, nextRun? }[]`；`settings=monitor` 去监控中心启用，`settings=settings` 去通用设置启用 |
 | GET | `/api/monitor/status` | 获取监控服务状态、上次检查耗时、监控分支与 PR 数 → `MonitorStatus` |
 | GET | `/api/monitor/logs` | 查询监控与执行日志（`?hours=8` 默认最近8小时）→ `MonitorLogEntry[]` |
 | POST | `/api/monitor/trigger` | 立即触发一次全分支与 PR 状态检查 → `{ ok, watchesTriggered, prsUpdated, message }` |

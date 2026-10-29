@@ -636,8 +636,10 @@ export interface ScheduledTask {
   id: string;
   name: string;
   interval: string;
+  intervalSeconds: number;
   detail: string;
   enabled: boolean;
+  settings?: 'monitor' | 'settings';
   nextRun?: string;
 }
 

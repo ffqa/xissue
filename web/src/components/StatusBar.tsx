@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { useWsState } from '../realtime';
@@ -25,7 +26,14 @@ function fmtUptime(sec: number): string {
   return `${m}m ${s % 60}s`;
 }
 
-export function StatusBar() {
+function fmtCountdown(ms: number): string {
+  const sec = Math.max(0, Math.ceil(ms / 1000));
+  if (sec >= 3600) return `${Math.floor(sec / 3600)}h`;
+  if (sec >= 60) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  return `${sec}s`;
+}
+
+export function StatusBar({ onOpenSchedules }: { onOpenSchedules?: () => void }) {
   const wsState = useWsState();
   const q = useQuery({
     queryKey: qk.status,
@@ -38,6 +46,23 @@ export function StatusBar() {
     staleTime: Infinity,
     retry: false,
   });
+  const schedulesQ = useQuery({
+    queryKey: qk.schedules,
+    queryFn: api.schedules,
+    refetchInterval: 5000,
+    staleTime: 4000,
+    retry: false,
+  });
+  const nextTask = useMemo(() => {
+    const now = Date.now();
+    return (schedulesQ.data ?? [])
+      .filter((task) => task.enabled && task.nextRun && new Date(task.nextRun).getTime() > now - 5000)
+      .sort((a, b) => new Date(a.nextRun!).getTime() - new Date(b.nextRun!).getTime())[0];
+  }, [schedulesQ.data]);
+  const nextRemaining = nextTask?.nextRun ? Math.max(0, new Date(nextTask.nextRun).getTime() - Date.now()) : 0;
+  const nextProgress = nextTask && nextTask.intervalSeconds > 0
+    ? Math.max(0, Math.min(100, 100 - (nextRemaining / (nextTask.intervalSeconds * 1000)) * 100))
+    : 0;
   const restart = useMutation({
     mutationFn: api.restartServer,
     onSuccess: () => toast.info('服务正在重启，WebSocket 将自动重连…'),
@@ -115,6 +140,21 @@ export function StatusBar() {
         {queue.pending > 0 ? ` +Q${queue.pending}` : ''}
       </span>
       <span className="status-item">G {st.goroutines}</span>
+      <button
+        type="button"
+        className="status-item status-schedule"
+        title={nextTask ? `${nextTask.name} · ${nextTask.interval} · 下次 ${fmtCountdown(nextRemaining)}` : '查看后台定时任务'}
+        onClick={onOpenSchedules}
+        disabled={!onOpenSchedules}
+      >
+        <span>⏱ {nextTask ? nextTask.name : `${schedulesQ.data?.filter((t) => t.enabled).length ?? 0} 个任务`}</span>
+        {nextTask && (
+          <>
+            <span className="status-progress"><span style={{ width: `${nextProgress}%` }} /></span>
+            <span className="dim">{fmtCountdown(nextRemaining)}</span>
+          </>
+        )}
+      </button>
       <span className="grow" />
       <span className={`ws-ind ${wsState}`} title="状态通道：WebSocket 推送；断线时自动切换 HTTP 轮询">
         <span className="dot" /> {wsLabel}

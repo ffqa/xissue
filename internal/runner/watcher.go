@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1097,6 +1098,20 @@ func (r *Runner) ListProjectPRs(ctx context.Context, projectID int64, state stri
 		return nil, err
 	}
 	var all []provider.RemotePR
+	var fetchErrors []error
+	attempted, succeeded := 0, 0
+	logins := map[domain.Provider]string{}
+	loginFor := func(prov domain.Provider, p provider.Provider) string {
+		if login, ok := logins[prov]; ok {
+			return login
+		}
+		login, err := p.CurrentUser(ctx)
+		if err != nil {
+			login = ""
+		}
+		logins[prov] = strings.TrimSpace(login)
+		return logins[prov]
+	}
 	var githubRepos []domain.Repo
 	for _, repo := range repos {
 		p := provider.For(repo.Provider)
@@ -1107,44 +1122,75 @@ func (r *Runner) ListProjectPRs(ctx context.Context, projectID int64, state stri
 			githubRepos = append(githubRepos, repo)
 			continue
 		}
-		if prs, err := p.ListPRs(ctx, repo, state); err == nil {
-			markPRsMine(ctx, p, prs)
-			all = append(all, prs...)
+		attempted++
+		prs, err := p.ListPRs(ctx, repo, state)
+		if err != nil {
+			fetchErrors = append(fetchErrors, fmt.Errorf("%s: %w", repo.Name, err))
+			continue
 		}
+		succeeded++
+		markPRsMine(prs, loginFor(repo.Provider, p))
+		all = append(all, prs...)
 	}
 	if len(githubRepos) > 1 {
+		attempted += len(githubRepos)
 		batched, err := provider.GitHubBatchPRs(ctx, githubRepos, state)
 		if err == nil {
+			succeeded += len(githubRepos)
+			login := loginFor(domain.ProviderGitHub, provider.For(domain.ProviderGitHub))
 			for _, repo := range githubRepos {
 				prs := batched[repo.ID]
-				markPRsMine(ctx, provider.For(repo.Provider), prs)
+				markPRsMine(prs, login)
 				all = append(all, prs...)
 			}
 		} else {
+			fetchErrors = append(fetchErrors, fmt.Errorf("github batch: %w", err))
 			for _, repo := range githubRepos {
-				if prs, err := provider.For(repo.Provider).ListPRs(ctx, repo, state); err == nil {
-					all = append(all, prs...)
+				prs, perr := provider.For(repo.Provider).ListPRs(ctx, repo, state)
+				if perr != nil {
+					fetchErrors = append(fetchErrors, fmt.Errorf("%s: %w", repo.Name, perr))
+					continue
 				}
+				succeeded++
+				markPRsMine(prs, loginFor(repo.Provider, provider.For(repo.Provider)))
+				all = append(all, prs...)
 			}
 		}
 	} else if len(githubRepos) == 1 {
-		if prs, err := provider.For(githubRepos[0].Provider).ListPRs(ctx, githubRepos[0], state); err == nil {
-			markPRsMine(ctx, provider.For(githubRepos[0].Provider), prs)
+		attempted++
+		prs, err := provider.For(githubRepos[0].Provider).ListPRs(ctx, githubRepos[0], state)
+		if err != nil {
+			fetchErrors = append(fetchErrors, fmt.Errorf("%s: %w", githubRepos[0].Name, err))
+		} else {
+			succeeded++
+			markPRsMine(prs, loginFor(githubRepos[0].Provider, provider.For(githubRepos[0].Provider)))
 			all = append(all, prs...)
 		}
 	}
-	r.prCacheMu.Lock()
-	r.prCache[key] = cachedPRList{at: time.Now(), prs: append([]provider.RemotePR(nil), all...)}
-	r.prCacheMu.Unlock()
+	if succeeded == 0 && len(fetchErrors) > 0 {
+		return nil, errors.Join(fetchErrors...)
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		ti, _ := time.Parse(time.RFC3339, all[i].CreatedAt)
+		tj, _ := time.Parse(time.RFC3339, all[j].CreatedAt)
+		if !ti.Equal(tj) {
+			return ti.After(tj)
+		}
+		return all[i].Number > all[j].Number
+	})
+	// Do not cache an empty result when every provider failed. A transient gh
+	// or network failure would otherwise make the PR panel look empty for the
+	// whole cache TTL.
+	if len(fetchErrors) == 0 {
+		r.prCacheMu.Lock()
+		r.prCache[key] = cachedPRList{at: time.Now(), prs: append([]provider.RemotePR(nil), all...)}
+		r.prCacheMu.Unlock()
+	}
 	return all, nil
 }
 
-func markPRsMine(ctx context.Context, p provider.Provider, prs []provider.RemotePR) {
-	if len(prs) == 0 {
-		return
-	}
-	login, err := p.CurrentUser(ctx)
-	if err != nil || strings.TrimSpace(login) == "" {
+func markPRsMine(prs []provider.RemotePR, login string) {
+	if len(prs) == 0 || strings.TrimSpace(login) == "" {
 		return
 	}
 	for i := range prs {

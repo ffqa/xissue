@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.3` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.4` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.3`
+- **最新发布版本**: `0.5.4`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -386,6 +386,14 @@
 - **筛选**: PR 面板新增「仅看我提交的」复选框，与 Open/Merged/Closed/All 叠加过滤；切换标签或刷新不会丢筛选状态。
 - **缓存**: `mine` 随 PR 列表一起进入 localStorage 缓存；当前用户身份变化后最长 60 秒随刷新修正。
 - **验证**: provider/server/runner 测试、tsc、Chromium 冒烟。
+
+### 2.43 PR 列表空结果与排序修复（0.5.4）
+
+- **空结果缓存**: Provider 全部失败时不再缓存空 PR 列表；部分仓库失败时也不写缓存。前端忽略 localStorage 中的空 PR 缓存，并在挂载时强制重新请求。避免一次瞬时 `gh`/网络失败让 PR 面板整个 TTL 内显示为空。
+- **错误可见**: PR 拉取失败时面板显示错误和「重试」，不再伪装成“暂无 PR”。
+- **排序**: 服务端和前端都按 `createdAt` 倒序排列，同一时间按 PR number 倒序；不再按 provider 返回顺序显示最早 PR。
+- **mine 标记**: 当前用户识别失败不会清空 PR；只影响「仅看我提交的」筛选。
+- **验证**: runner/provider/server 测试、tsc、Vitest 30 用例、Chromium 冒烟。
 
 ## 3. 核心架构与关键代码索引
 

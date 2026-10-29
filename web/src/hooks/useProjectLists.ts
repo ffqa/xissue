@@ -14,11 +14,12 @@ export function useProjectPRs(projectId: number, refetchInterval?: number) {
     staleTime: 30_000,
     gcTime: 30 * 60_000,
     refetchInterval,
-    initialData: cached?.data,
-    initialDataUpdatedAt: cached?.at,
+    initialData: cached?.data?.length ? cached.data : undefined,
+    initialDataUpdatedAt: cached?.data?.length ? cached.at : undefined,
+    refetchOnMount: 'always',
   });
   useEffect(() => {
-    if (query.data) writeCache(cacheKey, query.data);
+    if (query.data?.length) writeCache(cacheKey, query.data);
   }, [cacheKey, query.data]);
   return query;
 }
@@ -31,11 +32,12 @@ export function useProjectIssues(projectId: number) {
     queryFn: () => api.issues(projectId),
     enabled: !!projectId,
     staleTime: 15_000,
-    initialData: cached?.data,
-    initialDataUpdatedAt: cached?.at,
+    initialData: cached?.data?.length ? cached.data : undefined,
+    initialDataUpdatedAt: cached?.data?.length ? cached.at : undefined,
+    refetchOnMount: 'always',
   });
   useEffect(() => {
-    if (query.data) writeCache(cacheKey, query.data);
+    if (query.data?.length) writeCache(cacheKey, query.data);
   }, [cacheKey, query.data]);
   return query;
 }

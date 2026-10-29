@@ -92,12 +92,6 @@ interface Issue {
 }
 
 interface Job {
-  id: number; kind: string; status: "queued" | "running" | "completed" | "failed" | "cancelled";
-  repoId: number; payload: { branch?: string }; error?: string;
-  createdAt: string; startedAt?: string; finishedAt?: string;
-}
-
-interface Job {
   id: number; kind: string;
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
   repoId: number; payload: { branch?: string }; error?: string;

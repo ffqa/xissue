@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
+	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/provider"
 	"github.com/xpier/xissue/internal/runner"
 )
@@ -25,6 +28,24 @@ func (s *Server) handleListProjectPRs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := r.URL.Query().Get("state")
+	// A project imported before provider detection may still be marked plain.
+	// Refresh only when needed, bounded, so the PR panel can recover without
+	// waiting for the user to open project settings.
+	if proj, err := s.st.GetProject(r.Context(), id); err == nil {
+		needsDetect := false
+		for _, repo := range proj.Repos {
+			if repo.Provider == domain.ProviderPlain {
+				needsDetect = true
+				break
+			}
+		}
+		if needsDetect {
+			ctx, cancel := context.WithTimeout(r.Context(), 800*time.Millisecond)
+			s.refreshProjectRepos(ctx, proj)
+			cancel()
+			s.runner.InvalidateProjectPRCache(id)
+		}
+	}
 	prs, err := s.runner.ListProjectPRs(r.Context(), id, state)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)

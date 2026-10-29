@@ -4,7 +4,7 @@ import { api, qk } from '../api';
 import { fmtTime } from './common';
 import { toast } from '../toast';
 import type { RemotePR } from '../types';
-import { filterPRs, type PRFilter } from '../logic/prs';
+import { filterPRs, sortPRs, type PRFilter } from '../logic/prs';
 import { useProjectPRs } from '../hooks/useProjectLists';
 
 export function PRPanel({ projectId }: { projectId: number }) {
@@ -19,7 +19,7 @@ export function PRPanel({ projectId }: { projectId: number }) {
   // ProjectPage owns the single 60s timer for this shared query.
   const prsQ = useProjectPRs(projectId);
   const prs: RemotePR[] = prsQ.data ?? [];
-  const filteredPRs = filterPRs(prs, filterState).filter((pr) => !mineOnly || pr.mine);
+  const filteredPRs = sortPRs(filterPRs(prs, filterState).filter((pr) => !mineOnly || pr.mine));
 
   const pullMut = useMutation({
     mutationFn: () => api.pullProject(projectId),
@@ -113,7 +113,13 @@ export function PRPanel({ projectId }: { projectId: number }) {
       <div className="panel pr-panel">
         <div className="pr-list">
           {prsQ.isLoading && <div className="empty">正在获取项目 Pull Request 列表…</div>}
-          {!prsQ.isLoading && filteredPRs.length === 0 && (
+          {prsQ.isError && (
+            <div className="empty" style={{ color: 'var(--red)' }}>
+              PR 获取失败：{(prsQ.error as Error).message}
+              <button className="sm ghost" style={{ marginLeft: 8 }} onClick={() => prsQ.refetch()}>重试</button>
+            </div>
+          )}
+          {!prsQ.isLoading && !prsQ.isError && filteredPRs.length === 0 && (
             <div className="empty">
               当前状态下无 Pull Request。
               {filterState !== 'all' && (

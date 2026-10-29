@@ -241,6 +241,9 @@ export const api = {
 
   detectHooks: (projectId: number) => get<HookStatus[]>(`/api/projects/${projectId}/hooks`),
   plugins: () => get<PluginInfo[]>('/api/plugins'),
+  pluginAIInfo: () => get<{ agent: string; model?: string; models?: string[]; available: boolean }>('/api/plugins/ai'),
+  pluginAI: (b: { prompt: string; agent?: string; model?: string }) =>
+    post<{ agent: string; model?: string; text: string; stopReason?: string; usage?: Record<string, number> }>('/api/plugins/ai', b),
   setPluginEnabled: (id: string, enabled: boolean) =>
     patch<PluginInfo[]>(`/api/plugins/${encodeURIComponent(id)}`, { enabled }),
   pluginReadme: (id: string) => get<PluginReadme>(`/api/plugins/${encodeURIComponent(id)}/readme`),

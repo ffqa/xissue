@@ -159,9 +159,13 @@ ui:
 - 全局开关：设置 → 通用 → 🧩 插件 UI →「插件 UI 沙盒模式」。默认关闭；开启后 iframe 使用 `sandbox="allow-scripts allow-forms allow-popups allow-downloads"`（不含 `allow-same-origin`），插件只能通过 `postMessage` 桥通信。配置字段为 `pluginUISandbox`（默认 `false`）；
 - 静态资源只从 `<plugin>/ui/` 提供（`GET /api/plugins/{id}/ui/{path...}`），后端拒绝 `..` 与符号链接逃逸；
 - `postMessage` 小桥：
-  - 插件 → 宿主：`xissue:ready`、`xissue:notify{kind,message}`、`xissue:open{path}`（仅接受 `/` 开头的站内路径）、`xissue:reload`、`xissue:resize{height}`、`xissue:open-modal{title,height}`、`xissue:close-modal`；
-  - 宿主 → 插件：`xissue:context{slot,modal,context}`；弹窗内 `modal=true`，插件可据此渲染完整面板而不是按钮；
+  - 插件 → 宿主：`xissue:ready`、`xissue:notify{kind,message}`、`xissue:open{path}`（仅接受 `/` 开头的站内路径）、`xissue:reload`、`xissue:resize{height}`、`xissue:open-modal{title,height}`、`xissue:close-modal`、`xissue:ai{requestId,prompt,agent?,model?}`；
+  - 宿主 → 插件：`xissue:context{slot,modal,context}`；弹窗内 `modal=true`，插件可据此渲染完整面板而不是按钮；AI 请求返回 `xissue:ai-result{requestId,data|error}`；
   - 未开启沙盒时，插件可直接在同源 iframe 内操作宿主页面或调用 `/api/*`；开启后只能使用上述消息桥；
+- **插件 AI API**：宿主默认 Agent 可直接给插件使用，不需要插件自己探测 `/api/agents`：
+  - `GET /api/plugins/ai` 返回 `{agent, model, models, available}`；
+  - `POST /api/plugins/ai` 请求 `{prompt, agent?, model?}`，返回 `{agent, model, text, stopReason, usage}`；`agent` 省略时使用全局默认 Agent，默认不可用时回退到第一个已安装 Agent；
+  - 每次调用在临时目录启动一次性 ACP 会话，**拒绝所有工具权限**（只做文本生成，不读写用户文件、不执行命令）；沙盒 iframe 用 `xissue:ai` 消息桥，非沙盒 iframe 也可直接 `fetch`；
 - 示例 plugin 见 [`examples/plugin-ui`](../examples/plugin-ui)。
 
 ### 4. Web 全局管理与 `config.json`
@@ -171,7 +175,7 @@ ui:
 - 左侧列表显示 manifest 错误、API 版本、事件与权限；右侧提供 `README.md` 预览与 `config.json` 编辑器；
 - `config.json` 可直接在界面生成、编辑、保存（原子写入，权限 `0600`）。首次生成时优先复制同目录的 `config.example.json`，没有模板则写入 `{}`；
 - 插件进程以插件目录为工作目录，脚本可直接读取 `./config.json`；配置不会自动注入 stdin payload，避免改变既有插件契约；
-- API：`GET /api/plugins`、`GET /api/plugins/{id}/readme`、`GET /api/plugins/{id}/ui/{path...}`、`GET|PUT /api/plugins/{id}/config`、`PATCH /api/plugins/{id}`（`{enabled}`）。
+- API：`GET /api/plugins`、`GET /api/plugins/ai`、`POST /api/plugins/ai`、`GET /api/plugins/{id}/readme`、`GET /api/plugins/{id}/ui/{path...}`、`GET|PUT /api/plugins/{id}/config`、`PATCH /api/plugins/{id}`（`{enabled}`）。
 
 ---
 

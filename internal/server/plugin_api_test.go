@@ -50,6 +50,15 @@ permissions: [notify]
 		t.Fatalf("list plugins: %d %s", w.Code, w.Body.String())
 	}
 
+	w = do(http.MethodGet, "/api/plugins/ai", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"available":false`) {
+		t.Fatalf("plugin AI info: %d %s", w.Code, w.Body.String())
+	}
+	w = do(http.MethodPost, "/api/plugins/ai", `{"prompt":"  "}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("empty plugin AI prompt: %d %s", w.Code, w.Body.String())
+	}
+
 	w = do(http.MethodGet, "/api/plugins/demo/readme", "")
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Plugin readme") {
 		t.Fatalf("readme: %d %s", w.Code, w.Body.String())

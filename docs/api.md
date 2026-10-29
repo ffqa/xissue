@@ -233,3 +233,8 @@ interface RunEvent {
 ```
 
 错误统一返回 `{ error: string }` 与对应 HTTP 状态码。
+
+## Plugins
+
+- `GET /api/plugins/ai` — returns the default plugin AI agent: `{agent, model, models, available}`.
+- `POST /api/plugins/ai` — body `{prompt, agent?, model?}`; runs one text-only ACP turn in a throwaway workspace and returns `{agent, model, text, stopReason, usage}`. Tools are rejected.

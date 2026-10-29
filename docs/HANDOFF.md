@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.10` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.11` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.10`
+- **最新发布版本**: `0.5.11`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -437,6 +437,14 @@
 - **后端契约**: manifest 槽位白名单、主 schema、模板库/目录库 validator 与 schema 同步更新。
 - **其他**: `input.sm` / `select.sm` 高度统一为 24px，与 `button.sm` 对齐（含高特异性覆盖），修复监控分支输入框比相邻控件高。
 - **验证**: 真实 Chromium 验证 toolbar iframe 150×28、点击按钮打开弹窗；模板/目录仓库 CI 通过。
+
+### 2.49 插件默认 Agent AI 接口（0.5.11）
+
+- **新增接口**: `GET /api/plugins/ai` 返回默认 Agent 元数据（`agent/model/models/available`）；`POST /api/plugins/ai` 接收 `{prompt, agent?, model?}`，返回一次性 ACP 文本结果 `{agent, model, text, stopReason, usage}`。
+- **默认与回退**: 省略 `agent` 时使用全局默认 Agent；默认 Agent 不可用时回退到第一个已安装 Agent；显式传入未知/不可用 Agent 直接报错。
+- **隔离**: 每次调用在 `dataDir/plugin-ai/request-*` 临时目录启动一次性 ACP 会话，结束后清理；所有工具权限请求均拒绝，只提供文本生成，不读写用户文件、不执行命令。
+- **插件 UI**: 非沙盒 iframe 可直接 `fetch /api/plugins/ai`；沙盒 iframe 通过 `xissue:ai{requestId,prompt,agent?,model?}` → `xissue:ai-result{requestId,data|error}` 桥调用，宿主代为请求。
+- **验证**: 新增 fake ACP Agent 测试（文本、usage、默认回退、空 prompt）；插件模板/目录仓库文档同步。
 
 ## 3. 核心架构与关键代码索引
 

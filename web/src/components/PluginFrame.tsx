@@ -25,6 +25,12 @@ interface PluginMessage {
   path?: string;
   height?: number;
   title?: string;
+  requestId?: string;
+  prompt?: string;
+  agent?: string;
+  model?: string;
+  data?: unknown;
+  error?: string;
 }
 
 // PluginFrame hosts trusted plugin UI in a same-origin iframe. Plugins are
@@ -83,6 +89,21 @@ export function PluginFrame({
         case 'xissue:open': {
           const path = String(data.path ?? '');
           if (path.startsWith('/') && !path.startsWith('//')) nav(path);
+          break;
+        }
+        case 'xissue:ai': {
+          const requestId = String(data.requestId ?? '');
+          if (!requestId) return;
+          const reply = (payload: Record<string, unknown>) => {
+            frameRef.current?.contentWindow?.postMessage({ type: 'xissue:ai-result', requestId, ...payload }, '*');
+          };
+          api.pluginAI({
+            prompt: String(data.prompt ?? ''),
+            agent: data.agent ? String(data.agent) : undefined,
+            model: data.model ? String(data.model) : undefined,
+          })
+            .then((result) => reply({ data: result }))
+            .catch((err: unknown) => reply({ error: String((err as Error).message || err) }));
           break;
         }
         case 'xissue:reload':

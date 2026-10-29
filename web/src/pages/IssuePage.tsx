@@ -627,6 +627,11 @@ export default function IssuePage() {
             >
               编辑
             </button>
+            <PluginSlot
+              name="issue.toolbar"
+              inline
+              context={{ issueId: id, issueKey: issue?.key, status: issue?.status, projectId: issue?.projectId }}
+            />
             <button className="sm" onClick={() => setSubOpen(true)}>
               ＋ 子任务
             </button>

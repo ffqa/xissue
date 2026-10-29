@@ -376,7 +376,7 @@ export default function ProjectPage() {
   // reads the same cache, so opening it or switching to Merged/Closed is
   // instant; open PRs still refresh every 60s and update the badge.
   const projectPRsQ = useProjectPRPages(id, 60_000);
-  const projectPRs = projectPRsQ.data?.pages.flatMap((page) => page.prs) ?? [];
+  const projectPRs = projectPRsQ.data?.pages.flatMap((page) => page.prs ?? []) ?? [];
   const openPRCount = filterPRs(projectPRs, 'open').length;
 
   const pullMut = useMutation({
@@ -674,6 +674,11 @@ export default function ProjectPage() {
           )}
         </button>
 
+        <PluginSlot
+          name="project.toolbar"
+          inline
+          context={{ projectId: id, projectName: p?.name, runnerId: p?.runnerId }}
+        />
         <button
           className="ghost"
           onClick={() => setReadmeOpen(true)}

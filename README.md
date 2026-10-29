@@ -134,7 +134,7 @@ chmod +x ~/.local/bin/xissue
   - **🅱️ 项目级 Hooks 脚本 (Layer 2)**：在代码库根目录放置 `.xissue/hooks/on-pr-comment` 或 `on-pr-review` 脚本，接收 stdin JSON 上下文并自由定制私有流转逻辑（*注：本项目 Hook 仅对以本地目录添加的仓库生效；远程镜像仓库及 `pr_merged` 事件不执行仓库内脚本，避免外部合并触发本地代码执行。`branch_push` 仅本地仓库执行，且受自动化规则作者门控*）；
   - **🅲️ 规范化生态插件 (Layer 3)**：`xissue plugin install <name>` 从官方目录安装，或直接从 GitHub 仓库安装带 `plugin.yaml` v1 清单的插件；支持 `branch_push`、`pr_*`、`issue_*`、`run_*` 等生命周期事件。模板与插件目录见 <https://github.com/ffqa/xissue-plugin-template> 与 <https://github.com/ffqa/xissue-plugins>。
   - **🧩 全局插件管理**：顶栏「插件」可即时启用/停用、预览 README、生成/编辑 `config.json`；停用后不再接收任何事件。
-  - **🪟 插件 UI（同源 iframe + 插槽）**：`plugin.yaml` 可声明 `ui.entry`（必须位于 `ui/` 下）、`ui.title` 与 `ui.slots`。插件页面挂在 `/plugins/<id>`；`project.header`、`project.page`、`issue.actions`、`issue.page` 插槽可把同一 UI 嵌入宿主页面。插件是操作者自己安装的可信扩展，默认 iframe 同源、拥有与主应用相同的权限（可直接访问 `parent.document`、Cookie、fetch 与 localStorage）；可在「设置 → 通用 → 🧩 插件 UI」开启全局「插件 UI 沙盒模式」恢复隔离。另有 `postMessage` 的 `context/notify/open/reload/resize` 便捷桥。示例见 [`examples/plugin-ui`](examples/plugin-ui)。
+  - **🪟 插件 UI（同源 iframe + 插槽）**：`plugin.yaml` 可声明 `ui.entry`（必须位于 `ui/` 下）、`ui.title` 与 `ui.slots`。插件页面挂在 `/plugins/<id>`；`project.header`、`project.page`、`project.toolbar`、`issue.actions`、`issue.page`、`issue.toolbar` 插槽可把同一 UI 嵌入宿主页面。插件是操作者自己安装的可信扩展，默认 iframe 同源、拥有与主应用相同的权限（可直接访问 `parent.document`、Cookie、fetch 与 localStorage）；可在「设置 → 通用 → 🧩 插件 UI」开启全局「插件 UI 沙盒模式」恢复隔离。另有 `postMessage` 的 `context/notify/open/reload/resize` 便捷桥。示例见 [`examples/plugin-ui`](examples/plugin-ui)。
 - **内置审查与暗色/亮色主题切换**：
   - Web UI 内嵌本地打包的 Monaco DiffEditor，支持行内编辑保存、一键跳回 VSCode/Cursor。
 

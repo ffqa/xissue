@@ -19,7 +19,7 @@ export function PRPanel({ projectId }: { projectId: number }) {
   // Merged/Closed never waits for another provider request.
   // ProjectPage owns the single 60s timer for this shared query.
   const prsQ = useProjectPRPages(projectId);
-  const prs: RemotePR[] = prsQ.data?.pages.flatMap((page) => page.prs) ?? [];
+  const prs: RemotePR[] = prsQ.data?.pages.flatMap((page) => page.prs ?? []) ?? [];
   const mineKnown = prsQ.data?.pages.some((page) => page.mineKnown) ?? false;
   const filteredPRs = sortPRs(filterPRs(prs, filterState).filter((pr) => !mineOnly || !mineKnown || pr.mine));
   const visiblePRs = filteredPRs.slice(0, visibleCount);

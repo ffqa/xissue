@@ -83,10 +83,12 @@ type PluginManifest struct {
 // Supported host slots for sandboxed plugin UI. The frontend renders the same
 // names; unknown slots are rejected at manifest load time.
 var knownPluginUISlots = map[string]struct{}{
-	"project.page":   {},
-	"project.header": {},
-	"issue.page":     {},
-	"issue.actions":  {},
+	"project.page":    {},
+	"project.header":  {},
+	"project.toolbar": {},
+	"issue.page":      {},
+	"issue.actions":   {},
+	"issue.toolbar":   {},
 }
 
 func KnownPluginUISlots() []string {

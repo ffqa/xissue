@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.8` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.9` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.8`
+- **最新发布版本**: `0.5.9`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -429,6 +429,14 @@
 - **排序**: 每页/合并后均 createdAt DESC、number DESC。
 - **UI**: 已加载结果每次渲染 100 条；本地「加载更多」和远端「加载更早」分开。
 - **验证**: page API、cursor 跳过、tsc/Vitest、真实大仓库 GraphQL 分页验证。
+
+### 2.48 插件 toolbar 插槽与弹窗（0.5.9）
+
+- **新增插槽**: `project.toolbar`、`issue.toolbar`，宿主按 150×28 紧凑 iframe 挂载；插件可渲染按钮并请求弹窗。
+- **弹窗桥**: 插件发送 `xissue:open-modal{title,height}`，宿主在 `Modal` 中打开同一 UI，并以 `modal=true` 注入 context；`xissue:close-modal` 关闭。弹窗内 iframe 仍遵循全局 `pluginUISandbox`。
+- **后端契约**: manifest 槽位白名单、主 schema、模板库/目录库 validator 与 schema 同步更新。
+- **其他**: `input.sm` / `select.sm` 高度统一为 28px，修复监控分支输入框比相邻控件高。
+- **验证**: 真实 Chromium 验证 toolbar iframe 150×28、点击按钮打开弹窗；模板/目录仓库 CI 通过。
 
 ## 3. 核心架构与关键代码索引
 

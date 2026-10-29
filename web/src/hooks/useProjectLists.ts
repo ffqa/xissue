@@ -16,7 +16,7 @@ export function useProjectPRPages(projectId: number, refetchInterval?: number) {
     staleTime: 30_000,
     gcTime: 30 * 60_000,
     refetchInterval,
-    initialData: cached?.data ? { pages: [cached.data], pageParams: [''] } : undefined,
+    initialData: cached?.data?.prs ? { pages: [cached.data], pageParams: [''] } : undefined,
     initialDataUpdatedAt: cached?.at,
     refetchOnMount: 'always',
   });

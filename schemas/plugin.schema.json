@@ -101,8 +101,10 @@
             "enum": [
               "project.page",
               "project.header",
+              "project.toolbar",
               "issue.page",
-              "issue.actions"
+              "issue.actions",
+              "issue.toolbar"
             ]
           },
           "description": "Host slots that mount the UI. Empty means full page only."

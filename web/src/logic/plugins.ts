@@ -12,14 +12,17 @@ export interface SlotPlugin {
 
 // pluginUIURL points the trusted same-origin iframe at the plugin's UI entry. The
 // backend requires entries to live below ui/, so the prefix is stripped.
-export function pluginUIURL(plugin: { id: string; ui?: PluginUI }, slot?: string): string {
+export function pluginUIURL(plugin: { id: string; ui?: PluginUI }, slot?: string, modal = false): string {
   const entry = (plugin.ui?.entry || 'ui/index.html').replace(/^ui\//, '');
   const encoded = entry
     .split('/')
     .filter(Boolean)
     .map((part) => encodeURIComponent(part))
     .join('/');
-  const query = slot ? `?slot=${encodeURIComponent(slot)}` : '';
+  const params = new URLSearchParams();
+  if (slot) params.set('slot', slot);
+  if (modal) params.set('modal', '1');
+  const query = params.toString() ? `?${params.toString()}` : '';
   return `/api/plugins/${encodeURIComponent(plugin.id)}/ui/${encoded}${query}`;
 }
 

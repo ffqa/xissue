@@ -45,7 +45,7 @@ func (r *Runner) ListProjectPRPage(ctx context.Context, projectID int64, state, 
 	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	var all []provider.RemotePR
+	all := []provider.RemotePR{}
 	var errs []error
 	next := map[int64]string{}
 	for _, repo := range repos {

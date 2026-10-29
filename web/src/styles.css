@@ -138,7 +138,7 @@ input[type="checkbox"], input[type="radio"] {
 select { padding: 0 8px; }
 textarea { resize: vertical; line-height: 1.5; }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
-select.sm { height: 24px; font-size: 12px; }
+select.sm, input.sm { height: 28px; font-size: 12px; }
 label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); min-width: 0; }
 label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > select, label.field > textarea { color: var(--text); font-size: 13px; }
 

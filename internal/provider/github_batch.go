@@ -132,7 +132,7 @@ func GitHubBatchPRs(ctx context.Context, repos []domain.Repo, state string) (map
 	stateArg := "[" + strings.Join(states, ",") + "]"
 	out := map[int64][]RemotePR{}
 	for _, batch := range githubBatches(repos) {
-		query := githubBatchQuery(batch, fmt.Sprintf(`{ pullRequests(first:100, states:%s, orderBy:{field:CREATED_AT, direction:DESC}) { pageInfo { hasNextPage } nodes { number title body state url headRefName baseRefName author { login } labels(first:20) { nodes { name } } createdAt updatedAt } } }`, stateArg))
+		query := githubBatchQuery(batch, fmt.Sprintf(`{ pullRequests(first:100, states:%s, orderBy:{field:CREATED_AT, direction:DESC}) { pageInfo { hasNextPage } nodes { number title state url headRefName baseRefName author { login } labels(first:20) { nodes { name } } createdAt updatedAt } } }`, stateArg))
 		var data map[string]struct {
 			PullRequests struct {
 				PageInfo struct {
@@ -178,7 +178,7 @@ func GitHubBatchPRs(ctx context.Context, repos []domain.Repo, state string) (map
 					labels = append(labels, l.Name)
 				}
 				out[repo.ID] = append(out[repo.ID], RemotePR{
-					Number: n.Number, Title: n.Title, Body: n.Body,
+					Number: n.Number, Title: n.Title,
 					State: strings.ToLower(n.State), URL: n.URL,
 					HeadBranch: n.HeadRefName, BaseBranch: n.BaseRefName,
 					Author: n.Author.Login, Labels: labels,

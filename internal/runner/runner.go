@@ -176,6 +176,8 @@ type Runner struct {
 	prCacheMu       sync.Mutex
 	prCache         map[string]cachedPRList
 	prLocks         sync.Map
+	userCacheMu     sync.Mutex
+	userCache       map[domain.Provider]string
 	monitorMu       sync.RWMutex
 	logMu           sync.Mutex
 	monitorLogs     []MonitorLogEntry
@@ -204,6 +206,7 @@ func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 		allowSet:      map[int64]map[string]bool{},
 		modelCache:    map[string]cachedAgentModels{},
 		prCache:       map[string]cachedPRList{},
+		userCache:     map[domain.Provider]string{},
 		monitorLogs:   []MonitorLogEntry{},
 		automation:    automation.NewEngine(cfg.PluginsDir()),
 	}
@@ -223,6 +226,7 @@ func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 		}
 	}
 	go r.queueLoop()
+	go r.warmUserCache()
 	r.watchWG.Add(1)
 	go func() {
 		defer r.watchWG.Done()

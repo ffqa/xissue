@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.7` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.8` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.7`
+- **最新发布版本**: `0.5.8`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -419,6 +419,16 @@
 - **状态**: `/api/schedules` 新增 `running` 标志；任务面板按钮在运行中显示「执行中…」。
 - **用途**: 临时缩短 90 秒/1 小时/6 小时等固定周期，立即触发一次，不改变原定时计划。
 - **验证**: schedules API/立即执行测试、tsc、Vitest、Chromium 冒烟。
+
+### 2.47 PR 首屏懒加载（0.5.8）
+
+- **首屏**: 新接口 `GET /api/projects/{id}/prs/page?state=all&cursor=` 每仓只取最新一页（GitHub REST `pulls?per_page=30`），多个 GitHub 仓库并发请求后合并；不再为了显示第一屏而拉完整历史。
+- **后续**: 返回 `nextCursor`（GitHub 为 page 序号）；前端 `useInfiniteQuery` 点「加载更早的 PR」才请求下一页，旧的 PR 由接口按需拉取。
+- **身份不阻塞首屏**: Provider 登录账号在 Runner 启动后后台缓存；首屏 PR 不等待 `gh api user`，`mineKnown=false` 时「仅看我提交的」暂时禁用。
+- **非 GitHub**: 首屏仍用现有 provider 全量列表（Gitea/GitLab 本身分页）；后续只对 GitHub cursor 继续。
+- **排序**: 每页/合并后均 createdAt DESC、number DESC。
+- **UI**: 已加载结果每次渲染 100 条；本地「加载更多」和远端「加载更早」分开。
+- **验证**: page API、cursor 跳过、tsc/Vitest、真实大仓库 GraphQL 分页验证。
 
 ## 3. 核心架构与关键代码索引
 

@@ -57,6 +57,19 @@ func (s *Server) handleListProjectPRs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, prs)
 }
 
+func (s *Server) handleListProjectPRPage(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	page, err := s.runner.ListProjectPRPage(r.Context(), id, r.URL.Query().Get("state"), r.URL.Query().Get("cursor"))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, page)
+}
+
 func (s *Server) handleMergeProjectPR(w http.ResponseWriter, r *http.Request) {
 	projectID, ok := pathID(w, r, "id")
 	if !ok {

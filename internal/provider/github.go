@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -19,11 +22,44 @@ type github struct{}
 func (github) Caps() Caps { return Caps{Issues: true, PRs: true} }
 
 func (github) CurrentUser(ctx context.Context) (string, error) {
-	b, err := gh(ctx, "api", "user", "--jq", ".login")
+	// `gh api user` can take several seconds because the CLI performs its own
+	// startup/config work. `gh auth token` is local and fast; use the token
+	// directly for this tiny identity lookup.
+	token, err := gh(ctx, "auth", "token")
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(b)), nil
+	tokenStr := strings.TrimSpace(string(token))
+	if tokenStr == "" {
+		return "", fmt.Errorf("github token is empty")
+	}
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("GITHUB_API_URL")), "/")
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/user", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+tokenStr)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("github user: %s", strings.TrimSpace(string(body)))
+	}
+	var user struct {
+		Login string `json:"login"`
+	}
+	if err := json.Unmarshal(body, &user); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(user.Login), nil
 }
 
 func gh(ctx context.Context, args ...string) ([]byte, error) {

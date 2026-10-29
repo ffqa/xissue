@@ -180,7 +180,8 @@ interface RunEvent {
 | POST | `/api/repos/{repoId}/branches/delete` | `{ branches: string[] }` → `{ deleted: string[] }`；只允许删除上列分支 |
 | POST | `/api/projects/{id}/sync` | 从平台导入 open issues → `{ imported: number }` |
 | POST | `/api/projects/{id}/pull` | 刷新所有仓库镜像；仅当本地当前分支等于目标分支且工作区干净时执行 `git pull --ff-only origin <target>`。返回 `{ ok, pulledRepos, repos, message }`，`repos[]` 逐仓说明 `mirrorUpdated`、`localUpdated`、`reason`、`error`；任一仓库 Git 失败返回 502 |
-| GET | `/api/projects/{id}/prs` | 查询项目 PR 列表（`?state=open\|merged\|closed\|all`）→ `RemotePR[]`；含可选 CI 汇总 `ciState`/`ciPassed`/`ciFailed`/`ciPending` |
+| GET | `/api/projects/{id}/prs` | 查询项目 PR 完整列表（`?state=open\|merged\|closed\|all`）→ `RemotePR[]` |
+| GET | `/api/projects/{id}/prs/page?state=all&cursor=` | 懒加载 PR 页 → `{ prs, nextCursor?, mineKnown }`；首屏每仓最新 30 条，cursor 只继续 GitHub 历史页 |
 | POST | `/api/projects/{id}/prs/{number}/merge` | 合并项目内仓库的 PR，刷新镜像并尝试快进本地目标分支；`message` 包含逐仓本地更新结果。`repoId` 必须属于路径中的项目，否则 400 → `{ ok, merged, message }` |
 | POST | `/api/projects/{id}/prs/{number}/close` | 在项目中直接关闭 PR → `{ ok, closed }` |
 | GET | `/api/repos/{repoId}/commits/{sha}` | 单个 Commit 详情：元信息、文件增删统计、统一 diff（超过 512KB 截断） |

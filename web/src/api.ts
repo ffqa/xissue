@@ -35,6 +35,7 @@ import type {
   Project,
   ProjectReadme,
   RemotePR,
+  ProjectPRPage,
   MergedBranch,
   Repo,
   RepoPullStatus,
@@ -249,6 +250,8 @@ export const api = {
 
   projectPRs: (id: number, state: 'open' | 'merged' | 'closed' | 'all' = 'open') =>
     get<RemotePR[]>(`/api/projects/${id}/prs?state=${state}`),
+  projectPRPage: (id: number, state: 'open' | 'merged' | 'closed' | 'all', cursor = '') =>
+    get<ProjectPRPage>(`/api/projects/${id}/prs/page?state=${state}&cursor=${encodeURIComponent(cursor)}`),
   mergeProjectPR: (
     projectId: number,
     number: number,
@@ -398,6 +401,7 @@ export const qk = {
   pluginReadme: (id: string) => ['pluginReadme', id] as const,
   pluginConfig: (id: string) => ['pluginConfig', id] as const,
   projectPRs: (projectId: number, state?: string) => ['projectPRs', projectId, state ?? 'open'] as const,
+  projectPRPages: (projectId: number, state?: string) => ['projectPRPages', projectId, state ?? 'all'] as const,
   projectPullStatus: (projectId: number) => ['projectPullStatus', projectId] as const,
   projectDocs: (projectId: number) => ['projectDocs', projectId] as const,
   projectReadmes: (projectId: number) => ['projectReadmes', projectId] as const,

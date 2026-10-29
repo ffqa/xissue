@@ -516,6 +516,12 @@ export interface CherryPickResult {
   changeRecord: string;
 }
 
+export interface ProjectPRPage {
+  prs: RemotePR[];
+  nextCursor?: string;
+  mineKnown: boolean;
+}
+
 export interface RemotePR {
   number: number;
   title: string;

@@ -21,7 +21,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.5.7"
+const Version = "0.5.8"
 
 type Server struct {
 	cfg    *config.Config
@@ -290,6 +290,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/projects/{id}/batch-run", s.handleBatchRunTodo)
 	m.HandleFunc("POST /api/projects/{id}/cherry-pick", s.handleCherryPick)
 	m.HandleFunc("GET /api/projects/{id}/prs", s.handleListProjectPRs)
+	m.HandleFunc("GET /api/projects/{id}/prs/page", s.handleListProjectPRPage)
 	m.HandleFunc("POST /api/projects/{id}/prs/{number}/merge", s.handleMergeProjectPR)
 	m.HandleFunc("POST /api/projects/{id}/prs/{number}/close", s.handleCloseProjectPR)
 	m.HandleFunc("POST /api/projects/{id}/pull", s.handlePullProjectRepos)

@@ -5,7 +5,7 @@ import { fmtTime } from './common';
 import { toast } from '../toast';
 import type { RemotePR } from '../types';
 import { filterPRs, sortPRs, type PRFilter } from '../logic/prs';
-import { useProjectPRs } from '../hooks/useProjectLists';
+import { useProjectPRPages } from '../hooks/useProjectLists';
 
 export function PRPanel({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
@@ -18,9 +18,10 @@ export function PRPanel({ projectId }: { projectId: number }) {
   // 60s, so opening the modal shows the cached list immediately; switching to
   // Merged/Closed never waits for another provider request.
   // ProjectPage owns the single 60s timer for this shared query.
-  const prsQ = useProjectPRs(projectId);
-  const prs: RemotePR[] = prsQ.data ?? [];
-  const filteredPRs = sortPRs(filterPRs(prs, filterState).filter((pr) => !mineOnly || pr.mine));
+  const prsQ = useProjectPRPages(projectId);
+  const prs: RemotePR[] = prsQ.data?.pages.flatMap((page) => page.prs) ?? [];
+  const mineKnown = prsQ.data?.pages.some((page) => page.mineKnown) ?? false;
+  const filteredPRs = sortPRs(filterPRs(prs, filterState).filter((pr) => !mineOnly || !mineKnown || pr.mine));
   const visiblePRs = filteredPRs.slice(0, visibleCount);
 
   const pullMut = useMutation({
@@ -98,7 +99,13 @@ export function PRPanel({ projectId }: { projectId: number }) {
         ))}
         <span className="small muted">共 {filteredPRs.length} 个 PR</span>
         <label className="row small muted" style={{ gap: 5, cursor: 'pointer' }}>
-          <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={mineOnly}
+            disabled={!mineKnown}
+            title={mineKnown ? '只显示当前 Provider 登录账号提交的 PR' : '正在识别当前账号，稍后可用'}
+            onChange={(e) => setMineOnly(e.target.checked)}
+          />
           仅看我提交的
         </label>
         <span className="small dim">每 60 秒自动刷新</span>
@@ -241,10 +248,23 @@ export function PRPanel({ projectId }: { projectId: number }) {
               </div>
             );
           })}
-          {filteredPRs.length > visiblePRs.length && (
+          {(filteredPRs.length > visiblePRs.length || prsQ.hasNextPage) && (
             <div className="row" style={{ justifyContent: 'center', padding: 8 }}>
-              <button className="sm ghost" onClick={() => setVisibleCount((n) => n + 100)}>
-                加载更多（已显示 {visiblePRs.length}/{filteredPRs.length}）
+              <button
+                className="sm ghost"
+                disabled={prsQ.isFetchingNextPage}
+                onClick={() => {
+                  setVisibleCount((n) => n + 100);
+                  if (filteredPRs.length <= visiblePRs.length && prsQ.hasNextPage) {
+                    void prsQ.fetchNextPage();
+                  }
+                }}
+              >
+                {prsQ.isFetchingNextPage
+                  ? '加载中…'
+                  : filteredPRs.length > visiblePRs.length
+                    ? `加载更多（已显示 ${visiblePRs.length}/${filteredPRs.length}）`
+                    : '加载更早的 PR'}
               </button>
             </div>
           )}

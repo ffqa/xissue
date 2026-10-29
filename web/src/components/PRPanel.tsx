@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { fmtTime } from './common';
@@ -11,6 +11,7 @@ export function PRPanel({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
   const [filterState, setFilterState] = useState<PRFilter>('open');
   const [mineOnly, setMineOnly] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(100);
   const [mergeMethods, setMergeMethods] = useState<Record<number, 'squash' | 'merge' | 'rebase'>>({});
 
   // One query for every tab. ProjectPage keeps it warm and refreshes it every
@@ -20,6 +21,7 @@ export function PRPanel({ projectId }: { projectId: number }) {
   const prsQ = useProjectPRs(projectId);
   const prs: RemotePR[] = prsQ.data ?? [];
   const filteredPRs = sortPRs(filterPRs(prs, filterState).filter((pr) => !mineOnly || pr.mine));
+  const visiblePRs = filteredPRs.slice(0, visibleCount);
 
   const pullMut = useMutation({
     mutationFn: () => api.pullProject(projectId),
@@ -56,6 +58,10 @@ export function PRPanel({ projectId }: { projectId: number }) {
     },
     onError: (e) => toast.error(`关闭 PR 失败: ${(e as Error).message}`),
   });
+
+  useEffect(() => {
+    setVisibleCount(100);
+  }, [filterState, mineOnly, projectId]);
 
   const handleMerge = (pr: RemotePR) => {
     const method = mergeMethods[pr.number] || 'squash';
@@ -130,7 +136,7 @@ export function PRPanel({ projectId }: { projectId: number }) {
             </div>
           )}
 
-          {filteredPRs.map((pr) => {
+          {visiblePRs.map((pr) => {
             const isMerged = pr.state === 'merged';
             const isOpen = pr.state === 'open';
             return (
@@ -235,6 +241,13 @@ export function PRPanel({ projectId }: { projectId: number }) {
               </div>
             );
           })}
+          {filteredPRs.length > visiblePRs.length && (
+            <div className="row" style={{ justifyContent: 'center', padding: 8 }}>
+              <button className="sm ghost" onClick={() => setVisibleCount((n) => n + 100)}>
+                加载更多（已显示 {visiblePRs.length}/{filteredPRs.length}）
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

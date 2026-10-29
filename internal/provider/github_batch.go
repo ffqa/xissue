@@ -74,7 +74,7 @@ func githubGraphQL(ctx context.Context, query string, out any) error {
 func GitHubBatchIssues(ctx context.Context, repos []domain.Repo) (map[int64][]RemoteIssue, error) {
 	out := map[int64][]RemoteIssue{}
 	for _, batch := range githubBatches(repos) {
-		query := githubBatchQuery(batch, `{ issues(first:100, states:OPEN) { nodes { number title body url author { login } labels(first:20) { nodes { name } } } } }`)
+		query := githubBatchQuery(batch, `{ issues(first:100, states:OPEN, orderBy:{field:CREATED_AT, direction:DESC}) { nodes { number title body url author { login } labels(first:20) { nodes { name } } } } }`)
 		var data map[string]struct {
 			Issues struct {
 				Nodes []struct {
@@ -132,9 +132,12 @@ func GitHubBatchPRs(ctx context.Context, repos []domain.Repo, state string) (map
 	stateArg := "[" + strings.Join(states, ",") + "]"
 	out := map[int64][]RemotePR{}
 	for _, batch := range githubBatches(repos) {
-		query := githubBatchQuery(batch, fmt.Sprintf(`{ pullRequests(first:100, states:%s) { nodes { number title body state url headRefName baseRefName author { login } labels(first:20) { nodes { name } } createdAt updatedAt } } }`, stateArg))
+		query := githubBatchQuery(batch, fmt.Sprintf(`{ pullRequests(first:100, states:%s, orderBy:{field:CREATED_AT, direction:DESC}) { pageInfo { hasNextPage } nodes { number title body state url headRefName baseRefName author { login } labels(first:20) { nodes { name } } createdAt updatedAt } } }`, stateArg))
 		var data map[string]struct {
 			PullRequests struct {
+				PageInfo struct {
+					HasNextPage bool `json:"hasNextPage"`
+				} `json:"pageInfo"`
 				Nodes []struct {
 					Number      int64  `json:"number"`
 					Title       string `json:"title"`
@@ -163,6 +166,11 @@ func GitHubBatchPRs(ctx context.Context, repos []domain.Repo, state string) (map
 			item, ok := data[fmt.Sprintf("r%d", i)]
 			if !ok {
 				return nil, fmt.Errorf("github graphql: missing result for %s", repo.OwnerRepo)
+			}
+			if item.PullRequests.PageInfo.HasNextPage {
+				// The batch query is capped at 100. Fall back to the per-repo
+				// list so large repositories are not silently truncated.
+				return nil, fmt.Errorf("github graphql: %s has more than 100 PRs", repo.OwnerRepo)
 			}
 			for _, n := range item.PullRequests.Nodes {
 				labels := make([]string, 0, len(n.Labels.Nodes))

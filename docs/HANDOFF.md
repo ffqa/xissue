@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.4` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.5` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.4`
+- **最新发布版本**: `0.5.5`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -394,6 +394,15 @@
 - **排序**: 服务端和前端都按 `createdAt` 倒序排列，同一时间按 PR number 倒序；不再按 provider 返回顺序显示最早 PR。
 - **mine 标记**: 当前用户识别失败不会清空 PR；只影响「仅看我提交的」筛选。
 - **验证**: runner/provider/server 测试、tsc、Vitest 30 用例、Chromium 冒烟。
+
+### 2.44 GitHub 批量 PR 排序修正（0.5.5）
+
+- **现象**: 看板/Batch GitHub PR 列表最大只看到 #100，误以为按 ID 截断或最旧优先。
+- **根因**: GraphQL `pullRequests(first:100)` 未指定 `orderBy`，默认顺序并不保证最新 100 条；再按 createdAt 排序只是对已取回的子集排序。
+- **修复**: GitHub 批量 PR/Issue 查询显式使用 `orderBy:{field:CREATED_AT,direction:DESC}`；服务端仍按 createdAt/number 倒序兜底。
+- **大仓库**: 批量查询检测到 `pageInfo.hasNextPage` 时自动退回单仓库 `gh pr list --limit 1000`，不再静默截断到 100；服务端最多取每仓最新 1000 条。
+- **UI 分页**: PR 面板每次渲染 100 条，显示「加载更多（已显示 X/Y）」；1000 条不会一次塞进 DOM。
+- **验证**: provider/runner/server 测试、tsc、Vitest 30 用例、Chromium 冒烟。
 
 ## 3. 核心架构与关键代码索引
 

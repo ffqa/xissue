@@ -352,7 +352,7 @@ func (github) ListPRs(ctx context.Context, repo domain.Repo, state string) ([]Re
 	if state == "" {
 		state = "open"
 	}
-	args := []string{"pr", "list", "-R", repo.OwnerRepo, "--limit", "100",
+	args := []string{"pr", "list", "-R", repo.OwnerRepo, "--limit", "1000",
 		"--json", "number,title,body,state,url,headRefName,baseRefName,author,labels,createdAt,updatedAt"}
 	if state != "all" {
 		args = append(args, "--state", state)

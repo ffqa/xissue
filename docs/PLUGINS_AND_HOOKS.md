@@ -164,7 +164,7 @@ ui:
   - 未开启沙盒时，插件可直接在同源 iframe 内操作宿主页面或调用 `/api/*`；开启后只能使用上述消息桥；
 - **插件 AI API**：宿主默认 Agent 可直接给插件使用，不需要插件自己探测 `/api/agents`：
   - `GET /api/plugins/ai` 返回 `{agent, model, models, available}`；
-  - `POST /api/plugins/ai` 请求 `{prompt, agent?, model?}`，返回 `{agent, model, text, stopReason, usage}`；`agent` 省略时使用全局默认 Agent，默认不可用时回退到第一个已安装 Agent；
+  - `POST /api/plugins/ai` 请求 `{prompt, agent?, model?}`，返回 `{agent, model, text, stopReason, usage}`；`agent` 省略时使用全局默认 Agent，默认不可用时回退到第一个已安装 Agent；直接 `fetch` 时必须带 `X-XIssue: 1` 请求头；
   - 每次调用在临时目录启动一次性 ACP 会话，**拒绝所有工具权限**（只做文本生成，不读写用户文件、不执行命令）；沙盒 iframe 用 `xissue:ai` 消息桥，非沙盒 iframe 也可直接 `fetch`；
 - 示例 plugin 见 [`examples/plugin-ui`](../examples/plugin-ui)。
 

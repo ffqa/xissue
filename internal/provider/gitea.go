@@ -26,6 +26,20 @@ import (
 // repositories you monitor.
 type gitea struct{}
 
+func (gitea) CurrentUser(ctx context.Context) (string, error) {
+	api, err := giteaConfig()
+	if err != nil {
+		return "", err
+	}
+	var user struct {
+		Login string `json:"login"`
+	}
+	if err := api.do(ctx, http.MethodGet, "/user", nil, &user); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(user.Login), nil
+}
+
 func (gitea) Caps() Caps {
 	// Existing databases may already label Gitea/Codeberg repositories even
 	// when no Gitea API URL/token is configured. Report no remote capabilities

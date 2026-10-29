@@ -525,6 +525,7 @@ export interface RemotePR {
   headBranch: string;
   baseBranch: string;
   author: string;
+  mine?: boolean;
   labels: string[];
   createdAt: string;
   updatedAt: string;

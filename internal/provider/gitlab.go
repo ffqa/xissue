@@ -23,6 +23,20 @@ import (
 // A self-hosted GitLab is supported; one instance per process is enough.
 type gitlab struct{}
 
+func (gitlab) CurrentUser(ctx context.Context) (string, error) {
+	api, err := gitlabConfig()
+	if err != nil {
+		return "", err
+	}
+	var user struct {
+		Username string `json:"username"`
+	}
+	if err := api.do(ctx, http.MethodGet, "/user", nil, &user); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(user.Username), nil
+}
+
 func (gitlab) Caps() Caps {
 	if _, err := gitlabConfig(); err != nil {
 		return Caps{}

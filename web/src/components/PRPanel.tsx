@@ -10,6 +10,7 @@ import { useProjectPRs } from '../hooks/useProjectLists';
 export function PRPanel({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
   const [filterState, setFilterState] = useState<PRFilter>('open');
+  const [mineOnly, setMineOnly] = useState(false);
   const [mergeMethods, setMergeMethods] = useState<Record<number, 'squash' | 'merge' | 'rebase'>>({});
 
   // One query for every tab. ProjectPage keeps it warm and refreshes it every
@@ -18,7 +19,7 @@ export function PRPanel({ projectId }: { projectId: number }) {
   // ProjectPage owns the single 60s timer for this shared query.
   const prsQ = useProjectPRs(projectId);
   const prs: RemotePR[] = prsQ.data ?? [];
-  const filteredPRs = filterPRs(prs, filterState);
+  const filteredPRs = filterPRs(prs, filterState).filter((pr) => !mineOnly || pr.mine);
 
   const pullMut = useMutation({
     mutationFn: () => api.pullProject(projectId),
@@ -90,6 +91,10 @@ export function PRPanel({ projectId }: { projectId: number }) {
           </button>
         ))}
         <span className="small muted">共 {filteredPRs.length} 个 PR</span>
+        <label className="row small muted" style={{ gap: 5, cursor: 'pointer' }}>
+          <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
+          仅看我提交的
+        </label>
         <span className="small dim">每 60 秒自动刷新</span>
         <span className="grow" />
         <button

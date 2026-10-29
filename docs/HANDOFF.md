@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.2` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.3` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.2`
+- **最新发布版本**: `0.5.3`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -379,6 +379,13 @@
 - **Backlog**: `issues.backlog_rank`；看板 Todo 只保留 `todo`，新增独立 Backlog 视图，支持拖拽排序与「移到 Todo」。新 Issue 仍从 Todo 开始，状态改为 Backlog 后进入计划列表。
 - **Issue↔PR**: Issue 详情聚合所有 Run 产生的 PR，并支持手动粘贴/移除 PR URL；不引入跨项目关系或通用 Issue 关系图。
 - **验证**: 队列 worker（真实本地 Git 分支删除）、PR link、Backlog 排序、定时任务、tsc、Vitest、Chromium 冒烟。
+
+### 2.42 PR 仅看我提交的（0.5.3）
+
+- **身份识别**: Provider 增加 `CurrentUser`：GitHub 用 `gh api user`，Gitea 用 `/api/v1/user`，GitLab 用 `/api/v4/user`；PR 列表标记 `mine`。
+- **筛选**: PR 面板新增「仅看我提交的」复选框，与 Open/Merged/Closed/All 叠加过滤；切换标签或刷新不会丢筛选状态。
+- **缓存**: `mine` 随 PR 列表一起进入 localStorage 缓存；当前用户身份变化后最长 60 秒随刷新修正。
+- **验证**: provider/server/runner 测试、tsc、Chromium 冒烟。
 
 ## 3. 核心架构与关键代码索引
 

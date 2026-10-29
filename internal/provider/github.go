@@ -18,6 +18,14 @@ type github struct{}
 
 func (github) Caps() Caps { return Caps{Issues: true, PRs: true} }
 
+func (github) CurrentUser(ctx context.Context) (string, error) {
+	b, err := gh(ctx, "api", "user", "--jq", ".login")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
 func gh(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...)
 	var out, errb bytes.Buffer

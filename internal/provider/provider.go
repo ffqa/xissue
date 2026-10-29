@@ -47,6 +47,7 @@ type RemotePR struct {
 	CreatedAt  string   `json:"createdAt"`
 	UpdatedAt  string   `json:"updatedAt"`
 	MergedAt   string   `json:"mergedAt,omitempty"`
+	Mine       bool     `json:"mine,omitempty"`
 	RepoID     int64    `json:"repoId"`
 	RepoName   string   `json:"repoName"`
 	// CI rollup for the PR head. Empty means the provider did not report checks.
@@ -97,6 +98,7 @@ type Caps struct {
 // Provider is implemented per platform.
 type Provider interface {
 	Caps() Caps
+	CurrentUser(ctx context.Context) (string, error)
 	ListOpenIssues(ctx context.Context, repo domain.Repo) ([]RemoteIssue, error)
 	ListRepoIssueComments(ctx context.Context, repo domain.Repo) ([]RemoteIssueComment, error)
 	CreateIssue(ctx context.Context, repo domain.Repo, title, body string) (*RemoteIssue, error)
@@ -164,7 +166,8 @@ func IssueKey(repo domain.Repo, number int64) string {
 
 type plain struct{}
 
-func (plain) Caps() Caps { return Caps{} }
+func (plain) Caps() Caps                                  { return Caps{} }
+func (plain) CurrentUser(context.Context) (string, error) { return "", nil }
 func (plain) ListOpenIssues(context.Context, domain.Repo) ([]RemoteIssue, error) {
 	return nil, nil
 }

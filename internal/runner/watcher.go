@@ -1108,6 +1108,7 @@ func (r *Runner) ListProjectPRs(ctx context.Context, projectID int64, state stri
 			continue
 		}
 		if prs, err := p.ListPRs(ctx, repo, state); err == nil {
+			markPRsMine(ctx, p, prs)
 			all = append(all, prs...)
 		}
 	}
@@ -1115,7 +1116,9 @@ func (r *Runner) ListProjectPRs(ctx context.Context, projectID int64, state stri
 		batched, err := provider.GitHubBatchPRs(ctx, githubRepos, state)
 		if err == nil {
 			for _, repo := range githubRepos {
-				all = append(all, batched[repo.ID]...)
+				prs := batched[repo.ID]
+				markPRsMine(ctx, provider.For(repo.Provider), prs)
+				all = append(all, prs...)
 			}
 		} else {
 			for _, repo := range githubRepos {
@@ -1126,6 +1129,7 @@ func (r *Runner) ListProjectPRs(ctx context.Context, projectID int64, state stri
 		}
 	} else if len(githubRepos) == 1 {
 		if prs, err := provider.For(githubRepos[0].Provider).ListPRs(ctx, githubRepos[0], state); err == nil {
+			markPRsMine(ctx, provider.For(githubRepos[0].Provider), prs)
 			all = append(all, prs...)
 		}
 	}
@@ -1133,6 +1137,19 @@ func (r *Runner) ListProjectPRs(ctx context.Context, projectID int64, state stri
 	r.prCache[key] = cachedPRList{at: time.Now(), prs: append([]provider.RemotePR(nil), all...)}
 	r.prCacheMu.Unlock()
 	return all, nil
+}
+
+func markPRsMine(ctx context.Context, p provider.Provider, prs []provider.RemotePR) {
+	if len(prs) == 0 {
+		return
+	}
+	login, err := p.CurrentUser(ctx)
+	if err != nil || strings.TrimSpace(login) == "" {
+		return
+	}
+	for i := range prs {
+		prs[i].Mine = strings.EqualFold(strings.TrimSpace(prs[i].Author), login)
+	}
 }
 
 // RepoPullStatus describes whether a project repository can be safely pulled.

@@ -1,26 +1,26 @@
 class Xissue < Formula
   desc "Personal AI Agent Issue & Multi-Repo Orchestrator"
   homepage "https://github.com/ffqa/xissue"
-  version "0.5.7"
+  version "0.5.9"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/ffqa/xissue/releases/download/v0.5.7/xissue-v0.5.7-darwin-arm64.tar.gz"
-      sha256 "65cd57f2795536eb56b3563e231b8a3ad9f8eeb1d5a446e9c7c8a353eab5c535"
+      url "https://github.com/ffqa/xissue/releases/download/v0.5.9/xissue-v0.5.9-darwin-arm64.tar.gz"
+      sha256 "3cb536d7d67e41fc0c5ba7516742b2a41644cdb377725af63054044e7c1e7da4"
     else
-      url "https://github.com/ffqa/xissue/releases/download/v0.5.7/xissue-v0.5.7-darwin-amd64.tar.gz"
-      sha256 "a93f29be21c0af597cb653bd1a31fcdb4d8f925329edde420a2d3869e1294472"
+      url "https://github.com/ffqa/xissue/releases/download/v0.5.9/xissue-v0.5.9-darwin-amd64.tar.gz"
+      sha256 "244aa330ccd6b9b0e89efb1ab6bdc6f100b9feb9ad369b14b6779ed71802542a"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/ffqa/xissue/releases/download/v0.5.7/xissue-v0.5.7-linux-arm64.tar.gz"
-      sha256 "efb1483c52c4171a9d3c16725d20bced99488af7418c1a3a7ca8e84ea5e2cbf7"
+      url "https://github.com/ffqa/xissue/releases/download/v0.5.9/xissue-v0.5.9-linux-arm64.tar.gz"
+      sha256 "d4cbfcc1c1d32f482bd484b1c3a0ced80fc79f6c3136e200ca285e89b2cadfdf"
     else
-      url "https://github.com/ffqa/xissue/releases/download/v0.5.7/xissue-v0.5.7-linux-amd64.tar.gz"
-      sha256 "561e582d5574bbc6050b14716ba5f4c3f7bb6a5cd5f94568505a9cf84915e853"
+      url "https://github.com/ffqa/xissue/releases/download/v0.5.9/xissue-v0.5.9-linux-amd64.tar.gz"
+      sha256 "856cfc3f0015e0c7f463eefdf4006fa2af332326027c5a240b10a5e5c8503631"
     end
   end
 

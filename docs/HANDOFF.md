@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.5` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.6` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.5`
+- **最新发布版本**: `0.5.6`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -403,6 +403,14 @@
 - **大仓库**: 批量查询检测到 `pageInfo.hasNextPage` 时自动退回单仓库 `gh pr list --limit 1000`，不再静默截断到 100；服务端最多取每仓最新 1000 条。
 - **UI 分页**: PR 面板每次渲染 100 条，显示「加载更多（已显示 X/Y）」；1000 条不会一次塞进 DOM。
 - **验证**: provider/runner/server 测试、tsc、Vitest 30 用例、Chromium 冒烟。
+
+### 2.45 GitHub PR 全量游标分页（0.5.6）
+
+- **移除硬上限**: 删除 `gh pr list --limit 1000`。GitHub PR 列表改为 GraphQL `first:100 + after` 游标循环，直到 `hasNextPage=false`；没有人为条数上限。
+- **批量降级**: 小仓库仍用一批 GraphQL aliases；任一仓库超过 100 条时，整批退回逐仓游标分页，避免批量接口截断。
+- **排序**: 每页按 `createdAt DESC` 获取，服务端最终再按 createdAt/number 倒序兜底。
+- **UI**: 仍一次加载完整结果到内存，但每次只渲染 100 张卡片，「加载更多」按 100 递增；这不是后端截断。
+- **验证**: 用 `microsoft/vscode` >100 PR 的 GraphQL 查询验证 `hasNextPage` 与第二页 cursor；provider/runner/server 测试、tsc、Vitest。
 
 ## 3. 核心架构与关键代码索引
 

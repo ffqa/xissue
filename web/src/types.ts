@@ -180,6 +180,7 @@ export interface Issue {
   body: string;
   labels: string[];
   priority: IssuePriority;
+  backlogRank: number;
   status: IssueStatus;
   activeRunId: number | null;
   awaiting: boolean;
@@ -188,6 +189,15 @@ export interface Issue {
   createdAt: string;
   updatedAt: string;
   syncError?: string;
+}
+
+export interface IssuePRLink {
+  id: number;
+  issueId: number;
+  url: string;
+  title: string;
+  state: string;
+  createdAt: string;
 }
 
 export interface IssueEvent {
@@ -631,6 +641,18 @@ export interface DocSearchResult extends DocItem {
 }
 
 
+
+export interface Job {
+  id: number;
+  kind: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  repoId: number;
+  payload: { branch?: string };
+  error?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
 
 export interface ScheduledTask {
   id: string;

@@ -6,11 +6,13 @@ import { PluginSlot } from '../components/PluginFrame';
 import { LabelPicker, splitLabels } from '../components/LabelPicker';
 import { availableRemoteAgentNames, filterRemoteCapable, pickDefaultAgent } from '../logic/agents';
 import { filterPRs } from '../logic/prs';
+import { useProjectIssues, useProjectPRs } from '../hooks/useProjectLists';
 import { Crumbs, fmtTime, ISSUE_STATUS_LABEL, Modal } from '../components/common';
 import { LocalDirPickerModal } from '../components/LocalDirPicker';
 import { CherryPickModal } from '../components/CherryPickModal';
 import { PRModal } from '../components/PRModal';
 import { BranchCleanupModal } from '../components/BranchCleanupModal';
+import { BacklogPanel } from '../components/BacklogPanel';
 import { CommitsModal } from '../components/CommitsModal';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
@@ -71,7 +73,7 @@ const WORKFLOW_COLUMNS: StageColumn[] = [
     id: 'todo',
     title: '📥 待办池 (Todo)',
     subtitle: '拖入「执行中」即可自动启动 Agent',
-    statuses: ['backlog', 'todo'],
+    statuses: ['todo'],
   },
   {
     id: 'running',
@@ -117,7 +119,7 @@ export default function ProjectPage() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const project = useQuery({ queryKey: qk.project(id), queryFn: () => api.project(id) });
-  const issues = useQuery({ queryKey: qk.issues(id), queryFn: () => api.issues(id) });
+  const issues = useProjectIssues(id);
   const agentsQ = useQuery({ queryKey: qk.agents, queryFn: api.agents });
   const settingsQ = useQuery({ queryKey: qk.settings, queryFn: api.settings });
   const watchesQ = useQuery({ queryKey: qk.watches(id), queryFn: () => api.watches(id) });
@@ -156,6 +158,7 @@ export default function ProjectPage() {
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [prModalOpen, setPrModalOpen] = useState(false);
   const [branchCleanupOpen, setBranchCleanupOpen] = useState(false);
+  const [projectView, setProjectView] = useState<'board' | 'backlog'>('board');
   const [commitsModal, setCommitsModal] = useState<{ repoId?: number; branch?: string; sha?: string } | null>(null);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [readmeOpen, setReadmeOpen] = useState(false);
@@ -371,14 +374,7 @@ export default function ProjectPage() {
   // Keep the full PR list warm while the project page is open. The PR modal
   // reads the same cache, so opening it or switching to Merged/Closed is
   // instant; open PRs still refresh every 60s and update the badge.
-  const projectPRsQ = useQuery({
-    queryKey: qk.projectPRs(id, 'all'),
-    queryFn: () => api.projectPRs(id, 'all'),
-    enabled: !!id,
-    staleTime: 30_000,
-    gcTime: 30 * 60_000,
-    refetchInterval: 60_000,
-  });
+  const projectPRsQ = useProjectPRs(id, 60_000);
   const openPRCount = filterPRs(projectPRsQ.data ?? [], 'open').length;
 
   const pullMut = useMutation({
@@ -625,6 +621,10 @@ export default function ProjectPage() {
               </div>
             );
           })()}
+        </div>
+        <div className="row" style={{ gap: 2 }}>
+          <button className={projectView === 'board' ? 'primary' : 'ghost'} onClick={() => setProjectView('board')}>看板</button>
+          <button className={projectView === 'backlog' ? 'primary' : 'ghost'} onClick={() => setProjectView('backlog')}>Backlog</button>
         </div>
         <button
           className="ghost"
@@ -948,6 +948,10 @@ export default function ProjectPage() {
       </div>
       </div>
 
+      {projectView === 'backlog' ? (
+        <BacklogPanel projectId={id} issues={allIssues} />
+      ) : (
+      <>
       {/* 4 列全宽工作流看板：撑满全屏、外框固定、内部纵向滚动 */}
       <div className="board">
         {WORKFLOW_COLUMNS.map((col) => {
@@ -1129,6 +1133,8 @@ export default function ProjectPage() {
           );
         })}
       </div>
+      </>
+      )}
 
       {repoOpen && (
         <Modal

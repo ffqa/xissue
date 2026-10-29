@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.1` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.2` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.1`
+- **最新发布版本**: `0.5.2`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -370,6 +370,15 @@
 - **分支删除**: `BranchCleanupModal` 改为固定 footer 关闭按钮；按分支逐个删除，显示 `正在删除 n/N：branch` 和进度条，每删一个立即从列表移除；删除中禁止关闭。
 - **卡片状态去重**: 看板卡片只在状态与列默认状态不同的时候显示状态文字（Todo 列 backlog、Running 列 failed、Review 列 pr_open）；Done/Review/Running 正常状态不再重复显示。
 - **验证**: 定时任务/保护分支测试、tsc、Vitest、Chromium 冒烟。
+
+### 2.41 列表缓存、GitHub 批量、队列、Backlog 与 PR 关联（0.5.2）
+
+- **缓存**: `ListProjectPRs` 增加服务端内存缓存 + 按 key 单飞；Open 30 秒、Merged/Closed 10 分钟、All 60 秒，合并/关闭/检查状态后失效。前端 Issue/PR 列表写入 localStorage，打开页面先渲染旧列表再后台刷新。
+- **GitHub 批量**: PR/Issue 列表最多 20 个仓库拼成一次 `gh api graphql` 查询；批量失败逐仓库回退。评论、详情、CI 仍按需单仓库请求。
+- **任务队列**: 新增持久化 `jobs` 表、单 worker；分支删除改为入队，状态栏显示 `队列 N · 当前分支`，点击打开队列面板；失败项可重试、排队项可取消，服务重启恢复 running。
+- **Backlog**: `issues.backlog_rank`；看板 Todo 只保留 `todo`，新增独立 Backlog 视图，支持拖拽排序与「移到 Todo」。新 Issue 仍从 Todo 开始，状态改为 Backlog 后进入计划列表。
+- **Issue↔PR**: Issue 详情聚合所有 Run 产生的 PR，并支持手动粘贴/移除 PR URL；不引入跨项目关系或通用 Issue 关系图。
+- **验证**: 队列 worker（真实本地 Git 分支删除）、PR link、Backlog 排序、定时任务、tsc、Vitest、Chromium 冒烟。
 
 ## 3. 核心架构与关键代码索引
 

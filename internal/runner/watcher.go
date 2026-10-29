@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xpier/xissue/internal/automation"
@@ -831,6 +832,9 @@ func (r *Runner) CheckWatchesAndPRs(ctx context.Context, projectID int64) (watch
 	r.lastUpdatedPRs = prsUpdated
 	r.monitorMu.Unlock()
 
+	if projectID > 0 {
+		r.InvalidateProjectPRCache(projectID)
+	}
 	if watchesTriggered > 0 || prsUpdated > 0 {
 		r.LogMonitor("EVENT", "watcher", fmt.Sprintf("检查完成: 触发 %d 个分支推送通知, 更新 %d 个 PR 状态 (耗时 %dms)", watchesTriggered, prsUpdated, duration.Milliseconds()))
 	} else {
@@ -1039,24 +1043,95 @@ func (r *Runner) BatchRunTodoIssues(ctx context.Context, projectID int64, agentN
 	return started, nil
 }
 
-// ListProjectPRs lists PRs across all repos of the given project.
+type cachedPRList struct {
+	at  time.Time
+	prs []provider.RemotePR
+}
+
+func prCacheTTL(state string) time.Duration {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "merged", "closed":
+		return 10 * time.Minute
+	case "all":
+		return time.Minute
+	default:
+		return 30 * time.Second
+	}
+}
+
+func (r *Runner) InvalidateProjectPRCache(projectID int64) {
+	prefix := fmt.Sprintf("%d|", projectID)
+	r.prCacheMu.Lock()
+	for key := range r.prCache {
+		if strings.HasPrefix(key, prefix) {
+			delete(r.prCache, key)
+		}
+	}
+	r.prCacheMu.Unlock()
+}
+
+// ListProjectPRs lists PRs across all repos. It coalesces concurrent requests
+// and caches provider results; GitHub repos are fetched with one GraphQL query
+// per batch, with per-repo fallback when the batch query fails.
 func (r *Runner) ListProjectPRs(ctx context.Context, projectID int64, state string) ([]provider.RemotePR, error) {
+	state = strings.ToLower(strings.TrimSpace(state))
+	if state == "" {
+		state = "open"
+	}
+	key := fmt.Sprintf("%d|%s", projectID, state)
+	lockAny, _ := r.prLocks.LoadOrStore(key, &sync.Mutex{})
+	lock := lockAny.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+
+	r.prCacheMu.Lock()
+	if entry, ok := r.prCache[key]; ok && time.Since(entry.at) < prCacheTTL(state) {
+		out := append([]provider.RemotePR(nil), entry.prs...)
+		r.prCacheMu.Unlock()
+		return out, nil
+	}
+	r.prCacheMu.Unlock()
+
 	repos, err := r.st.ListRepos(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
 	var all []provider.RemotePR
+	var githubRepos []domain.Repo
 	for _, repo := range repos {
 		p := provider.For(repo.Provider)
 		if !p.Caps().PRs {
 			continue
 		}
-		prs, err := p.ListPRs(ctx, repo, state)
-		if err != nil {
+		if repo.Provider == domain.ProviderGitHub {
+			githubRepos = append(githubRepos, repo)
 			continue
 		}
-		all = append(all, prs...)
+		if prs, err := p.ListPRs(ctx, repo, state); err == nil {
+			all = append(all, prs...)
+		}
 	}
+	if len(githubRepos) > 1 {
+		batched, err := provider.GitHubBatchPRs(ctx, githubRepos, state)
+		if err == nil {
+			for _, repo := range githubRepos {
+				all = append(all, batched[repo.ID]...)
+			}
+		} else {
+			for _, repo := range githubRepos {
+				if prs, err := provider.For(repo.Provider).ListPRs(ctx, repo, state); err == nil {
+					all = append(all, prs...)
+				}
+			}
+		}
+	} else if len(githubRepos) == 1 {
+		if prs, err := provider.For(githubRepos[0].Provider).ListPRs(ctx, githubRepos[0], state); err == nil {
+			all = append(all, prs...)
+		}
+	}
+	r.prCacheMu.Lock()
+	r.prCache[key] = cachedPRList{at: time.Now(), prs: append([]provider.RemotePR(nil), all...)}
+	r.prCacheMu.Unlock()
 	return all, nil
 }
 
@@ -1323,6 +1398,7 @@ func (r *Runner) MergeProjectPR(ctx context.Context, projectID, repoID, number i
 	// Check and update any linked runs and issues
 	_, _, _ = r.CheckWatchesAndPRs(ctx, projectID)
 
+	r.InvalidateProjectPRCache(projectID)
 	r.pushNotification("pr_status", fmt.Sprintf("[%s] PR #%d 已合并", repo.Name, number), fmt.Sprintf("合并方式：%s\n%s", method, msg), fmt.Sprintf("/projects/%d", projectID), "")
 	return msg, nil
 }

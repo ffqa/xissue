@@ -173,6 +173,9 @@ type Runner struct {
 	retentionMu     sync.Mutex
 	modelMu         sync.Mutex
 	modelCache      map[string]cachedAgentModels
+	prCacheMu       sync.Mutex
+	prCache         map[string]cachedPRList
+	prLocks         sync.Map
 	monitorMu       sync.RWMutex
 	logMu           sync.Mutex
 	monitorLogs     []MonitorLogEntry
@@ -200,6 +203,7 @@ func New(cfg *config.Config, st *store.Store, notify Notifier) *Runner {
 		warm:          map[int64]*warmSession{},
 		allowSet:      map[int64]map[string]bool{},
 		modelCache:    map[string]cachedAgentModels{},
+		prCache:       map[string]cachedPRList{},
 		monitorLogs:   []MonitorLogEntry{},
 		automation:    automation.NewEngine(cfg.PluginsDir()),
 	}

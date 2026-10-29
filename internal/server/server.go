@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -20,7 +21,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.5.1"
+const Version = "0.5.2"
 
 type Server struct {
 	cfg    *config.Config
@@ -36,6 +37,8 @@ type Server struct {
 	lastSyncError    string
 	stopCh           chan struct{}
 	stopOnce         sync.Once
+	jobCtx           context.Context
+	jobCancel        context.CancelFunc
 	startedAt        time.Time
 
 	updateMu          sync.Mutex
@@ -62,6 +65,7 @@ type Server struct {
 func New(cfg *config.Config, st *store.Store) *Server {
 	hub := newHub()
 	r := runner.New(cfg, st, hub)
+	jobCtx, jobCancel := context.WithCancel(context.Background())
 	s := &Server{
 		cfg:         cfg,
 		st:          st,
@@ -69,6 +73,8 @@ func New(cfg *config.Config, st *store.Store) *Server {
 		hub:         hub,
 		mux:         http.NewServeMux(),
 		stopCh:      make(chan struct{}),
+		jobCtx:      jobCtx,
+		jobCancel:   jobCancel,
 		startedAt:   time.Now(),
 		terminalSem: make(chan struct{}, 8),
 	}
@@ -78,6 +84,7 @@ func New(cfg *config.Config, st *store.Store) *Server {
 	go s.issueSyncLoop()
 	go s.autoUpdateLoop()
 	go s.statusLoop()
+	go s.jobLoop()
 	return s
 }
 
@@ -87,6 +94,9 @@ func (s *Server) Shutdown() {
 			close(s.stopCh)
 		}
 	})
+	if s.jobCancel != nil {
+		s.jobCancel()
+	}
 	if s.remote != nil {
 		s.remote.Close()
 	}
@@ -226,6 +236,7 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /api/projects/{id}/issues", s.handleListIssues)
 	m.HandleFunc("POST /api/projects/{id}/issues", s.handleCreateIssue)
+	m.HandleFunc("POST /api/projects/{id}/backlog/reorder", s.handleReorderBacklog)
 	m.HandleFunc("GET /api/issues/{id}", s.handleGetIssue)
 	m.HandleFunc("PATCH /api/issues/{id}", s.handleUpdateIssue)
 	m.HandleFunc("DELETE /api/issues/{id}", s.handleDeleteIssue)
@@ -236,6 +247,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/issues/{id}/comments", s.handleAddComment)
 	m.HandleFunc("GET /api/issues/{id}/events", s.handleListIssueEvents)
 	m.HandleFunc("GET /api/issues/{id}/subissues", s.handleListSubIssues)
+	m.HandleFunc("GET /api/issues/{id}/pr-links", s.handleListIssuePRLinks)
+	m.HandleFunc("POST /api/issues/{id}/pr-links", s.handleAddIssuePRLink)
+	m.HandleFunc("DELETE /api/issues/{id}/pr-links/{linkID}", s.handleDeleteIssuePRLink)
 	m.HandleFunc("GET /api/issues/{id}/attachments", s.handleListAttachments)
 	m.HandleFunc("POST /api/issues/{id}/attachments", s.handleUploadAttachment)
 	m.HandleFunc("GET /api/issues/{id}/attachments/{attachmentID}", s.handleGetAttachment)
@@ -311,6 +325,9 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/repos/{repoId}/branches", s.handleRepoBranches)
 	m.HandleFunc("GET /api/repos/{repoId}/merged-branches", s.handleListMergedBranches)
 	m.HandleFunc("POST /api/repos/{repoId}/branches/delete", s.handleDeleteMergedBranches)
+	m.HandleFunc("GET /api/jobs", s.handleListJobs)
+	m.HandleFunc("POST /api/jobs/{id}/retry", s.handleRetryJob)
+	m.HandleFunc("POST /api/jobs/{id}/cancel", s.handleCancelJob)
 	m.HandleFunc("GET /api/repos/{repoId}/commits", s.handleRepoCommits)
 	m.HandleFunc("GET /api/repos/{repoId}/commits/{sha}", s.handleRepoCommitDetail)
 

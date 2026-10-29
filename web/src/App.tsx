@@ -13,6 +13,7 @@ import { StatusBar } from './components/StatusBar';
 import { SettingsModal } from './components/SettingsModal';
 import { MCPModal } from './components/MCPModal';
 import { SchedulesModal } from './components/SchedulesModal';
+import { JobsModal } from './components/JobsModal';
 import { normalizeNotificationRoutes, writeBrowserRoutes } from './notificationSettings';
 import { fmtTime } from './components/common';
 import ProjectsPage from './pages/ProjectsPage';
@@ -309,6 +310,7 @@ export default function App() {
   const [mcpOpen, setMcpOpen] = useState(false);
   const [usageOpen, setUsageOpen] = useState(false);
   const [schedulesOpen, setSchedulesOpen] = useState(false);
+  const [jobsOpen, setJobsOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'general' | 'channels' | 'routes' | 'automation'>('general');
   const [settingsFromMonitor, setSettingsFromMonitor] = useState(false);
@@ -365,10 +367,14 @@ export default function App() {
           <Route path="*" element={<div className="page empty">页面不存在</div>} />
         </Routes>
       </main>
-      <StatusBar onOpenSchedules={() => setSchedulesOpen(true)} />
+      <StatusBar
+        onOpenSchedules={() => setSchedulesOpen(true)}
+        onOpenJobs={() => setJobsOpen(true)}
+      />
       {agentMgrOpen && <AgentManagerModal onClose={() => setAgentMgrOpen(false)} />}
       {mcpOpen && <MCPModal onClose={() => setMcpOpen(false)} />}
       {usageOpen && <UsageModal onClose={() => setUsageOpen(false)} />}
+      {jobsOpen && <JobsModal onClose={() => setJobsOpen(false)} />}
       {schedulesOpen && (
         <SchedulesModal
           onClose={() => setSchedulesOpen(false)}

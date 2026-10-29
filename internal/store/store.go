@@ -90,6 +90,7 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN change_record TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`)
 	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN parent_issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL`)
+	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN backlog_rank INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN dev_mode TEXT NOT NULL DEFAULT 'single_main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN target_branch TEXT NOT NULL DEFAULT 'main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1`)
@@ -524,7 +525,7 @@ func (s *Store) DeleteRepo(ctx context.Context, projectID, repoID int64) error {
 
 // ---------- Issues ----------
 
-const issueCols = `i.id, i.project_id, i.key, i.source, i.repo_id, i.parent_issue_id, i.remote_number, i.remote_url, i.title, i.body, i.labels, i.priority, i.status, i.created_at, i.updated_at,
+const issueCols = `i.id, i.project_id, i.key, i.source, i.repo_id, i.parent_issue_id, i.remote_number, i.remote_url, i.title, i.body, i.labels, i.priority, i.backlog_rank, i.status, i.created_at, i.updated_at,
   (SELECT r.id FROM runs r WHERE r.issue_id=i.id ORDER BY r.id DESC LIMIT 1),
   (SELECT r.status FROM runs r WHERE r.issue_id=i.id ORDER BY r.id DESC LIMIT 1),
   COALESCE((SELECT r.pr_url FROM runs r WHERE r.issue_id=i.id AND r.pr_url != '' ORDER BY r.id DESC LIMIT 1), ''),
@@ -535,7 +536,7 @@ func scanIssue(sc interface{ Scan(...any) error }) (domain.Issue, error) {
 	var repoID, parentID, num, runID sql.NullInt64
 	var labels, c, u string
 	var runStatus sql.NullString
-	err := sc.Scan(&i.ID, &i.ProjectID, &i.Key, &i.Source, &repoID, &parentID, &num, &i.RemoteURL, &i.Title, &i.Body, &labels, &i.Priority, &i.Status, &c, &u, &runID, &runStatus, &i.PRURL, &i.PRState)
+	err := sc.Scan(&i.ID, &i.ProjectID, &i.Key, &i.Source, &repoID, &parentID, &num, &i.RemoteURL, &i.Title, &i.Body, &labels, &i.Priority, &i.BacklogRank, &i.Status, &c, &u, &runID, &runStatus, &i.PRURL, &i.PRState)
 	if err != nil {
 		return i, err
 	}
@@ -789,6 +790,21 @@ func (s *Store) ListSubIssues(ctx context.Context, parentID int64) ([]domain.Iss
 	return out, rows.Err()
 }
 
+func (s *Store) ReorderBacklog(ctx context.Context, projectID int64, ids []int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for rank, id := range ids {
+		if _, err := tx.ExecContext(ctx, `UPDATE issues SET backlog_rank=?, updated_at=? WHERE id=? AND project_id=?`,
+			rank, now(), id, projectID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) AddIssueEvent(ctx context.Context, issueID int64, kind, actor, message string) error {
 	if actor == "" {
 		actor = "system"
@@ -815,6 +831,53 @@ func (s *Store) ListIssueEvents(ctx context.Context, issueID int64) ([]domain.Is
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListIssuePRLinks(ctx context.Context, issueID int64) ([]domain.IssuePRLink, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, issue_id, url, title, state, created_at FROM issue_pr_links WHERE issue_id=? ORDER BY id ASC`, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.IssuePRLink{}
+	for rows.Next() {
+		var l domain.IssuePRLink
+		var created string
+		if err := rows.Scan(&l.ID, &l.IssueID, &l.URL, &l.Title, &l.State, &created); err != nil {
+			return nil, err
+		}
+		l.CreatedAt = parseTime(created)
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AddIssuePRLink(ctx context.Context, issueID int64, url, title string) (*domain.IssuePRLink, error) {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO issue_pr_links(issue_id, url, title, state, created_at) VALUES(?,?,?,?,?)`,
+		issueID, url, title, "open", now())
+	if err != nil {
+		return nil, err
+	}
+	list, err := s.ListIssuePRLinks(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	if len(list) == 0 {
+		return nil, ErrNotFound
+	}
+	return &list[len(list)-1], nil
+}
+
+func (s *Store) DeleteIssuePRLink(ctx context.Context, issueID, linkID int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM issue_pr_links WHERE id=? AND issue_id=?`, linkID, issueID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (s *Store) AddAttachment(ctx context.Context, a domain.Attachment, path string) (*domain.Attachment, error) {

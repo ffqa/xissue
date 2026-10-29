@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { fmtTime } from './common';
 import { toast } from '../toast';
 import type { RemotePR } from '../types';
 import { filterPRs, type PRFilter } from '../logic/prs';
+import { useProjectPRs } from '../hooks/useProjectLists';
 
 export function PRPanel({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
@@ -14,15 +15,8 @@ export function PRPanel({ projectId }: { projectId: number }) {
   // One query for every tab. ProjectPage keeps it warm and refreshes it every
   // 60s, so opening the modal shows the cached list immediately; switching to
   // Merged/Closed never waits for another provider request.
-  const prsQ = useQuery({
-    queryKey: qk.projectPRs(projectId, 'all'),
-    queryFn: () => api.projectPRs(projectId, 'all'),
-    enabled: !!projectId,
-    staleTime: 30_000,
-    gcTime: 30 * 60_000,
-    // ProjectPage owns the single 60s timer for this shared query. Adding a
-    // second observer timer here would make provider calls land out of phase.
-  });
+  // ProjectPage owns the single 60s timer for this shared query.
+  const prsQ = useProjectPRs(projectId);
   const prs: RemotePR[] = prsQ.data ?? [];
   const filteredPRs = filterPRs(prs, filterState);
 

@@ -140,6 +140,28 @@ func ValidIssueStatus(s IssueStatus) bool {
 	return false
 }
 
+type JobStatus string
+
+const (
+	JobQueued    JobStatus = "queued"
+	JobRunning   JobStatus = "running"
+	JobCompleted JobStatus = "completed"
+	JobFailed    JobStatus = "failed"
+	JobCancelled JobStatus = "cancelled"
+)
+
+type Job struct {
+	ID         int64           `json:"id"`
+	Kind       string          `json:"kind"`
+	Status     JobStatus       `json:"status"`
+	RepoID     int64           `json:"repoId"`
+	Payload    json.RawMessage `json:"payload"`
+	Error      string          `json:"error,omitempty"`
+	CreatedAt  time.Time       `json:"createdAt"`
+	StartedAt  *time.Time      `json:"startedAt,omitempty"`
+	FinishedAt *time.Time      `json:"finishedAt,omitempty"`
+}
+
 type IssuePriority string
 
 const (
@@ -170,6 +192,7 @@ type Issue struct {
 	Body          string        `json:"body"`
 	Labels        []string      `json:"labels"`
 	Priority      IssuePriority `json:"priority"`
+	BacklogRank   int64         `json:"backlogRank"`
 	Status        IssueStatus   `json:"status"`
 	ActiveRunID   *int64        `json:"activeRunId"`
 	Awaiting      bool          `json:"awaiting"`
@@ -186,6 +209,15 @@ type IssueEvent struct {
 	Kind      string    `json:"kind"`
 	Actor     string    `json:"actor"`
 	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+type IssuePRLink struct {
+	ID        int64     `json:"id"`
+	IssueID   int64     `json:"issueId"`
+	URL       string    `json:"url"`
+	Title     string    `json:"title"`
+	State     string    `json:"state"`
 	CreatedAt time.Time `json:"createdAt"`
 }
 

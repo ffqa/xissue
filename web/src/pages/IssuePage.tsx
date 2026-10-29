@@ -100,6 +100,7 @@ export default function IssuePage() {
     enabled: !!issue?.parentIssueId,
   });
   const attachmentsQ = useQuery({ queryKey: qk.attachments(id), queryFn: () => api.attachments(id) });
+  const prLinksQ = useQuery({ queryKey: qk.issuePRLinks(id), queryFn: () => api.issuePRLinks(id) });
   const runsQ = useQuery({ queryKey: qk.runs(id), queryFn: () => api.runs(id) });
   const agentsQ = useQuery({ queryKey: qk.agents, queryFn: api.agents });
   const runnersQ = useQuery({ queryKey: qk.runners, queryFn: api.runners, refetchInterval: 15000 });
@@ -133,6 +134,22 @@ export default function IssuePage() {
   }, [runs, issue?.activeRunId, selectedRunId]);
 
   const currentRun: Run | undefined = runs.find((r) => r.id === selectedRunId) ?? runs[0];
+
+  const linkedPRs = useMemo(() => {
+    const seen = new Set<string>();
+    const out: { url: string; title: string; state: string; source: 'run' | 'manual'; id?: number }[] = [];
+    for (const run of runs) {
+      if (!run.prUrl || seen.has(run.prUrl)) continue;
+      seen.add(run.prUrl);
+      out.push({ url: run.prUrl, title: `Run #${run.id}`, state: run.prState || 'open', source: 'run' });
+    }
+    for (const link of prLinksQ.data ?? []) {
+      if (seen.has(link.url)) continue;
+      seen.add(link.url);
+      out.push({ url: link.url, title: link.title || '手动关联', state: link.state || 'open', source: 'manual', id: link.id });
+    }
+    return out;
+  }, [runs, prLinksQ.data]);
 
   const timeline = useMemo(() => {
     const items: {
@@ -324,6 +341,8 @@ export default function IssuePage() {
   const [subLabels, setSubLabels] = useState('');
   const [subPriority, setSubPriority] = useState<IssuePriority>('normal');
   const [attachDrag, setAttachDrag] = useState(false);
+  const [prLinkURL, setPrLinkURL] = useState('');
+  const [prLinkTitle, setPrLinkTitle] = useState('');
 
   const updateIssue = useMutation({
     mutationFn: (b: {
@@ -347,6 +366,28 @@ export default function IssuePage() {
       setCommentText('');
       qc.invalidateQueries({ queryKey: qk.comments(id) });
     },
+  });
+
+  const addPRLink = useMutation({
+    mutationFn: () => api.addIssuePRLink(id, { url: prLinkURL.trim(), title: prLinkTitle.trim() }),
+    onSuccess: () => {
+      setPrLinkURL('');
+      setPrLinkTitle('');
+      qc.invalidateQueries({ queryKey: qk.issuePRLinks(id) });
+      qc.invalidateQueries({ queryKey: qk.issueEvents(id) });
+      toast.success('已关联 PR');
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const deletePRLink = useMutation({
+    mutationFn: (linkId: number) => api.deleteIssuePRLink(id, linkId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.issuePRLinks(id) });
+      qc.invalidateQueries({ queryKey: qk.issueEvents(id) });
+      toast.info('已移除 PR 关联');
+    },
+    onError: (e) => toast.error((e as Error).message),
   });
 
   const createSubIssue = useMutation({
@@ -599,6 +640,35 @@ export default function IssuePage() {
           <div className="panel">
             <div className="panel-b">
               {issue?.body ? <Markdown>{issue.body}</Markdown> : <span className="dim">无描述</span>}
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-h"><h3 className="grow">🔀 关联 PR ({linkedPRs.length})</h3></div>
+            <div className="panel-b">
+              {linkedPRs.length === 0 ? (
+                <span className="dim small">暂无关联 PR；Run 产生的 PR 会自动出现在这里，也可以手动粘贴链接。</span>
+              ) : (
+                <div className="col" style={{ gap: 6 }}>
+                  {linkedPRs.map((link) => (
+                    <div key={link.url} className="row small" style={{ gap: 8 }}>
+                      <span className={`badge ${link.state === 'merged' ? 'pr-merged' : link.state === 'closed' ? 'pr-closed' : 'pr-open'}`}>
+                        {link.state}
+                      </span>
+                      <a className="grow ellipsis" href={link.url} target="_blank" rel="noreferrer">{link.title}</a>
+                      <span className="dim">{link.source === 'run' ? 'Run' : '手动'}</span>
+                      {link.source === 'manual' && link.id && (
+                        <button className="ghost sm" onClick={() => deletePRLink.mutate(link.id!)}>移除</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="row" style={{ gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                <input className="mono grow" style={{ minWidth: 220 }} placeholder="https://github.com/org/repo/pull/123" value={prLinkURL} onChange={(e) => setPrLinkURL(e.target.value)} />
+                <input style={{ width: 140 }} placeholder="标题（可选）" value={prLinkTitle} onChange={(e) => setPrLinkTitle(e.target.value)} />
+                <button className="sm" disabled={!prLinkURL.trim() || addPRLink.isPending} onClick={() => addPRLink.mutate()}>关联 PR</button>
+              </div>
             </div>
           </div>
 

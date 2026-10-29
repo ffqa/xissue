@@ -40,17 +40,37 @@ func (s *Server) syncProjectIssues(ctx context.Context, proj *domain.Project) (i
 	}
 	imported := 0
 	var errs []error
+	var githubRepos []domain.Repo
+	for _, repo := range proj.Repos {
+		if repo.Provider == domain.ProviderGitHub && provider.For(repo.Provider).Caps().Issues {
+			githubRepos = append(githubRepos, repo)
+		}
+	}
+	githubIssues, githubBatchOK := map[int64][]provider.RemoteIssue{}, true
+	if len(githubRepos) > 0 {
+		if batched, err := provider.GitHubBatchIssues(ctx, githubRepos); err == nil {
+			githubIssues = batched
+		} else {
+			githubBatchOK = false
+		}
+	}
 	for _, repo := range proj.Repos {
 		p := provider.For(repo.Provider)
 		if !p.Caps().Issues {
 			continue
 		}
-		list, err := p.ListOpenIssues(ctx, repo)
-		if err != nil {
-			// One unavailable repository must not stop the other repositories
-			// in the project from syncing.
-			errs = append(errs, fmt.Errorf("%s: %w", repo.Name, err))
-			continue
+		var list []provider.RemoteIssue
+		if repo.Provider == domain.ProviderGitHub && githubBatchOK {
+			list = githubIssues[repo.ID]
+		} else {
+			var err error
+			list, err = p.ListOpenIssues(ctx, repo)
+			if err != nil {
+				// One unavailable repository must not stop the other repositories
+				// in the project from syncing.
+				errs = append(errs, fmt.Errorf("%s: %w", repo.Name, err))
+				continue
+			}
 		}
 		repoID := repo.ID
 		for _, ri := range list {

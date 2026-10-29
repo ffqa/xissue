@@ -7,9 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/xpier/xissue/internal/store"
 
 	"github.com/xpier/xissue/internal/domain"
 )
@@ -258,4 +262,113 @@ func TestSchedulesEndpointListsLoops(t *testing.T) {
 			t.Fatalf("missing schedule %q: %+v", want, tasks)
 		}
 	}
+}
+
+func TestIssuePRLinkManualAssociation(t *testing.T) {
+	srv, st, _ := newTestServer(t)
+	proj, _ := st.CreateProject(t.Context(), "Links", "")
+	issue, _ := st.CreateLocalIssue(t.Context(), proj.ID, "linked", "", nil)
+	w := doJSON(t, srv, http.MethodPost, "/api/issues/"+itoa(issue.ID)+"/pr-links", map[string]any{
+		"url": "https://github.com/acme/demo/pull/7", "title": "fix it",
+	})
+	if w.Code != http.StatusCreated {
+		t.Fatalf("add link: %d %s", w.Code, w.Body.String())
+	}
+	var link domain.IssuePRLink
+	if err := json.Unmarshal(w.Body.Bytes(), &link); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := st.ListIssuePRLinks(t.Context(), issue.ID)
+	if len(list) != 1 || list[0].URL != link.URL {
+		t.Fatalf("links = %+v", list)
+	}
+	w = doJSON(t, srv, http.MethodDelete, "/api/issues/"+itoa(issue.ID)+"/pr-links/"+itoa(link.ID), nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete link: %d %s", w.Code, w.Body.String())
+	}
+	list, _ = st.ListIssuePRLinks(t.Context(), issue.ID)
+	if len(list) != 0 {
+		t.Fatalf("links remain: %+v", list)
+	}
+}
+
+func TestBacklogReorder(t *testing.T) {
+	srv, st, _ := newTestServer(t)
+	proj, _ := st.CreateProject(t.Context(), "Backlog", "")
+	a, _ := st.CreateLocalIssue(t.Context(), proj.ID, "a", "", nil)
+	b, _ := st.CreateLocalIssue(t.Context(), proj.ID, "b", "", nil)
+	c, _ := st.CreateLocalIssue(t.Context(), proj.ID, "c", "", nil)
+	backlog := domain.IssueBacklog
+	for _, issue := range []*domain.Issue{a, b, c} {
+		if _, err := st.UpdateIssue(t.Context(), issue.ID, store.IssuePatch{Status: &backlog}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := doJSON(t, srv, http.MethodPost, "/api/projects/"+itoa(proj.ID)+"/backlog/reorder", map[string]any{
+		"ids": []int64{c.ID, a.ID, b.ID},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("reorder: %d %s", w.Code, w.Body.String())
+	}
+	ranks := map[int64]int64{}
+	for _, issue := range []*domain.Issue{c, a, b} {
+		got, _ := st.GetIssue(t.Context(), issue.ID)
+		ranks[got.ID] = got.BacklogRank
+	}
+	if ranks[c.ID] != 0 || ranks[a.ID] != 1 || ranks[b.ID] != 2 {
+		t.Fatalf("ranks = %+v", ranks)
+	}
+}
+
+func TestBranchDeleteQueueRunsInWorker(t *testing.T) {
+	root := t.TempDir()
+	work := filepath.Join(root, "work")
+	if err := os.MkdirAll(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, work, "init", "-q", "-b", "main")
+	mustGit(t, work, "config", "user.name", "Queue User")
+	mustGit(t, work, "config", "user.email", "queue@example.com")
+	mustGit(t, work, "commit", "-q", "--allow-empty", "-m", "init")
+	mustGit(t, work, "checkout", "-q", "-b", "cleanup")
+	mustGit(t, work, "commit", "-q", "--allow-empty", "-m", "cleanup")
+	mustGit(t, work, "checkout", "-q", "main")
+	mustGit(t, work, "merge", "-q", "--no-ff", "-m", "merge cleanup", "cleanup")
+
+	srv, st, _ := newTestServer(t)
+	proj, _ := st.CreateProject(t.Context(), "Queue", "")
+	repo, err := st.CreateRepo(t.Context(), domain.Repo{
+		ProjectID: proj.ID, Name: "demo", Provider: domain.ProviderPlain,
+		RemoteURL: work, DefaultBranch: "main",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := doJSON(t, srv, http.MethodPost, "/api/repos/"+itoa(repo.ID)+"/branches/delete", map[string]any{"branches": []string{"cleanup"}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("enqueue: %d %s", w.Code, w.Body.String())
+	}
+	var enqueued struct {
+		Queued int `json:"queued"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &enqueued)
+	if enqueued.Queued != 1 {
+		t.Fatalf("queued = %d", enqueued.Queued)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		jobs, _ := st.ListJobs(t.Context(), 10)
+		if len(jobs) == 1 && jobs[0].Status == domain.JobCompleted {
+			out, _ := exec.Command("git", "-C", work, "branch", "--list", "cleanup").Output()
+			if strings.TrimSpace(string(out)) != "" {
+				t.Fatalf("branch still exists: %q", out)
+			}
+			return
+		}
+		if len(jobs) == 1 && jobs[0].Status == domain.JobFailed {
+			t.Fatalf("job failed: %+v", jobs[0])
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("timeout waiting for queued branch delete")
 }

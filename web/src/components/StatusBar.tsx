@@ -33,7 +33,13 @@ function fmtCountdown(ms: number): string {
   return `${sec}s`;
 }
 
-export function StatusBar({ onOpenSchedules }: { onOpenSchedules?: () => void }) {
+export function StatusBar({
+  onOpenSchedules,
+  onOpenJobs,
+}: {
+  onOpenSchedules?: () => void;
+  onOpenJobs?: () => void;
+}) {
   const wsState = useWsState();
   const q = useQuery({
     queryKey: qk.status,
@@ -53,6 +59,15 @@ export function StatusBar({ onOpenSchedules }: { onOpenSchedules?: () => void })
     staleTime: 4000,
     retry: false,
   });
+  const jobsQ = useQuery({
+    queryKey: qk.jobs,
+    queryFn: () => api.jobs(50),
+    refetchInterval: 2000,
+    staleTime: 1500,
+    retry: false,
+  });
+  const activeJobs = (jobsQ.data ?? []).filter((job) => job.status === 'queued' || job.status === 'running');
+  const currentJob = activeJobs.find((job) => job.status === 'running') ?? activeJobs[0];
   const nextTask = useMemo(() => {
     const now = Date.now();
     return (schedulesQ.data ?? [])
@@ -140,6 +155,16 @@ export function StatusBar({ onOpenSchedules }: { onOpenSchedules?: () => void })
         {queue.pending > 0 ? ` +Q${queue.pending}` : ''}
       </span>
       <span className="status-item">G {st.goroutines}</span>
+      <button
+        type="button"
+        className="status-item status-schedule"
+        title={currentJob ? `当前队列：${currentJob.payload?.branch || currentJob.kind}` : '查看后台任务队列'}
+        onClick={onOpenJobs}
+        disabled={!onOpenJobs}
+      >
+        <span>📋 队列 {activeJobs.length}</span>
+        {currentJob && <span className="dim">{currentJob.payload?.branch || currentJob.kind}</span>}
+      </button>
       <button
         type="button"
         className="status-item status-schedule"

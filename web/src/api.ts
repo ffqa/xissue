@@ -16,7 +16,9 @@ import type {
   HookStatus,
   InspectResult,
   Issue,
+  Job,
   IssueEvent,
+  IssuePRLink,
   IssuePriority,
   IssueStatus,
   Attachment,
@@ -274,7 +276,10 @@ export const api = {
   repoBranches: (repoId: number, refresh = false) => get<string[]>(`/api/repos/${repoId}/branches?refresh=${refresh ? 1 : 0}`),
   mergedBranches: (repoId: number, refresh = true) => get<MergedBranch[]>(`/api/repos/${repoId}/merged-branches?refresh=${refresh ? 1 : 0}`),
   deleteMergedBranches: (repoId: number, branches: string[]) =>
-    post<{ deleted: string[] }>(`/api/repos/${repoId}/branches/delete`, { branches }),
+    post<{ jobs: Job[]; queued: number }>(`/api/repos/${repoId}/branches/delete`, { branches }),
+  jobs: (limit = 50) => get<Job[]>(`/api/jobs?limit=${limit}`),
+  retryJob: (id: number) => post<Job>(`/api/jobs/${id}/retry`),
+  cancelJob: (id: number) => post<{ ok: boolean }>(`/api/jobs/${id}/cancel`),
   repoCommits: (repoId: number, branch?: string, limit = 30, refresh = false) =>
     get<CommitInfo[]>(`/api/repos/${repoId}/commits?${q({ branch: branch ?? '', limit, refresh: refresh ? 1 : 0 })}`),
   repoCommitDetail: (repoId: number, sha: string) =>
@@ -294,9 +299,16 @@ export const api = {
     },
   ) => post<Issue>(`/api/projects/${projectId}/issues`, b),
   issue: (id: number) => get<Issue>(`/api/issues/${id}`),
+  reorderBacklog: (projectId: number, ids: number[]) =>
+    post<{ ok: boolean }>(`/api/projects/${projectId}/backlog/reorder`, { ids }),
   updateIssue: (id: number, b: { title?: string; body?: string; labels?: string[]; priority?: IssuePriority; status?: IssueStatus }) =>
     patch<Issue>(`/api/issues/${id}`, b),
   issueEvents: (issueId: number) => get<IssueEvent[]>(`/api/issues/${issueId}/events`),
+  issuePRLinks: (issueId: number) => get<IssuePRLink[]>(`/api/issues/${issueId}/pr-links`),
+  addIssuePRLink: (issueId: number, b: { url: string; title?: string }) =>
+    post<IssuePRLink>(`/api/issues/${issueId}/pr-links`, b),
+  deleteIssuePRLink: (issueId: number, linkId: number) =>
+    del<void>(`/api/issues/${issueId}/pr-links/${linkId}`),
   subIssues: (issueId: number) => get<Issue[]>(`/api/issues/${issueId}/subissues`),
   attachments: (issueId: number) => get<Attachment[]>(`/api/issues/${issueId}/attachments`),
   uploadAttachment: (issueId: number, file: File) => {
@@ -370,6 +382,7 @@ export const qk = {
   settings: ['settings'] as const,
   monitorConfig: ['monitorConfig'] as const,
   schedules: ['schedules'] as const,
+  jobs: ['jobs'] as const,
   usage: (days: number) => ['usage', days] as const,
   monitorLogs: (hours?: number) => ['monitorLogs', hours ?? 8] as const,
   agents: ['agents'] as const,
@@ -397,6 +410,7 @@ export const qk = {
   issue: (id: number) => ['issue', id] as const,
   comments: (issueId: number) => ['comments', issueId] as const,
   issueEvents: (issueId: number) => ['issueEvents', issueId] as const,
+  issuePRLinks: (issueId: number) => ['issuePRLinks', issueId] as const,
   subIssues: (issueId: number) => ['subIssues', issueId] as const,
   attachments: (issueId: number) => ['attachments', issueId] as const,
   runs: (issueId: number) => ['runs', issueId] as const,

@@ -39,10 +39,10 @@ func (s *Server) handleDeleteMergedBranches(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusBadRequest, errors.New("branches is required"))
 		return
 	}
-	deleted, err := s.runner.DeleteRepoMergedBranches(r.Context(), repoID, body.Branches)
+	jobs, err := s.enqueueBranchDeletes(r.Context(), repoID, body.Branches)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs, "queued": len(jobs)})
 }

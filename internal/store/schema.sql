@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS issues (
     body          TEXT NOT NULL DEFAULT '',
     labels        TEXT NOT NULL DEFAULT '[]',
     priority      TEXT NOT NULL DEFAULT 'normal',
+    backlog_rank  INTEGER NOT NULL DEFAULT 0,
     status        TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
@@ -55,6 +56,16 @@ CREATE TABLE IF NOT EXISTS issue_events (
     actor      TEXT NOT NULL DEFAULT 'system',
     message    TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS issue_pr_links (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_id   INTEGER NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    url        TEXT NOT NULL,
+    title      TEXT NOT NULL DEFAULT '',
+    state      TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT NOT NULL,
+    UNIQUE(issue_id, url)
 );
 
 CREATE TABLE IF NOT EXISTS issue_attachments (
@@ -161,3 +172,18 @@ CREATE TABLE IF NOT EXISTS pr_handled_events (
 );
 CREATE INDEX IF NOT EXISTS idx_pr_handled_events ON pr_handled_events(pr_url, event_key);
 
+
+
+CREATE TABLE IF NOT EXISTS jobs (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind        TEXT NOT NULL,
+    status      TEXT NOT NULL,
+    repo_id     INTEGER NOT NULL DEFAULT 0,
+    payload     TEXT NOT NULL DEFAULT '{}',
+    error       TEXT NOT NULL DEFAULT '',
+    created_at  TEXT NOT NULL,
+    started_at  TEXT,
+    finished_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);

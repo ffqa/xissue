@@ -1,8 +1,11 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -15,6 +18,7 @@ type ScheduledTask struct {
 	Detail          string     `json:"detail"`
 	Enabled         bool       `json:"enabled"`
 	Settings        string     `json:"settings,omitempty"` // monitor | settings
+	Running         bool       `json:"running"`
 	NextRun         *time.Time `json:"nextRun,omitempty"`
 }
 
@@ -56,5 +60,59 @@ func (s *Server) handleListSchedules(w http.ResponseWriter, r *http.Request) {
 		next := lastSync.Add(time.Duration(mon.SyncIntervalMin) * time.Minute)
 		tasks[1].NextRun = &next
 	}
+	s.scheduleMu.Lock()
+	for i := range tasks {
+		tasks[i].Running = s.scheduleRunning[tasks[i].ID]
+	}
+	s.scheduleMu.Unlock()
 	writeJSON(w, http.StatusOK, tasks)
+}
+
+// handleRunSchedule runs one periodic task immediately. The request returns
+// after it is accepted; the task runs in the background and its flag is
+// visible on the next schedules poll.
+func (s *Server) handleRunSchedule(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	valid := map[string]bool{"watcher": true, "issue-sync": true, "auto-update": true, "retention": true, "log-prune": true}
+	if !valid[id] {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("unknown schedule %q", id))
+		return
+	}
+	s.scheduleMu.Lock()
+	if s.scheduleRunning[id] {
+		s.scheduleMu.Unlock()
+		writeErr(w, http.StatusConflict, errors.New("该定时任务正在执行"))
+		return
+	}
+	s.scheduleRunning[id] = true
+	s.scheduleMu.Unlock()
+	go func() {
+		defer func() {
+			s.scheduleMu.Lock()
+			delete(s.scheduleRunning, id)
+			s.scheduleMu.Unlock()
+		}()
+		switch id {
+		case "watcher":
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			defer cancel()
+			_, _, err := s.runner.CheckWatchesAndPRs(ctx, 0)
+			if err != nil {
+				s.runner.LogMonitor("WARN", "schedule", "手动执行分支/PR 监控失败: "+err.Error())
+			}
+		case "issue-sync":
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			s.runIssueSync(ctx)
+		case "auto-update":
+			s.checkAutoUpdate()
+		case "retention":
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+			defer cancel()
+			s.runner.PruneRunStorageNow(ctx)
+		case "log-prune":
+			_, _ = s.runner.PruneMonitorLogs(8 * time.Hour)
+		}
+	}()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已开始执行"})
 }

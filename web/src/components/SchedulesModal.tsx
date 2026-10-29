@@ -1,7 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { fmtTime, Modal } from './common';
 import type { ScheduledTask } from '../types';
+import { toast } from '../toast';
 
 export function SchedulesModal({
   onClose,
@@ -12,6 +13,15 @@ export function SchedulesModal({
   onOpenMonitor: () => void;
   onOpenSettings: () => void;
 }) {
+  const qc = useQueryClient();
+  const runMut = useMutation({
+    mutationFn: (id: string) => api.runSchedule(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.schedules });
+      toast.success('已开始执行，可在状态栏查看任务状态');
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
   const tasksQ = useQuery({
     queryKey: qk.schedules,
     queryFn: api.schedules,
@@ -37,6 +47,15 @@ export function SchedulesModal({
               <span className={`badge ${task.enabled ? 'ok' : ''}`}>{task.enabled ? '运行中' : '已停用'}</span>
               <span className="grow" />
               <span className="badge mono">{task.interval}</span>
+              <button
+                type="button"
+                className="sm ghost"
+                disabled={task.running || (runMut.isPending && runMut.variables === task.id)}
+                onClick={() => runMut.mutate(task.id)}
+                title="立即执行一次，不影响原有定时计划"
+              >
+                {task.running || (runMut.isPending && runMut.variables === task.id) ? '执行中…' : '立即执行'}
+              </button>
             </div>
             <div className="small muted" style={{ marginTop: 4 }}>{task.detail}</div>
             {task.nextRun && (

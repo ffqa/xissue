@@ -350,6 +350,7 @@ export const api = {
   patchSettings: (b: Partial<AppSettings>) => patch<AppSettings>('/api/settings', b),
   monitorConfig: () => get<MonitorConfig>('/api/monitor/config'),
   schedules: () => get<ScheduledTask[]>('/api/schedules'),
+  runSchedule: (id: string) => post<{ ok: boolean; message: string }>(`/api/schedules/${encodeURIComponent(id)}/run`),
   usage: (days = 30) => get<UsageReport>(`/api/usage?days=${days}`),
   patchMonitorConfig: (b: Partial<MonitorConfig>) => patch<MonitorConfig>('/api/monitor/config', b),
   testNotify: () => post<{ ok: boolean; message: string }>('/api/monitor/test-notify'),

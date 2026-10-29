@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.6` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.7` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.6`
+- **最新发布版本**: `0.5.7`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -411,6 +411,14 @@
 - **排序**: 每页按 `createdAt DESC` 获取，服务端最终再按 createdAt/number 倒序兜底。
 - **UI**: 仍一次加载完整结果到内存，但每次只渲染 100 张卡片，「加载更多」按 100 递增；这不是后端截断。
 - **验证**: 用 `microsoft/vscode` >100 PR 的 GraphQL 查询验证 `hasNextPage` 与第二页 cursor；provider/runner/server 测试、tsc、Vitest。
+
+### 2.46 定时任务立即执行（0.5.7）
+
+- **API**: `POST /api/schedules/{id}/run`；支持 `watcher`、`issue-sync`、`auto-update`、`retention`、`log-prune`。
+- **异步**: 请求只负责启动并返回，长任务在后台执行；同一任务运行中再次点击返回 409，避免并发重复。
+- **状态**: `/api/schedules` 新增 `running` 标志；任务面板按钮在运行中显示「执行中…」。
+- **用途**: 临时缩短 90 秒/1 小时/6 小时等固定周期，立即触发一次，不改变原定时计划。
+- **验证**: schedules API/立即执行测试、tsc、Vitest、Chromium 冒烟。
 
 ## 3. 核心架构与关键代码索引
 

@@ -21,7 +21,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.5.6"
+const Version = "0.5.7"
 
 type Server struct {
 	cfg    *config.Config
@@ -39,6 +39,8 @@ type Server struct {
 	stopOnce         sync.Once
 	jobCtx           context.Context
 	jobCancel        context.CancelFunc
+	scheduleMu       sync.Mutex
+	scheduleRunning  map[string]bool
 	startedAt        time.Time
 
 	updateMu          sync.Mutex
@@ -67,16 +69,17 @@ func New(cfg *config.Config, st *store.Store) *Server {
 	r := runner.New(cfg, st, hub)
 	jobCtx, jobCancel := context.WithCancel(context.Background())
 	s := &Server{
-		cfg:         cfg,
-		st:          st,
-		runner:      r,
-		hub:         hub,
-		mux:         http.NewServeMux(),
-		stopCh:      make(chan struct{}),
-		jobCtx:      jobCtx,
-		jobCancel:   jobCancel,
-		startedAt:   time.Now(),
-		terminalSem: make(chan struct{}, 8),
+		cfg:             cfg,
+		st:              st,
+		runner:          r,
+		hub:             hub,
+		mux:             http.NewServeMux(),
+		stopCh:          make(chan struct{}),
+		jobCtx:          jobCtx,
+		jobCancel:       jobCancel,
+		scheduleRunning: map[string]bool{},
+		startedAt:       time.Now(),
+		terminalSem:     make(chan struct{}, 8),
 	}
 	s.remote = newRemoteManager(cfg, st, r, hub)
 	r.SetRemoteExecutor(s.remote)
@@ -308,6 +311,7 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /api/monitor/status", s.handleMonitorStatus)
 	m.HandleFunc("GET /api/schedules", s.handleListSchedules)
+	m.HandleFunc("POST /api/schedules/{id}/run", s.handleRunSchedule)
 	m.HandleFunc("GET /api/usage", s.handleUsage)
 	m.HandleFunc("GET /api/settings", s.handleGetSettings)
 	m.HandleFunc("PATCH /api/settings", s.handlePatchSettings)

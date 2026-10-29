@@ -663,6 +663,7 @@ export interface ScheduledTask {
   detail: string;
   enabled: boolean;
   settings?: 'monitor' | 'settings';
+  running: boolean;
   nextRun?: string;
 }
 

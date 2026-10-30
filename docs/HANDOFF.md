@@ -21,7 +21,7 @@
 
 ---
 
-> 发布纪律：每个 tag 必须先更新仓库根目录 `CHANGELOG.md` 对应版本；CI 的 `scripts/check-changelog.sh` 会阻止缺少条目的 release。GitHub Release 继续自动生成 commit 摘要，归档包会附带 `CHANGELOG.md`。
+> 发布纪律：每个 tag 必须先更新仓库根目录 `CHANGELOG.md` 对应版本；CI 的 `scripts/check-changelog.sh` 会阻止缺少条目的 release。版本策略：0.x 阶段 patch=兼容修复/小功能，minor=破坏性变更（如移除 Backlog 状态/API）；patch 号不要求连续填满。GitHub Release 继续自动生成 commit 摘要，归档包会附带 `CHANGELOG.md`。
 
 ---
 

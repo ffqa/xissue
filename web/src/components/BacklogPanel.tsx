@@ -60,7 +60,6 @@ export function BacklogPanel({ projectId, issues }: { projectId: number; issues:
     <div className="panel" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div className="panel-h">
         <h3 className="grow">📋 Backlog（{order.length}）</h3>
-        <span className="small dim">拖拽调整顺序；移到 Todo 后才进入执行看板</span>
       </div>
       <div style={{ overflowY: 'auto', padding: 10 }}>
         {order.length === 0 ? (

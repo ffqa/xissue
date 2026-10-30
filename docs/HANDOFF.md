@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.12` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.13` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.12`
+- **最新发布版本**: `0.5.13`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -446,10 +446,10 @@
 - **插件 UI**: 非沙盒 iframe 可直接 `fetch /api/plugins/ai`；沙盒 iframe 通过 `xissue:ai{requestId,prompt,agent?,model?}` → `xissue:ai-result{requestId,data|error}` 桥调用，宿主代为请求。
 - **验证**: 新增 fake ACP Agent 测试（文本、usage、默认回退、空 prompt）；插件模板/目录仓库文档同步。
 
-### 2.50 移除批量自动执行与压缩看板卡片（0.5.12）
+### 2.50 移除批量自动执行与压缩看板卡片（0.5.13）
 
 - **移除**: Todo 列的「⚡ 自动执行待办」按钮、`POST /api/projects/{id}/batch-run`、`Runner.BatchRunTodoIssues`。该入口会同时启动 Backlog/Todo 条目且无确认，容易误触并消耗大量 Token；需要执行请逐条拖入执行中。
-- **紧凑**: 看板列头去掉四行说明性副标题；卡片内边距 `10/12` → `7/9`，行间距 `6` → `3`，摘要行高 1.45 → 1.35；列内卡片间距 `8` → `6`，列体 padding `10` → `8`。Backlog 行同步压缩。
+- **紧凑**: 看板列头去掉四行说明性副标题；卡片内边距 `10/12` → `7/9`，行间距 `6` → `3`，摘要行高 1.45 → 1.35；列内卡片间距 `8` → `6`，列体 padding `10` → `8`。Backlog 行与顶部长说明同步移除。
 - **验证**: 真实浏览器中卡片高度由约 111/129px 降至约 95/111px；Todo 列头部由 55px 降至 39px；页面不再出现「自动执行待办」与副标题。
 
 ## 3. 核心架构与关键代码索引

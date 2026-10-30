@@ -274,8 +274,6 @@ export const api = {
     del<void>(`/api/projects/${projectId}/watches/${watchId}`),
   checkWatches: (projectId: number) =>
     post<{ watchesTriggered: number; prsUpdated: number }>(`/api/projects/${projectId}/check-watches`),
-  batchRunTodo: (projectId: number, b?: { agent?: string; model?: string }) =>
-    post<{ started: number; runs: Run[] }>(`/api/projects/${projectId}/batch-run`, b ?? {}),
   cherryPick: (projectId: number, b: CherryPickRequest) =>
     post<CherryPickResult>(`/api/projects/${projectId}/cherry-pick`, b),
 

@@ -229,10 +229,10 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
   flex: none;
 }
 .board-col-b {
-  padding: 10px;
+  padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -273,7 +273,7 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 }
 .issue-card {
   background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; color: inherit;
+  padding: 7px 9px; display: flex; flex-direction: column; gap: 3px; color: inherit;
   cursor: grab; user-select: none; transition: border-color .12s, transform .12s, box-shadow .12s;
   flex: none;
 }
@@ -285,7 +285,7 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .issue-card .title { color: var(--text); font-weight: 600; font-size: 13.5px; word-break: break-word; line-height: 1.4; }
 .issue-card .title:hover { text-decoration: none; color: var(--accent); }
 .issue-card-summary {
-  font-size: 12px; color: var(--text-2); line-height: 1.45; word-break: break-word;
+  font-size: 12px; color: var(--text-2); line-height: 1.35; word-break: break-word;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 

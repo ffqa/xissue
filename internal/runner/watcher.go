@@ -1014,36 +1014,6 @@ func (r *Runner) CherryPick(ctx context.Context, req CherryPickRequest) (*Cherry
 	}, nil
 }
 
-// BatchRunTodoIssues starts runs for all backlog/todo issues in a project that don't have an active run.
-func (r *Runner) BatchRunTodoIssues(ctx context.Context, projectID int64, agentName, modelName string) ([]*domain.Run, error) {
-	if strings.TrimSpace(agentName) == "" {
-		proj, _ := r.st.GetProject(ctx, projectID)
-		agentName = r.AvailableAgentForProject(AgentRoleIssueDevelop, proj)
-	}
-	if agentName == "" {
-		return nil, fmt.Errorf("未找到可用的 Agent")
-	}
-	issues, err := r.st.ListIssues(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	var started []*domain.Run
-	for _, iss := range issues {
-		if iss.Status != domain.IssueTodo && iss.Status != domain.IssueBacklog {
-			continue
-		}
-		run, err := r.StartRun(ctx, iss.ID, agentName, modelName, "")
-		if err != nil {
-			if errors.Is(err, ErrQueueFull) {
-				break
-			}
-			continue
-		}
-		started = append(started, run)
-	}
-	return started, nil
-}
-
 type cachedPRList struct {
 	at  time.Time
 	prs []provider.RemotePR

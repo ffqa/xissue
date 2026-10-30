@@ -76,9 +76,9 @@ export function BacklogPanel({ projectId, issues }: { projectId: number; issues:
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => dropOn(issue.id)}
                 className={`issue-card${dragging === issue.id ? ' dragging' : ''}`}
-                style={{ cursor: 'grab', gap: 4 }}
+                style={{ cursor: 'grab', gap: 2 }}
               >
-                <div className="row" style={{ gap: 8 }}>
+                <div className="row" style={{ gap: 6 }}>
                   <span className="mono small dim">#{issue.id}</span>
                   <span className={`badge priority-${issue.priority || 'normal'}`}>{PRIORITY[issue.priority] ?? '普通'}</span>
                   <Link to={`/issues/${issue.id}`} className="grow issue-card-title" style={{ fontSize: 13 }}>{issue.title}</Link>

@@ -64,7 +64,6 @@ function issueCanSyncText(provider?: Provider): string {
 interface StageColumn {
   id: 'todo' | 'running' | 'review' | 'done';
   title: string;
-  subtitle: string;
   statuses: IssueStatus[];
 }
 
@@ -72,25 +71,21 @@ const WORKFLOW_COLUMNS: StageColumn[] = [
   {
     id: 'todo',
     title: '📥 待办池 (Todo)',
-    subtitle: '拖入「执行中」即可自动启动 Agent',
     statuses: ['todo'],
   },
   {
     id: 'running',
     title: '⚡ 执行中 (Running)',
-    subtitle: '拖入此列自动启动 Agent 编码',
     statuses: ['running', 'failed'],
   },
   {
     id: 'review',
     title: '🔍 待验收 / PR (Review)',
-    subtitle: '点击进入详情页审查 Diff 与提 PR',
     statuses: ['review', 'pr_open'],
   },
   {
     id: 'done',
     title: '✅ 已完成 (Done)',
-    subtitle: 'PR 已合并 / 已归档',
     statuses: ['done'],
   },
 ];
@@ -394,15 +389,6 @@ export default function ProjectPage() {
       }
     },
     onError: (e) => toast.error(`拉取代码失败: ${(e as Error).message}`),
-  });
-
-  const batchRunMut = useMutation({
-    mutationFn: () => api.batchRunTodo(id, { agent: defaultAgent }),
-    onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: qk.issues(id) });
-      toast.success(`已使用 ${defaultAgent} 自动启动 ${r.started} 个待办任务`);
-    },
-    onError: (e) => toast.error((e as Error).message),
   });
 
   const quickRunMut = useMutation({
@@ -1019,19 +1005,7 @@ export default function ProjectPage() {
                         title="立即从远端平台同步 Issue 到待办池"
                       >
                         {sync.isPending ? '同步中…' : '↻ 同步'}
-                      </button>
-                      {list.length > 0 && (
-                        <button
-                          type="button"
-                          className="sm primary"
-                          disabled={batchRunMut.isPending}
-                          onClick={() => batchRunMut.mutate()}
-                          title={`使用 ${defaultAgent} 一键自动执行本列所有待办任务`}
-                        >
-                          {batchRunMut.isPending ? '启动中…' : '⚡ 自动执行待办'}
-                        </button>
-                      )}
-                    </div>
+                      </button>                    </div>
                   )}
                   {isDoneCol ? (
                     <span
@@ -1045,15 +1019,12 @@ export default function ProjectPage() {
                     <span className="badge">{list.length}</span>
                   )}
                 </div>
-                <div className="small dim" style={{ fontWeight: 400, textTransform: 'none' }}>
-                  {col.subtitle}
-                </div>
               </div>
 
               <div className="board-col-b">
                 {list.length === 0 && (
                   <div className="empty small" style={{ padding: 20 }}>
-                    {col.id === 'running' ? '将待办卡片拖入此处即可自动启动执行' : '暂无任务'}
+                    暂无任务
                   </div>
                 )}
                 {displayList.map((it) => (

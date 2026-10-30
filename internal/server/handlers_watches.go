@@ -2,7 +2,6 @@ package server
 
 import (
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -104,32 +103,6 @@ func (s *Server) handleCheckWatches(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"watchesTriggered": watchesTriggered,
 		"prsUpdated":       prsUpdated,
-	})
-}
-
-func (s *Server) handleBatchRunTodo(w http.ResponseWriter, r *http.Request) {
-	pid, ok := pathID(w, r, "id")
-	if !ok {
-		return
-	}
-	var body struct {
-		Agent string `json:"agent"`
-		Model string `json:"model"`
-	}
-	if r.Body != nil && r.ContentLength != 0 {
-		if err := readJSON(r, &body); err != nil && !errors.Is(err, io.EOF) {
-			writeErr(w, http.StatusBadRequest, err)
-			return
-		}
-	}
-	runs, err := s.runner.BatchRunTodoIssues(r.Context(), pid, body.Agent, body.Model)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"started": len(runs),
-		"runs":    runs,
 	})
 }
 

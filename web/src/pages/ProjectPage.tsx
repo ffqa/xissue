@@ -660,11 +660,6 @@ export default function ProjectPage() {
           )}
         </button>
 
-        <PluginSlot
-          name="project.toolbar"
-          inline
-          context={{ projectId: id, projectName: p?.name, runnerId: p?.runnerId }}
-        />
         <button
           className="ghost"
           onClick={() => setReadmeOpen(true)}
@@ -719,6 +714,11 @@ export default function ProjectPage() {
             </span>
           )}
         </button>
+        <PluginSlot
+          name="project.toolbar"
+          inline
+          context={{ projectId: id, projectName: p?.name, runnerId: p?.runnerId }}
+        />
 
       </div>
 

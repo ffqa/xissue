@@ -154,7 +154,7 @@ ui:
 ```
 
 - 独立页面：`/plugins/<id>`，由顶栏「🧩 插件管理」中的「打开插件页面」进入；
-- 插槽：`project.header` / `project.page` / `project.toolbar` / `issue.actions` / `issue.page` / `issue.toolbar`，由宿主页面自动挂载同一 UI；`*.toolbar` 用于放一个紧凑按钮（宿主初始 150×28，插件可用 `xissue:resize{width}` 调整宽度），点击后可请求宿主打开弹窗；
+- 插槽：`project.header` / `project.page` / `project.toolbar` / `issue.actions` / `issue.page` / `issue.toolbar`，由宿主页面自动挂载同一 UI；`*.toolbar` 用于放一个紧凑按钮（宿主初始 150×28，插件可用 `xissue:resize{width}` 调整宽度），渲染在操作按钮行末尾，点击后可请求宿主打开弹窗；
 - 权限：插件是操作者自行安装的可信扩展。默认 iframe 与主应用同源、**不设置 sandbox**，可访问 `parent.document`、Cookie、localStorage、`fetch` 等主应用权限；`postMessage` 只是便捷桥，不是安全边界；
 - 全局开关：设置 → 通用 → 🧩 插件 UI →「插件 UI 沙盒模式」。默认关闭；开启后 iframe 使用 `sandbox="allow-scripts allow-forms allow-popups allow-downloads"`（不含 `allow-same-origin`），插件只能通过 `postMessage` 桥通信。配置字段为 `pluginUISandbox`（默认 `false`）；
 - 静态资源只从 `<plugin>/ui/` 提供（`GET /api/plugins/{id}/ui/{path...}`），后端拒绝 `..` 与符号链接逃逸；

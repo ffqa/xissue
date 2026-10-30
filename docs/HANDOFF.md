@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.14` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.15` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.14`
+- **最新发布版本**: `0.5.15`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -432,7 +432,7 @@
 
 ### 2.48 插件 toolbar 插槽与弹窗（0.5.10）
 
-- **新增插槽**: `project.toolbar`、`issue.toolbar`，宿主按默认 150×28 紧凑 iframe 挂载；插件可用 `xissue:resize{width}` 调整宽度并请求弹窗。
+- **新增插槽**: `project.toolbar`、`issue.toolbar`，宿主按默认 150×28 紧凑 iframe 挂载在操作按钮行末尾；插件可用 `xissue:resize{width}` 调整宽度并请求弹窗。
 - **弹窗桥**: 插件发送 `xissue:open-modal{title,height}`，宿主在 `Modal` 中打开同一 UI，并以 `modal=true` 注入 context；`xissue:close-modal` 关闭。弹窗内 iframe 仍遵循全局 `pluginUISandbox`。
 - **后端契约**: manifest 槽位白名单、主 schema、模板库/目录库 validator 与 schema 同步更新。
 - **其他**: `input.sm` / `select.sm` 高度统一为 24px，与 `button.sm` 对齐（含高特异性覆盖），修复监控分支输入框比相邻控件高。
@@ -457,6 +457,12 @@
 - **澄清**: 150×28 只是宿主 toolbar 的初始 iframe 尺寸，不是插件契约，也不要求按钮塞满。
 - **新增**: `xissue:resize{width}` 支持插件把 toolbar 宽度调整到 60–800px；height 仍可选。普通插槽继续默认 100% 宽。
 - **文档**: 主文档、模板库、插件目录说明已同步；模板示例明确“按钮按内容宽度，不要求填满”。
+
+### 2.52 工具栏插件移到操作行末尾（0.5.15）
+
+- **位置**: `project.toolbar` / `issue.toolbar` 不再插在 PR 与 README / 编辑与子任务之间；固定挂载到操作按钮行末尾。
+- **说明**: 目前宿主只有一个 toolbar 挂载点，位置不可按插件配置；如后续需要任意锚点，应增加 manifest 位置字段和对应挂载点。
+- **验证**: 真实浏览器确认 plugin iframe 位于「设置」之后，宽度 resize 仍生效。
 
 ## 3. 核心架构与关键代码索引
 

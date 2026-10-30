@@ -148,103 +148,113 @@ export function PRPanel({ projectId }: { projectId: number }) {
             const isOpen = pr.state === 'open';
             return (
               <div key={`${pr.repoId}-${pr.number}`} className="pr-card">
-                <div className="row" style={{ gap: 8, alignItems: 'flex-start' }}>
-                  <span
-                    className="tag"
-                    style={{
-                      background: isOpen
-                        ? 'rgba(34, 197, 94, 0.15)'
-                        : isMerged
-                          ? 'rgba(168, 85, 247, 0.15)'
-                          : 'rgba(156, 163, 175, 0.15)',
-                      color: isOpen ? '#22c55e' : isMerged ? '#a855f7' : 'var(--muted)',
-                      borderColor: isOpen ? '#22c55e' : isMerged ? '#a855f7' : 'var(--border)',
-                      fontWeight: 600,
-                    }}
-                  >
-                    #{pr.number} {pr.state.toUpperCase()}
-                  </span>
-                  <span className="repo-chip" style={{ margin: 0, padding: '2px 6px', fontSize: 11 }}>
-                    📦 {pr.repoName}
-                  </span>
-                  {pr.ciState && pr.ciState !== 'unknown' && (
+                <div className="pr-side">
+                  <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
                     <span
                       className="tag"
-                      title={`CI: ${pr.ciPassed ?? 0} 通过 · ${pr.ciFailed ?? 0} 失败 · ${pr.ciPending ?? 0} 进行中`}
                       style={{
-                        margin: 0,
-                        padding: '2px 6px',
-                        fontSize: 11,
-                        color: pr.ciState === 'failure' ? 'var(--red, #ef4444)' : pr.ciState === 'pending' ? 'var(--yellow, #eab308)' : 'var(--green, #22c55e)',
-                        borderColor: 'currentColor',
+                        background: isOpen
+                          ? 'rgba(34, 197, 94, 0.15)'
+                          : isMerged
+                            ? 'rgba(168, 85, 247, 0.15)'
+                            : 'rgba(156, 163, 175, 0.15)',
+                        color: isOpen ? '#22c55e' : isMerged ? '#a855f7' : 'var(--muted)',
+                        borderColor: isOpen ? '#22c55e' : isMerged ? '#a855f7' : 'var(--border)',
+                        fontWeight: 600,
                       }}
                     >
-                      CI {pr.ciState === 'failure' ? '✗' : pr.ciState === 'pending' ? '…' : '✓'}
+                      #{pr.number} {pr.state.toUpperCase()}
                     </span>
+                    <span className="repo-chip" style={{ margin: 0, padding: '2px 6px', fontSize: 11 }}>
+                      📦 {pr.repoName}
+                    </span>
+                    {pr.ciState && pr.ciState !== 'unknown' && (
+                      <span
+                        className="tag"
+                        title={`CI: ${pr.ciPassed ?? 0} 通过 · ${pr.ciFailed ?? 0} 失败 · ${pr.ciPending ?? 0} 进行中`}
+                        style={{
+                          margin: 0,
+                          padding: '2px 6px',
+                          fontSize: 11,
+                          color: pr.ciState === 'failure' ? 'var(--red, #ef4444)' : pr.ciState === 'pending' ? 'var(--yellow, #eab308)' : 'var(--green, #22c55e)',
+                          borderColor: 'currentColor',
+                        }}
+                      >
+                        CI {pr.ciState === 'failure' ? '✗' : pr.ciState === 'pending' ? '…' : '✓'}
+                      </span>
+                    )}
+                  </div>
+
+                  {isOpen && (
+                    <div className="pr-actions">
+                      <span className="small muted">合并方式:</span>
+                      <select
+                        className="sm"
+                        style={{ height: 26, fontSize: 12, width: '100%' }}
+                        value={mergeMethods[pr.number] || 'squash'}
+                        onChange={(e) =>
+                          setMergeMethods((prev) => ({
+                            ...prev,
+                            [pr.number]: e.target.value as 'squash' | 'merge' | 'rebase',
+                          }))
+                        }
+                      >
+                        <option value="squash">Squash and merge (推荐)</option>
+                        <option value="merge">Create a merge commit</option>
+                        <option value="rebase">Rebase and merge</option>
+                      </select>
+                      <div className="row" style={{ gap: 6 }}>
+                        <button
+                          className="primary sm"
+                          disabled={mergeMut.isPending}
+                          onClick={() => handleMerge(pr)}
+                          title="合并此 PR，并刷新镜像/尝试快进本地目标分支"
+                        >
+                          {mergeMut.isPending ? '合并中…' : '⚡ 合并并刷新本地'}
+                        </button>
+                        <button
+                          className="danger sm"
+                          disabled={closeMut.isPending}
+                          onClick={() => handleClose(pr)}
+                          title="关闭此 Pull Request"
+                        >
+                          关闭 PR
+                        </button>
+                      </div>
+                    </div>
                   )}
-                  <span style={{ fontWeight: 600, fontSize: 14, flex: 1, lineHeight: 1.4 }}>{pr.title}</span>
-                  <a
-                    href={pr.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="small ghost"
-                    style={{ textDecoration: 'none', color: 'var(--accent)', whiteSpace: 'nowrap' }}
-                    title="在代码托管平台中打开"
-                  >
-                    ↗ 打开平台
-                  </a>
                 </div>
 
-                <div className="row" style={{ gap: 12, fontSize: 12, color: 'var(--muted)', flexWrap: 'wrap' }}>
-                  <div className="row" style={{ gap: 4 }}>
-                    <span>分支:</span>
-                    <code className="mono small" style={{ color: 'var(--text)' }}>{pr.headBranch}</code>
-                    <span>→</span>
-                    <code className="mono small" style={{ color: 'var(--accent)' }}>{pr.baseBranch}</code>
+                <div className="pr-main">
+                  <div className="pr-title-line">
+                    <span className="pr-title">{pr.title}</span>
+                    <a
+                      href={pr.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="small ghost"
+                      style={{ textDecoration: 'none', color: 'var(--accent)', whiteSpace: 'nowrap', flex: 'none' }}
+                      title="在代码托管平台中打开"
+                    >
+                      ↗ 打开平台
+                    </a>
                   </div>
-                  <div>创建者: {pr.author}</div>
-                  <div>创建时间: {fmtTime(pr.createdAt)}</div>
-                  {pr.mergedAt && <div>合并时间: {fmtTime(pr.mergedAt)}</div>}
+                  <div className="pr-meta">
+                    <span className="row" style={{ gap: 4 }}>
+                      分支:
+                      <code className="mono small" style={{ color: 'var(--text)' }}>{pr.headBranch}</code>
+                      <span>→</span>
+                      <code className="mono small" style={{ color: 'var(--accent)' }}>{pr.baseBranch}</code>
+                    </span>
+                    <span>创建者: {pr.author}</span>
+                    <span>创建时间: {fmtTime(pr.createdAt)}</span>
+                    {pr.mergedAt && <span>合并时间: {fmtTime(pr.mergedAt)}</span>}
+                  </div>
                 </div>
 
-                {pr.body && <div className="pr-body">{pr.body}</div>}
-
-                {isOpen && (
-                  <div className="row pr-actions" style={{ gap: 8, alignItems: 'center' }}>
-                    <span className="small muted">合并方式:</span>
-                    <select
-                      className="sm"
-                      style={{ height: 26, fontSize: 12, width: 210, flex: 'none' }}
-                      value={mergeMethods[pr.number] || 'squash'}
-                      onChange={(e) =>
-                        setMergeMethods((prev) => ({
-                          ...prev,
-                          [pr.number]: e.target.value as 'squash' | 'merge' | 'rebase',
-                        }))
-                      }
-                    >
-                      <option value="squash">Squash and merge (推荐)</option>
-                      <option value="merge">Create a merge commit</option>
-                      <option value="rebase">Rebase and merge</option>
-                    </select>
-                    <button
-                      className="primary sm"
-                      disabled={mergeMut.isPending}
-                      onClick={() => handleMerge(pr)}
-                      title="合并此 PR，并刷新镜像/尝试快进本地目标分支"
-                    >
-                      {mergeMut.isPending ? '合并中…' : '⚡ 合并并刷新本地'}
-                    </button>
-                    <button
-                      className="danger sm"
-                      disabled={closeMut.isPending}
-                      onClick={() => handleClose(pr)}
-                      title="关闭此 Pull Request"
-                    >
-                      关闭 PR
-                    </button>
-                  </div>
-                )}
+                <div className={`pr-body${pr.body ? '' : ' dim'}`} title={pr.body || ''}>
+                  {pr.body || '无描述'}
+                </div>
               </div>
             );
           })}

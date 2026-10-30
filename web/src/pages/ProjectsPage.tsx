@@ -13,6 +13,13 @@ export default function ProjectsPage() {
   const qc = useQueryClient();
   const nav = useNavigate();
   const projects = useQuery({ queryKey: qk.projects, queryFn: api.projects });
+  const [filter, setFilter] = useState('');
+  const needle = filter.trim().toLowerCase();
+  const filteredProjects = (projects.data ?? []).filter((p) => {
+    if (!needle) return true;
+    const repos = (p.repos ?? []).map((r) => r.name).join(' ');
+    return `${p.name} ${p.description ?? ''} ${repos}`.toLowerCase().includes(needle);
+  });
 
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
@@ -114,8 +121,29 @@ export default function ProjectsPage() {
           还没有项目，可以点击右上角“从本地目录导入”直接选择本地单仓或多仓目录并自动解析 Git 信息。
         </div>
       )}
+      <div className="row mb" style={{ gap: 8 }}>
+        <input
+          className="sm"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="按项目名 / 描述 / 仓库筛选…"
+          aria-label="按项目筛选"
+          style={{ maxWidth: 360 }}
+        />
+        {filter && (
+          <button className="ghost sm" onClick={() => setFilter('')} title="清除筛选">
+            ✕ 清除
+          </button>
+        )}
+        <span className="small dim">
+          {needle ? `${filteredProjects.length} / ${projects.data?.length ?? 0} 个项目` : `共 ${projects.data?.length ?? 0} 个项目`}
+        </span>
+      </div>
+      {projects.data && projects.data.length > 0 && filteredProjects.length === 0 && (
+        <div className="panel empty">没有匹配的项目。清空筛选条件可查看全部。</div>
+      )}
       <div className="project-grid">
-        {projects.data?.map((p) => (
+        {filteredProjects.map((p) => (
           <div
             key={p.id}
             className="panel project-card"

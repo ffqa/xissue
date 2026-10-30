@@ -162,8 +162,7 @@ type AgentDriver interface {
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Backlog
-    Backlog --> Todo
+    [*] --> Todo
     Todo --> Running: 指派 Agent
     Running --> Review: 执行完成
     Running --> Failed: 出错 / 超时
@@ -172,7 +171,7 @@ stateDiagram-v2
     Review --> PR_Open: 提 PR / 直接提交
     PR_Open --> Running: CI 失败自动修复（可选）
     PR_Open --> Done: 合并
-    Done --> [*]
+    Done --> [*]: archived_at 标记归档
 ```
 
 **审查页（核心体验）**：一屏显示以下内容。

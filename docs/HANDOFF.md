@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.5.16` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.6.0` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.5.16`
+- **最新发布版本**: `0.6.0`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -470,6 +470,13 @@
 - **项目列表**: 新增按项目名、描述、仓库名筛选；显示匹配数/总数，支持清除；无匹配时给出提示。
 - **响应式**: PR 卡片在 900px 以下退化为单栏，操作仍保留。
 - **验证**: tsc/vitest 通过；浏览器验证项目筛选；PR 布局由真实 DOM 检查。
+
+### 2.54 移除 Backlog，Done 自动归档（0.6.0）
+
+- **移除 Backlog**: 状态集合只保留 `todo/running/review/pr_open/done/failed`；删除 Backlog 页签、面板、拖拽排序 API 与 `backlogRank`。启动迁移把旧 `backlog` 行改为 `todo`，不丢数据。
+- **Done 自动归档**: `issues.archived_at` 记录归档时间；`runner.doneArchiveDays`（默认 30，0=不归档）在后台启动后 30 秒及每 6 小时把 `done` 且超过保留期的 Issue 标记归档；不删除数据，不改变 `status`，重新打开（状态改回 Todo/Running 等）会清除归档标记。
+- **UI**: Done 列只显示未归档；「已完成 / 归档」弹窗分两个页签，归档页显示归档时间，可搜索/批量删除。
+- **验证**: store 归档测试（首次归档、幂等、重新打开清除）、Go 测试、tsc/vitest、真实 API 列表字段。
 
 ## 3. 核心架构与关键代码索引
 

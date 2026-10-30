@@ -303,8 +303,6 @@ export const api = {
     },
   ) => post<Issue>(`/api/projects/${projectId}/issues`, b),
   issue: (id: number) => get<Issue>(`/api/issues/${id}`),
-  reorderBacklog: (projectId: number, ids: number[]) =>
-    post<{ ok: boolean }>(`/api/projects/${projectId}/backlog/reorder`, { ids }),
   updateIssue: (id: number, b: { title?: string; body?: string; labels?: string[]; priority?: IssuePriority; status?: IssueStatus }) =>
     patch<Issue>(`/api/issues/${id}`, b),
   issueEvents: (issueId: number) => get<IssueEvent[]>(`/api/issues/${issueId}/events`),

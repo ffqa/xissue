@@ -82,6 +82,10 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schemaSQL); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	// Backlog was removed: keep old rows visible in the normal todo lane.
+	if _, err := db.Exec(`UPDATE issues SET status='todo' WHERE status='backlog'`); err != nil {
+		return nil, fmt.Errorf("migrate backlog: %w", err)
+	}
 	// Incremental column migrations for existing databases.
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN model TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN target_branch TEXT NOT NULL DEFAULT ''`)
@@ -89,8 +93,8 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN pr_state TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN change_record TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`)
+	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN archived_at TEXT`)
 	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN parent_issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL`)
-	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN backlog_rank INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN dev_mode TEXT NOT NULL DEFAULT 'single_main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN target_branch TEXT NOT NULL DEFAULT 'main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1`)
@@ -525,7 +529,7 @@ func (s *Store) DeleteRepo(ctx context.Context, projectID, repoID int64) error {
 
 // ---------- Issues ----------
 
-const issueCols = `i.id, i.project_id, i.key, i.source, i.repo_id, i.parent_issue_id, i.remote_number, i.remote_url, i.title, i.body, i.labels, i.priority, i.backlog_rank, i.status, i.created_at, i.updated_at,
+const issueCols = `i.id, i.project_id, i.key, i.source, i.repo_id, i.parent_issue_id, i.remote_number, i.remote_url, i.title, i.body, i.labels, i.priority, i.status, i.created_at, i.updated_at, i.archived_at,
   (SELECT r.id FROM runs r WHERE r.issue_id=i.id ORDER BY r.id DESC LIMIT 1),
   (SELECT r.status FROM runs r WHERE r.issue_id=i.id ORDER BY r.id DESC LIMIT 1),
   COALESCE((SELECT r.pr_url FROM runs r WHERE r.issue_id=i.id AND r.pr_url != '' ORDER BY r.id DESC LIMIT 1), ''),
@@ -535,14 +539,15 @@ func scanIssue(sc interface{ Scan(...any) error }) (domain.Issue, error) {
 	var i domain.Issue
 	var repoID, parentID, num, runID sql.NullInt64
 	var labels, c, u string
-	var runStatus sql.NullString
-	err := sc.Scan(&i.ID, &i.ProjectID, &i.Key, &i.Source, &repoID, &parentID, &num, &i.RemoteURL, &i.Title, &i.Body, &labels, &i.Priority, &i.BacklogRank, &i.Status, &c, &u, &runID, &runStatus, &i.PRURL, &i.PRState)
+	var runStatus, archivedAt sql.NullString
+	err := sc.Scan(&i.ID, &i.ProjectID, &i.Key, &i.Source, &repoID, &parentID, &num, &i.RemoteURL, &i.Title, &i.Body, &labels, &i.Priority, &i.Status, &c, &u, &archivedAt, &runID, &runStatus, &i.PRURL, &i.PRState)
 	if err != nil {
 		return i, err
 	}
 	i.RepoID, i.ParentIssueID, i.RemoteNumber, i.ActiveRunID = nullInt(repoID), nullInt(parentID), nullInt(num), nullInt(runID)
 	i.Awaiting = runStatus.String == string(domain.RunAwaiting)
 	i.CreatedAt, i.UpdatedAt = parseTime(c), parseTime(u)
+	i.ArchivedAt = parseTimePtr(archivedAt)
 	_ = json.Unmarshal([]byte(labels), &i.Labels)
 	if i.Labels == nil {
 		i.Labels = []string{}
@@ -732,6 +737,9 @@ func (s *Store) UpdateIssue(ctx context.Context, id int64, p IssuePatch) (*domai
 	if p.Status != nil && !domain.ValidIssueStatus(*p.Status) {
 		return nil, fmt.Errorf("invalid status %q", *p.Status)
 	}
+	if p.Status != nil && *p.Status != domain.IssueDone {
+		sets = append(sets, "archived_at=NULL")
+	}
 	if p.Priority != nil && !domain.ValidIssuePriority(*p.Priority) {
 		return nil, fmt.Errorf("invalid priority %q", *p.Priority)
 	}
@@ -790,19 +798,17 @@ func (s *Store) ListSubIssues(ctx context.Context, parentID int64) ([]domain.Iss
 	return out, rows.Err()
 }
 
-func (s *Store) ReorderBacklog(ctx context.Context, projectID int64, ids []int64) error {
-	tx, err := s.db.BeginTx(ctx, nil)
+// ArchiveDoneIssuesBefore marks completed issues older than cutoff as archived.
+// The done status and updated_at are preserved; archived_at is the only change.
+func (s *Store) ArchiveDoneIssuesBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE issues SET archived_at=? WHERE status=? AND archived_at IS NULL AND updated_at < ?`,
+		now(), domain.IssueDone, cutoff.UTC().Format(time.RFC3339Nano))
 	if err != nil {
-		return err
+		return 0, err
 	}
-	defer tx.Rollback()
-	for rank, id := range ids {
-		if _, err := tx.ExecContext(ctx, `UPDATE issues SET backlog_rank=?, updated_at=? WHERE id=? AND project_id=?`,
-			rank, now(), id, projectID); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
 
 func (s *Store) AddIssueEvent(ctx context.Context, issueID int64, kind, actor, message string) error {

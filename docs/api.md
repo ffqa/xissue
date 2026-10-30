@@ -69,7 +69,7 @@ interface Project {
   createdAt: string; updatedAt: string;
 }
 
-type IssueStatus = "backlog" | "todo" | "running" | "review" | "pr_open" | "done" | "failed";
+type IssueStatus = "todo" | "running" | "review" | "pr_open" | "done" | "failed";
 type IssuePriority = "low" | "normal" | "high" | "urgent";
 
 interface Issue {
@@ -83,11 +83,11 @@ interface Issue {
   title: string; body: string;  // body 为 Markdown
   labels: string[];
   priority: IssuePriority;  // 默认 normal
-  backlogRank: number;       // Backlog 手动排序
   status: IssueStatus;
   activeRunId: number | null;   // 最近一次 Run
   awaiting: boolean;            // 最近一次 Run 正在等待权限审批
   createdAt: string; updatedAt: string;
+  archivedAt?: string | null;  // done 超过 doneArchiveDays 后自动标记，不改变 status
   syncError?: string;           // 仅创建响应：远程同步失败原因，本地 Issue 仍保留
 }
 
@@ -195,7 +195,6 @@ interface RunEvent {
 | POST | `/api/mcp` | MCP Streamable HTTP JSON-RPC（`Accept: application/json` 或 `text/event-stream`）；无状态，所有客户端共享一个服务 |
 | DELETE | `/api/mcp` | 无状态 MCP 会话终止，返回 204 |
 | GET | `/api/projects/{id}/issues` | `Issue[]` |
-| POST | `/api/projects/{id}/backlog/reorder` | `{ ids: number[] }` 写入 Backlog 顺序 |
 | POST | `/api/projects/{id}/issues` | `{ title, body, labels?, priority?, repoId?, parentId?, syncRemote? }` → `Issue`。`syncRemote=true` 且仓库支持 Issue 时，后端创建远程 Issue 并把 `source/key/remoteNumber/remoteUrl` 绑定到本地行；失败返回 201 + `syncError`，本地 Issue 保留 |
 | GET / PATCH | `/api/issues/{id}` | PATCH `{ title?, body?, labels?, priority?, status? }` |
 | POST | `/api/issues/{id}/publish` | `{ repoId }` 把本地 Issue 发布到平台 → `Issue`；`repoId` 必须属于 Issue 所在项目，否则 400 |

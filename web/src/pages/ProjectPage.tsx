@@ -12,7 +12,6 @@ import { LocalDirPickerModal } from '../components/LocalDirPicker';
 import { CherryPickModal } from '../components/CherryPickModal';
 import { PRModal } from '../components/PRModal';
 import { BranchCleanupModal } from '../components/BranchCleanupModal';
-import { BacklogPanel } from '../components/BacklogPanel';
 import { CommitsModal } from '../components/CommitsModal';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
@@ -66,6 +65,8 @@ interface StageColumn {
   title: string;
   statuses: IssueStatus[];
 }
+
+type DoneTab = 'active' | 'archived';
 
 const WORKFLOW_COLUMNS: StageColumn[] = [
   {
@@ -147,13 +148,13 @@ export default function ProjectPage() {
   const [dragOverCol, setDragOverCol] = useState<StageColumn['id'] | null>(null);
 
   const [doneModalOpen, setDoneModalOpen] = useState(false);
+  const [doneTab, setDoneTab] = useState<DoneTab>('active');
   const [selectedDoneIds, setSelectedDoneIds] = useState<number[]>([]);
   const [doneSearchText, setDoneSearchText] = useState('');
 
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [prModalOpen, setPrModalOpen] = useState(false);
   const [branchCleanupOpen, setBranchCleanupOpen] = useState(false);
-  const [projectView, setProjectView] = useState<'board' | 'backlog'>('board');
   const [commitsModal, setCommitsModal] = useState<{ repoId?: number; branch?: string; sha?: string } | null>(null);
   const [knowledgeOpen, setKnowledgeOpen] = useState(false);
   const [readmeOpen, setReadmeOpen] = useState(false);
@@ -535,8 +536,10 @@ export default function ProjectPage() {
     setSearch(next, { replace: true });
   }, [search, watches, setSearch]);
 
-  const doneIssues = allIssues.filter((it) => it.status === 'done');
-  const filteredDoneIssues = doneIssues.filter((it) => {
+  const doneIssues = allIssues.filter((it) => it.status === 'done' && !it.archivedAt);
+  const archivedIssues = allIssues.filter((it) => it.status === 'done' && it.archivedAt);
+  const historyIssues = doneTab === 'archived' ? archivedIssues : doneIssues;
+  const filteredDoneIssues = historyIssues.filter((it) => {
     if (!doneSearchText.trim()) return true;
     const q = doneSearchText.toLowerCase();
     const repoName = (p?.repos ?? []).find((r) => r.id === it.repoId)?.name || '';
@@ -610,10 +613,6 @@ export default function ProjectPage() {
               </div>
             );
           })()}
-        </div>
-        <div className="row" style={{ gap: 2 }}>
-          <button className={projectView === 'board' ? 'primary' : 'ghost'} onClick={() => setProjectView('board')}>看板</button>
-          <button className={projectView === 'backlog' ? 'primary' : 'ghost'} onClick={() => setProjectView('backlog')}>Backlog</button>
         </div>
         <button
           className="ghost"
@@ -942,14 +941,13 @@ export default function ProjectPage() {
       </div>
       </div>
 
-      {projectView === 'backlog' ? (
-        <BacklogPanel projectId={id} issues={allIssues} />
-      ) : (
       <>
       {/* 4 列全宽工作流看板：撑满全屏、外框固定、内部纵向滚动 */}
       <div className="board">
         {WORKFLOW_COLUMNS.map((col) => {
-          const list = allIssues.filter((it) => col.statuses.includes(it.status));
+          const list = allIssues.filter(
+            (it) => col.statuses.includes(it.status) && !(col.id === 'done' && it.archivedAt),
+          );
           const isDoneCol = col.id === 'done';
           const displayList = isDoneCol ? list.slice(0, 10) : list;
           const isOver = dragOverCol === col.id;
@@ -1083,8 +1081,7 @@ export default function ProjectPage() {
                           <span className="badge" key={label}>{label}</span>
                         ))}
                         {(it.labels?.length ?? 0) > 3 && <span className="dim">+{it.labels.length - 3}</span>}
-                        {((col.id === 'todo' && it.status === 'backlog') ||
-                          (col.id === 'running' && it.status === 'failed') ||
+                        {((col.id === 'running' && it.status === 'failed') ||
                           (col.id === 'review' && it.status === 'pr_open')) && (
                           <span className="issue-card-status">{ISSUE_STATUS_LABEL[it.status]}</span>
                         )}
@@ -1113,7 +1110,6 @@ export default function ProjectPage() {
         })}
       </div>
       </>
-      )}
 
       {repoOpen && (
         <Modal
@@ -1318,17 +1314,18 @@ export default function ProjectPage() {
 
       {doneModalOpen && (
         <Modal
-          title={`✅ 已完成任务历史与批量管理 (${doneIssues.length})`}
+          title={`✅ 已完成 / 归档 (${doneIssues.length} / ${archivedIssues.length})`}
           size="xl"
           onClose={() => {
             setDoneModalOpen(false);
+            setDoneTab('active');
             setSelectedDoneIds([]);
             setDoneSearchText('');
           }}
           footer={
             <div className="row" style={{ width: '100%', justifyContent: 'space-between' }}>
               <div className="small muted">
-                已勾选 <b>{selectedDoneIds.length}</b> / {filteredDoneIssues.length} 项（总计 {doneIssues.length} 条已完成）
+                已勾选 <b>{selectedDoneIds.length}</b> / {filteredDoneIssues.length} 项（{doneTab === 'archived' ? '归档' : '已完成'}共 {historyIssues.length} 条）
               </div>
               <div className="row" style={{ gap: 8 }}>
                 {selectedDoneIds.length > 0 && (
@@ -1353,6 +1350,7 @@ export default function ProjectPage() {
                 <button
                   onClick={() => {
                     setDoneModalOpen(false);
+                    setDoneTab('active');
                     setSelectedDoneIds([]);
                     setDoneSearchText('');
                   }}
@@ -1364,10 +1362,30 @@ export default function ProjectPage() {
           }
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div className="row" style={{ gap: 6 }}>
+              <button
+                className={`sm ${doneTab === 'active' ? 'primary' : 'ghost'}`}
+                onClick={() => {
+                  setDoneTab('active');
+                  setSelectedDoneIds([]);
+                }}
+              >
+                已完成 ({doneIssues.length})
+              </button>
+              <button
+                className={`sm ${doneTab === 'archived' ? 'primary' : 'ghost'}`}
+                onClick={() => {
+                  setDoneTab('archived');
+                  setSelectedDoneIds([]);
+                }}
+              >
+                已归档 ({archivedIssues.length})
+              </button>
+            </div>
             <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
               <input
                 style={{ flex: 1, minWidth: 240 }}
-                placeholder="按标题、Key、仓库名搜索已完成任务…"
+                placeholder={doneTab === 'archived' ? '按标题、Key、仓库名搜索已归档任务…' : '按标题、Key、仓库名搜索已完成任务…'}
                 value={doneSearchText}
                 onChange={(e) => setDoneSearchText(e.target.value)}
                 autoFocus
@@ -1398,7 +1416,9 @@ export default function ProjectPage() {
             <div style={{ maxHeight: '60vh', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
               {filteredDoneIssues.length === 0 ? (
                 <div className="empty small" style={{ padding: 36 }}>
-                  {doneSearchText ? '未找到符合条件的已完成任务' : '暂无已完成任务'}
+                  {doneSearchText
+                    ? (doneTab === 'archived' ? '未找到符合条件的已归档任务' : '未找到符合条件的已完成任务')
+                    : (doneTab === 'archived' ? '暂无已归档任务' : '暂无已完成任务')}
                 </div>
               ) : (
                 <table className="history-table">
@@ -1414,7 +1434,7 @@ export default function ProjectPage() {
                       <th style={{ width: 110 }}>标识 Key</th>
                       <th>任务标题</th>
                       <th style={{ width: 140 }}>关联仓库</th>
-                      <th style={{ width: 150 }}>完成时间</th>
+                      <th style={{ width: 150 }}>{doneTab === 'archived' ? '归档时间' : '完成时间'}</th>
                       <th style={{ width: 80, textAlign: 'right' }}>操作</th>
                     </tr>
                   </thead>
@@ -1450,7 +1470,7 @@ export default function ProjectPage() {
                             <span className="small muted">📦 {repoName}</span>
                           </td>
                           <td>
-                            <span className="small dim">{fmtTime(it.updatedAt)}</span>
+                            <span className="small dim">{fmtTime(doneTab === 'archived' && it.archivedAt ? it.archivedAt : it.updatedAt)}</span>
                           </td>
                           <td style={{ textAlign: 'right' }}>
                             <button

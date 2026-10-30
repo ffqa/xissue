@@ -41,6 +41,7 @@ type RunnerConfig struct {
 	IdleTimeoutSec         int  `yaml:"idleTimeoutSec"`         // stop idle agent process while waiting for review
 	EventRetentionDays     int  `yaml:"eventRetentionDays"`     // 0 = keep run_events forever
 	WorkspaceRetentionDays int  `yaml:"workspaceRetentionDays"` // 0 = keep run workdirs forever
+	DoneArchiveDays        int  `yaml:"doneArchiveDays"`        // move done issues older than N days to archive; 0 = keep forever
 }
 
 // MonitorConfig controls branch and PR background monitoring and external notifications.
@@ -321,6 +322,7 @@ func Default() *Config {
 			IdleTimeoutSec:         600,
 			EventRetentionDays:     7,
 			WorkspaceRetentionDays: 7,
+			DoneArchiveDays:        30,
 		},
 		Monitor: MonitorConfig{
 			Enabled:         true,
@@ -381,6 +383,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Runner.EventRetentionDays < 0 {
 		cfg.Runner.EventRetentionDays = 0
+	}
+	if cfg.Runner.DoneArchiveDays < 0 {
+		cfg.Runner.DoneArchiveDays = 0
 	}
 	if cfg.Runner.WorkspaceRetentionDays < 0 {
 		cfg.Runner.WorkspaceRetentionDays = 0

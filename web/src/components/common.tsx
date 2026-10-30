@@ -107,7 +107,6 @@ export function fmtTime(s: string | null | undefined) {
 }
 
 export const ISSUE_STATUS_LABEL: Record<string, string> = {
-  backlog: 'Backlog',
   todo: 'Todo',
   running: 'Running',
   review: 'Review',

@@ -13,8 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xpier/xissue/internal/store"
-
 	"github.com/xpier/xissue/internal/domain"
 )
 
@@ -289,34 +287,6 @@ func TestIssuePRLinkManualAssociation(t *testing.T) {
 	list, _ = st.ListIssuePRLinks(t.Context(), issue.ID)
 	if len(list) != 0 {
 		t.Fatalf("links remain: %+v", list)
-	}
-}
-
-func TestBacklogReorder(t *testing.T) {
-	srv, st, _ := newTestServer(t)
-	proj, _ := st.CreateProject(t.Context(), "Backlog", "")
-	a, _ := st.CreateLocalIssue(t.Context(), proj.ID, "a", "", nil)
-	b, _ := st.CreateLocalIssue(t.Context(), proj.ID, "b", "", nil)
-	c, _ := st.CreateLocalIssue(t.Context(), proj.ID, "c", "", nil)
-	backlog := domain.IssueBacklog
-	for _, issue := range []*domain.Issue{a, b, c} {
-		if _, err := st.UpdateIssue(t.Context(), issue.ID, store.IssuePatch{Status: &backlog}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	w := doJSON(t, srv, http.MethodPost, "/api/projects/"+itoa(proj.ID)+"/backlog/reorder", map[string]any{
-		"ids": []int64{c.ID, a.ID, b.ID},
-	})
-	if w.Code != http.StatusOK {
-		t.Fatalf("reorder: %d %s", w.Code, w.Body.String())
-	}
-	ranks := map[int64]int64{}
-	for _, issue := range []*domain.Issue{c, a, b} {
-		got, _ := st.GetIssue(t.Context(), issue.ID)
-		ranks[got.ID] = got.BacklogRank
-	}
-	if ranks[c.ID] != 0 || ranks[a.ID] != 1 || ranks[b.ID] != 2 {
-		t.Fatalf("ranks = %+v", ranks)
 	}
 }
 

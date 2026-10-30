@@ -123,7 +123,6 @@ type PluginInfo struct {
 type IssueStatus string
 
 const (
-	IssueBacklog IssueStatus = "backlog"
 	IssueTodo    IssueStatus = "todo"
 	IssueRunning IssueStatus = "running"
 	IssueReview  IssueStatus = "review"
@@ -134,7 +133,7 @@ const (
 
 func ValidIssueStatus(s IssueStatus) bool {
 	switch s {
-	case IssueBacklog, IssueTodo, IssueRunning, IssueReview, IssuePROpen, IssueDone, IssueFailed:
+	case IssueTodo, IssueRunning, IssueReview, IssuePROpen, IssueDone, IssueFailed:
 		return true
 	}
 	return false
@@ -192,7 +191,6 @@ type Issue struct {
 	Body          string        `json:"body"`
 	Labels        []string      `json:"labels"`
 	Priority      IssuePriority `json:"priority"`
-	BacklogRank   int64         `json:"backlogRank"`
 	Status        IssueStatus   `json:"status"`
 	ActiveRunID   *int64        `json:"activeRunId"`
 	Awaiting      bool          `json:"awaiting"`
@@ -200,6 +198,7 @@ type Issue struct {
 	PRState       string        `json:"prState"` // "" | "open" | "merged" | "closed"
 	CreatedAt     time.Time     `json:"createdAt"`
 	UpdatedAt     time.Time     `json:"updatedAt"`
+	ArchivedAt    *time.Time    `json:"archivedAt,omitempty"`
 	SyncError     string        `json:"syncError,omitempty"` // transient response field, not persisted
 }
 

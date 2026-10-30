@@ -155,7 +155,7 @@ export interface PluginConfigFile {
   path: string;
 }
 
-export type IssueStatus = 'backlog' | 'todo' | 'running' | 'review' | 'pr_open' | 'done' | 'failed';
+export type IssueStatus = 'todo' | 'running' | 'review' | 'pr_open' | 'done' | 'failed';
 export type IssuePriority = 'low' | 'normal' | 'high' | 'urgent';
 
 export const ISSUE_PRIORITIES: { id: IssuePriority; label: string }[] = [
@@ -165,7 +165,7 @@ export const ISSUE_PRIORITIES: { id: IssuePriority; label: string }[] = [
   { id: 'urgent', label: '紧急' },
 ];
 
-export const ISSUE_STATUSES: IssueStatus[] = ['backlog', 'todo', 'running', 'review', 'pr_open', 'done', 'failed'];
+export const ISSUE_STATUSES: IssueStatus[] = ['todo', 'running', 'review', 'pr_open', 'done', 'failed'];
 
 export interface Issue {
   id: number;
@@ -180,7 +180,6 @@ export interface Issue {
   body: string;
   labels: string[];
   priority: IssuePriority;
-  backlogRank: number;
   status: IssueStatus;
   activeRunId: number | null;
   awaiting: boolean;
@@ -188,6 +187,7 @@ export interface Issue {
   prState: string;
   createdAt: string;
   updatedAt: string;
+  archivedAt?: string;
   syncError?: string;
 }
 

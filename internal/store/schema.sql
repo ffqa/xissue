@@ -42,10 +42,10 @@ CREATE TABLE IF NOT EXISTS issues (
     body          TEXT NOT NULL DEFAULT '',
     labels        TEXT NOT NULL DEFAULT '[]',
     priority      TEXT NOT NULL DEFAULT 'normal',
-    backlog_rank  INTEGER NOT NULL DEFAULT 0,
     status        TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
+    archived_at   TEXT,
     UNIQUE(project_id, key)
 );
 

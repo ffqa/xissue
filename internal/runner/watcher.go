@@ -627,6 +627,7 @@ func (r *Runner) startWatcherLoop() {
 		ctx, cancel := context.WithTimeout(r.ctx, 10*time.Minute)
 		defer cancel()
 		_, _ = r.PruneRunStorageNow(ctx)
+		_, _ = r.ArchiveDoneIssuesNow(ctx)
 	}()
 
 	for {
@@ -652,6 +653,7 @@ func (r *Runner) startWatcherLoop() {
 		case <-retentionTicker.C:
 			ctx, cancel := context.WithTimeout(r.ctx, 10*time.Minute)
 			_, _ = r.PruneRunStorageNow(ctx)
+			_, _ = r.ArchiveDoneIssuesNow(ctx)
 			cancel()
 		}
 	}

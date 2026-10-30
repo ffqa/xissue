@@ -24,6 +24,7 @@ interface PluginMessage {
   kind?: 'info' | 'success' | 'error';
   path?: string;
   height?: number;
+  width?: number;
   title?: string;
   requestId?: string;
   prompt?: string;
@@ -58,6 +59,7 @@ export function PluginFrame({
   // bypassed by a slow or failed /api/settings request.
   const sandboxed = settingsQ.data?.pluginUISandbox ?? true;
   const [frameHeight, setFrameHeight] = useState<number | string>(height);
+  const [frameWidth, setFrameWidth] = useState<number | string>(width);
   const [openModal, setOpenModal] = useState<{ title: string; height: number } | null>(null);
   const contextRef = useRef(context);
   contextRef.current = context;
@@ -111,8 +113,10 @@ export function PluginFrame({
           qc.invalidateQueries({ queryKey: qk.projects });
           break;
         case 'xissue:resize': {
-          const next = Number(data.height);
-          if (Number.isFinite(next)) setFrameHeight(Math.max(80, Math.min(2400, next)));
+          const nextWidth = Number(data.width);
+          if (Number.isFinite(nextWidth)) setFrameWidth(Math.max(60, Math.min(800, nextWidth)));
+          const nextHeight = Number(data.height);
+          if (Number.isFinite(nextHeight)) setFrameHeight(Math.max(80, Math.min(2400, nextHeight)));
           break;
         }
         case 'xissue:open-modal': {
@@ -147,7 +151,7 @@ export function PluginFrame({
       referrerPolicy="no-referrer"
       onLoad={sendContext}
       style={{
-        width,
+        width: frameWidth,
         height: frameHeight,
         border: '1px solid var(--border)',
         borderRadius: 8,

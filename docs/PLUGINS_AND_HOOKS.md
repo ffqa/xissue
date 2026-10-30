@@ -154,12 +154,12 @@ ui:
 ```
 
 - 独立页面：`/plugins/<id>`，由顶栏「🧩 插件管理」中的「打开插件页面」进入；
-- 插槽：`project.header` / `project.page` / `project.toolbar` / `issue.actions` / `issue.page` / `issue.toolbar`，由宿主页面自动挂载同一 UI；`*.toolbar` 用于放一个紧凑按钮（默认 150×28），点击后可请求宿主打开弹窗；
+- 插槽：`project.header` / `project.page` / `project.toolbar` / `issue.actions` / `issue.page` / `issue.toolbar`，由宿主页面自动挂载同一 UI；`*.toolbar` 用于放一个紧凑按钮（宿主初始 150×28，插件可用 `xissue:resize{width}` 调整宽度），点击后可请求宿主打开弹窗；
 - 权限：插件是操作者自行安装的可信扩展。默认 iframe 与主应用同源、**不设置 sandbox**，可访问 `parent.document`、Cookie、localStorage、`fetch` 等主应用权限；`postMessage` 只是便捷桥，不是安全边界；
 - 全局开关：设置 → 通用 → 🧩 插件 UI →「插件 UI 沙盒模式」。默认关闭；开启后 iframe 使用 `sandbox="allow-scripts allow-forms allow-popups allow-downloads"`（不含 `allow-same-origin`），插件只能通过 `postMessage` 桥通信。配置字段为 `pluginUISandbox`（默认 `false`）；
 - 静态资源只从 `<plugin>/ui/` 提供（`GET /api/plugins/{id}/ui/{path...}`），后端拒绝 `..` 与符号链接逃逸；
 - `postMessage` 小桥：
-  - 插件 → 宿主：`xissue:ready`、`xissue:notify{kind,message}`、`xissue:open{path}`（仅接受 `/` 开头的站内路径）、`xissue:reload`、`xissue:resize{height}`、`xissue:open-modal{title,height}`、`xissue:close-modal`、`xissue:ai{requestId,prompt,agent?,model?}`；
+  - 插件 → 宿主：`xissue:ready`、`xissue:notify{kind,message}`、`xissue:open{path}`（仅接受 `/` 开头的站内路径）、`xissue:reload`、`xissue:resize{height?,width?}`、`xissue:open-modal{title,height}`、`xissue:close-modal`、`xissue:ai{requestId,prompt,agent?,model?}`；
   - 宿主 → 插件：`xissue:context{slot,modal,context}`；弹窗内 `modal=true`，插件可据此渲染完整面板而不是按钮；AI 请求返回 `xissue:ai-result{requestId,data|error}`；
   - 未开启沙盒时，插件可直接在同源 iframe 内操作宿主页面或调用 `/api/*`；开启后只能使用上述消息桥；
 - **插件 AI API**：宿主默认 Agent 可直接给插件使用，不需要插件自己探测 `/api/agents`：

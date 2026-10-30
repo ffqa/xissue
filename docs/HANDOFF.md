@@ -21,6 +21,10 @@
 
 ---
 
+> 发布纪律：每个 tag 必须先更新仓库根目录 `CHANGELOG.md` 对应版本；CI 的 `scripts/check-changelog.sh` 会阻止缺少条目的 release。GitHub Release 继续自动生成 commit 摘要，归档包会附带 `CHANGELOG.md`。
+
+---
+
 ## 2. 近期核心功能演进与改进
 
 ### 2.1 Git 监控交互精简与提交详情弹窗

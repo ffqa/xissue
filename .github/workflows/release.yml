@@ -9,7 +9,7 @@ on:
       tag:
         description: 'Release tag (e.g. v0.2.0)'
         required: true
-        default: 'v0.2.0'
+        default: 'v0.6.0'
 
 permissions:
   contents: write
@@ -24,6 +24,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Check changelog entry
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+        run: bash scripts/check-changelog.sh "$RELEASE_TAG"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -73,7 +78,7 @@ jobs:
             mkdir -p "${stage}/scripts" "${stage}/deploy"
 
             GOOS="${goos}" GOARCH="${goarch}" go build -trimpath -ldflags="-s -w" -o "${stage}/xissue${ext}" ./cmd/xissue
-            cp README.md "${stage}/"
+            cp README.md CHANGELOG.md "${stage}/"
             cp -r scripts/* "${stage}/scripts/" 2>/dev/null || true
             cp -r deploy/* "${stage}/deploy/" 2>/dev/null || true
 

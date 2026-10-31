@@ -4,6 +4,18 @@
 
 版本策略（0.x）：patch 用于兼容的修复/小功能，minor 用于破坏性变更（状态/API/数据结构），patch 号不要求连续填满。
 
+## [0.6.1] - 2026-10-31
+
+### Changed
+
+- 项目 Issue 列表默认只返回未归档条目；归档改为独立接口 `GET /api/projects/{id}/issues/archived`，支持 `q/limit/offset` 分页搜索，避免归档数据继续进入看板首屏。
+- Done/归档弹窗按需加载归档页；归档页支持服务端搜索与「加载更多」，删除后同时失效两套列表缓存。
+- 新增 `(project_id, archived_at, updated_at)` 与 `(project_id, status, updated_at)` 索引。
+
+### Fixed
+
+- 归档 Issue 不再出现在 Done 列，也不再随项目 Issue 列表全量传输。
+
 ## [0.6.0] - 2026-10-30
 
 ### Changed

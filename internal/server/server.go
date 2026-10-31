@@ -21,7 +21,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.6.0"
+const Version = "0.6.1"
 
 type Server struct {
 	cfg    *config.Config
@@ -239,6 +239,7 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /api/projects/{id}/issues", s.handleListIssues)
 	m.HandleFunc("POST /api/projects/{id}/issues", s.handleCreateIssue)
+	m.HandleFunc("GET /api/projects/{id}/issues/archived", s.handleListArchivedIssues)
 	m.HandleFunc("GET /api/issues/{id}", s.handleGetIssue)
 	m.HandleFunc("PATCH /api/issues/{id}", s.handleUpdateIssue)
 	m.HandleFunc("DELETE /api/issues/{id}", s.handleDeleteIssue)

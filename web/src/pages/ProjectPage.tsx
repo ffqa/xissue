@@ -151,6 +151,8 @@ export default function ProjectPage() {
   const [doneTab, setDoneTab] = useState<DoneTab>('active');
   const [selectedDoneIds, setSelectedDoneIds] = useState<number[]>([]);
   const [doneSearchText, setDoneSearchText] = useState('');
+  const [archivedSearch, setArchivedSearch] = useState('');
+  const [archivedLimit, setArchivedLimit] = useState(100);
 
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
   const [prModalOpen, setPrModalOpen] = useState(false);
@@ -163,6 +165,7 @@ export default function ProjectPage() {
     mutationFn: (issueId: number) => api.deleteIssue(issueId),
     onSuccess: (_, issueId) => {
       qc.invalidateQueries({ queryKey: qk.issues(id) });
+      qc.invalidateQueries({ queryKey: ['archivedIssues', id] });
       setSelectedDoneIds((prev) => prev.filter((x) => x !== issueId));
       toast.success('已删除任务');
     },
@@ -173,6 +176,7 @@ export default function ProjectPage() {
     mutationFn: (ids: number[]) => api.batchDeleteIssues(ids),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: qk.issues(id) });
+      qc.invalidateQueries({ queryKey: ['archivedIssues', id] });
       setSelectedDoneIds([]);
       toast.success(`已成功批量删除 ${r.deleted} 个已完成任务`);
     },
@@ -536,8 +540,25 @@ export default function ProjectPage() {
     setSearch(next, { replace: true });
   }, [search, watches, setSearch]);
 
+  useEffect(() => {
+    if (doneTab !== 'archived') return;
+    const timer = window.setTimeout(() => setArchivedSearch(doneSearchText), 250);
+    return () => window.clearTimeout(timer);
+  }, [doneSearchText, doneTab]);
+  useEffect(() => {
+    setArchivedLimit(100);
+  }, [archivedSearch, doneTab]);
+
+  const archivedQuery = doneTab === 'archived' ? archivedSearch : '';
+  const archivedQ = useQuery({
+    queryKey: qk.archivedIssues(id, archivedQuery, archivedLimit),
+    queryFn: () => api.archivedIssues(id, archivedQuery, archivedLimit),
+    enabled: doneModalOpen,
+    staleTime: 15_000,
+  });
   const doneIssues = allIssues.filter((it) => it.status === 'done' && !it.archivedAt);
-  const archivedIssues = allIssues.filter((it) => it.status === 'done' && it.archivedAt);
+  const archivedIssues = archivedQ.data?.issues ?? [];
+  const archivedTotal = archivedQ.data?.total ?? 0;
   const historyIssues = doneTab === 'archived' ? archivedIssues : doneIssues;
   const filteredDoneIssues = historyIssues.filter((it) => {
     if (!doneSearchText.trim()) return true;
@@ -1314,18 +1335,19 @@ export default function ProjectPage() {
 
       {doneModalOpen && (
         <Modal
-          title={`✅ 已完成 / 归档 (${doneIssues.length} / ${archivedIssues.length})`}
+          title={`✅ 已完成 / 归档 (${doneIssues.length} / ${archivedQ.isLoading ? '…' : archivedTotal})`}
           size="xl"
           onClose={() => {
             setDoneModalOpen(false);
             setDoneTab('active');
             setSelectedDoneIds([]);
             setDoneSearchText('');
+            setArchivedSearch('');
           }}
           footer={
             <div className="row" style={{ width: '100%', justifyContent: 'space-between' }}>
               <div className="small muted">
-                已勾选 <b>{selectedDoneIds.length}</b> / {filteredDoneIssues.length} 项（{doneTab === 'archived' ? '归档' : '已完成'}共 {historyIssues.length} 条）
+                已勾选 <b>{selectedDoneIds.length}</b> / {filteredDoneIssues.length} 项（{doneTab === 'archived' ? '归档' : '已完成'}共 {doneTab === 'archived' ? archivedTotal : historyIssues.length} 条）
               </div>
               <div className="row" style={{ gap: 8 }}>
                 {selectedDoneIds.length > 0 && (
@@ -1353,6 +1375,7 @@ export default function ProjectPage() {
                     setDoneTab('active');
                     setSelectedDoneIds([]);
                     setDoneSearchText('');
+                    setArchivedSearch('');
                   }}
                 >
                   关闭
@@ -1379,7 +1402,7 @@ export default function ProjectPage() {
                   setSelectedDoneIds([]);
                 }}
               >
-                已归档 ({archivedIssues.length})
+                已归档 ({archivedQ.isLoading ? '…' : archivedTotal})
               </button>
             </div>
             <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
@@ -1493,6 +1516,17 @@ export default function ProjectPage() {
                 </table>
               )}
             </div>
+            {doneTab === 'archived' && archivedTotal > archivedIssues.length && (
+              <div className="row" style={{ justifyContent: 'center' }}>
+                <button
+                  className="sm ghost"
+                  disabled={archivedQ.isFetching}
+                  onClick={() => setArchivedLimit((n) => n + 100)}
+                >
+                  {archivedQ.isFetching ? '加载中…' : `加载更多 (${archivedIssues.length}/${archivedTotal})`}
+                </button>
+              </div>
+            )}
           </div>
         </Modal>
       )}

@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.6.0` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.6.1` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.6.0`
+- **最新发布版本**: `0.6.1`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -481,6 +481,13 @@
 - **Done 自动归档**: `issues.archived_at` 记录归档时间；`runner.doneArchiveDays`（默认 30，0=不归档）在后台启动后 30 秒及每 6 小时把 `done` 且超过保留期的 Issue 标记归档；不删除数据，不改变 `status`，重新打开（状态改回 Todo/Running 等）会清除归档标记。
 - **UI**: Done 列只显示未归档；「已完成 / 归档」弹窗分两个页签，归档页显示归档时间，可搜索/批量删除。
 - **验证**: store 归档测试（首次归档、幂等、重新打开清除）、Go 测试、tsc/vitest、真实 API 列表字段。
+
+### 2.55 归档 Issue 服务端分页（0.6.1）
+
+- **接口分层**: `GET /api/projects/{id}/issues` 只返回未归档 Issue；新增 `GET /api/projects/{id}/issues/archived?q=&limit=&offset=` 返回 `{issues,total}`，归档不再进入看板首屏。
+- **查询**: 归档搜索匹配标题/Key/仓库名，默认 100 条、上限 500；新增 `(project_id, archived_at, updated_at)` 和 `(project_id, status, updated_at)` 索引。
+- **前端**: Done 弹窗归档页按需查询，支持 250ms 搜索节流、加载更多、总数显示；删除后同时失效 active/archive 缓存。
+- **验证**: API 测试验证 active 列表排除归档、归档搜索分页与 `archivedAt`；真实浏览器验证 Done 列数量与归档页。
 
 ## 3. 核心架构与关键代码索引
 

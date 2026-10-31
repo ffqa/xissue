@@ -82,6 +82,8 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schemaSQL); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_issues_project_archived ON issues(project_id, archived_at, updated_at DESC)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_issues_project_status ON issues(project_id, status, updated_at DESC)`)
 	// Backlog was removed: keep old rows visible in the normal todo lane.
 	if _, err := db.Exec(`UPDATE issues SET status='todo' WHERE status='backlog'`); err != nil {
 		return nil, fmt.Errorf("migrate backlog: %w", err)
@@ -573,6 +575,63 @@ func (s *Store) ListIssues(ctx context.Context, projectID int64) ([]domain.Issue
 		out = append(out, i)
 	}
 	return out, rows.Err()
+}
+
+// ListActiveIssues returns non-archived issues for the board and issue pickers.
+func (s *Store) ListActiveIssues(ctx context.Context, projectID int64) ([]domain.Issue, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+issueCols+` FROM issues i WHERE i.project_id=? AND i.archived_at IS NULL ORDER BY i.updated_at DESC`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []domain.Issue{}
+	for rows.Next() {
+		i, err := scanIssue(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, i)
+	}
+	return out, rows.Err()
+}
+
+// ListArchivedIssues returns archived issues with optional search and paging.
+func (s *Store) ListArchivedIssues(ctx context.Context, projectID int64, query string, limit, offset int) ([]domain.Issue, int, error) {
+	where := `i.project_id=? AND i.archived_at IS NOT NULL`
+	args := []any{projectID}
+	if q := strings.TrimSpace(query); q != "" {
+		like := "%" + q + "%"
+		where += ` AND (i.title LIKE ? OR i.key LIKE ? OR COALESCE(r.name,'') LIKE ?)`
+		args = append(args, like, like, like)
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM issues i LEFT JOIN repos r ON r.id=i.repo_id WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	args = append(args, limit, offset)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+issueCols+` FROM issues i LEFT JOIN repos r ON r.id=i.repo_id WHERE `+where+` ORDER BY i.archived_at DESC, i.id DESC LIMIT ? OFFSET ?`, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	out := []domain.Issue{}
+	for rows.Next() {
+		i, err := scanIssue(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, i)
+	}
+	return out, total, rows.Err()
 }
 
 func (s *Store) GetIssue(ctx context.Context, id int64) (*domain.Issue, error) {

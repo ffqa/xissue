@@ -290,6 +290,10 @@ export const api = {
     get<CommitDetail>(`/api/repos/${repoId}/commits/${encodeURIComponent(sha)}`),
 
   issues: (projectId: number) => get<Issue[]>(`/api/projects/${projectId}/issues`),
+  archivedIssues: (projectId: number, q = '', limit = 100, offset = 0) =>
+    get<{ issues: Issue[]; total: number }>(
+      `/api/projects/${projectId}/issues/archived?${new URLSearchParams({ q, limit: String(limit), offset: String(offset) })}`,
+    ),
   createIssue: (
     projectId: number,
     b: {
@@ -411,6 +415,7 @@ export const qk = {
   repoCommits: (repoId: number, branch: string) => ['repoCommits', repoId, branch] as const,
   repoCommitDetail: (repoId: number, sha: string) => ['repoCommitDetail', repoId, sha] as const,
   issues: (projectId: number) => ['issues', projectId] as const,
+  archivedIssues: (projectId: number, q = '', limit = 100) => ['archivedIssues', projectId, q, limit] as const,
   issue: (id: number) => ['issue', id] as const,
   comments: (issueId: number) => ['comments', issueId] as const,
   issueEvents: (issueId: number) => ['issueEvents', issueId] as const,

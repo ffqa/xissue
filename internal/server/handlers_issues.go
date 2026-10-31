@@ -20,12 +20,27 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	list, err := s.st.ListIssues(r.Context(), projectID)
+	list, err := s.st.ListActiveIssues(r.Context(), projectID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleListArchivedIssues(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	list, total, err := s.st.ListArchivedIssues(r.Context(), projectID, r.URL.Query().Get("q"), limit, offset)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"issues": list, "total": total})
 }
 
 func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {

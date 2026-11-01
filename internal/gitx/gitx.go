@@ -671,6 +671,15 @@ func CherryPickAndPush(ctx context.Context, mirror, tempDir, newBranch, targetBa
 	return headSHA, subjects, nil
 }
 
+// identityArgs returns -c user.* overrides when dir has no git identity configured
+// (CI runners and fresh containers rarely do).
+func identityArgs(ctx context.Context, dir string) []string {
+	if email, _ := Run(ctx, dir, "config", "user.email"); strings.TrimSpace(email) != "" {
+		return nil
+	}
+	return []string{"-c", "user.name=xIssue", "-c", "user.email=xissue@localhost"}
+}
+
 // MergeBranchToTarget merges sourceBranch directly into targetBranch in a local repository.
 // Remote origins must use a PR or an explicit branch push; never write the target branch directly.
 func MergeBranchToTarget(ctx context.Context, wtDir, mirrorPath, remoteURL, sourceBranch, targetBranch, commitMsg string) (headSHA string, err error) {
@@ -705,7 +714,10 @@ func MergeBranchToTarget(ctx context.Context, wtDir, mirrorPath, remoteURL, sour
 	// Rebase onto the latest target first: parallel or sequential runs otherwise
 	// merge a stale base and trip the ancestor checks in the local repository.
 	if _, ferr := Run(ctx, wtDir, "fetch", "origin", targetBranch); ferr == nil {
-		if _, rerr := Run(ctx, wtDir, "rebase", "origin/"+targetBranch); rerr != nil {
+		// Rebase rewrites commits and therefore needs a committer identity; CI and
+		// fresh containers often have none, so fall back to the app identity.
+		rebaseArgs := append(identityArgs(ctx, wtDir), "rebase", "origin/"+targetBranch)
+		if _, rerr := Run(ctx, wtDir, rebaseArgs...); rerr != nil {
 			_, _ = Run(ctx, wtDir, "rebase", "--abort")
 			return headSHA, fmt.Errorf("rebase 到 origin/%s 失败（存在冲突），请处理冲突后重试: %w", targetBranch, rerr)
 		}

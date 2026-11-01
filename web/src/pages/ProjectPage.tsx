@@ -5,9 +5,8 @@ import { api, qk } from '../api';
 import { PluginSlot } from '../components/PluginFrame';
 import { LabelPicker, splitLabels } from '../components/LabelPicker';
 import { availableRemoteAgentNames, filterRemoteCapable, pickDefaultAgent } from '../logic/agents';
-import { filterPRs } from '../logic/prs';
-import { useProjectIssues, useProjectPRPages } from '../hooks/useProjectLists';
-import { Crumbs, fmtTime, ISSUE_STATUS_LABEL, Modal } from '../components/common';
+import { useProjectIssues } from '../hooks/useProjectLists';
+import { Crumbs, fmtTime, ISSUE_STATUS_LABEL, PageShell } from '../components/common';
 import { LocalDirPickerModal } from '../components/LocalDirPicker';
 import { CherryPickModal } from '../components/CherryPickModal';
 import { PRModal } from '../components/PRModal';
@@ -16,7 +15,7 @@ import { CommitsModal } from '../components/CommitsModal';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
 import { ProjectReadmeModal } from '../components/ProjectReadmeModal';
-import { getCommitWebUrl, getBranchWebUrl } from '../gitUrls';
+import { getCommitWebUrl, getBranchWebUrl, getRepoWebUrl } from '../gitUrls';
 import { toast } from '../toast';
 import { copyText } from '../clipboard';
 import {
@@ -111,8 +110,19 @@ function summarizeIssue(it: Issue): string {
 }
 
 export default function ProjectPage() {
-  const id = Number(useParams().id);
+  const { id: idParam, ['*']: splat } = useParams();
+  const id = Number(idParam);
   const nav = useNavigate();
+  const view = (splat ?? '').split('/')[0];
+  const goView = (v: string) => nav(`/projects/${id}${v ? `/${v}` : ''}`);
+  // Feature surfaces live on their own routes; the old boolean flags become view state.
+  const viewFlag = (name: string): [boolean, (open: boolean) => void] => [
+    view === name,
+    (open: boolean) => {
+      if (open) goView(name);
+      else if (view === name) goView('');
+    },
+  ];
   const qc = useQueryClient();
   const project = useQuery({ queryKey: qk.project(id), queryFn: () => api.project(id) });
   const issues = useProjectIssues(id);
@@ -121,11 +131,11 @@ export default function ProjectPage() {
   const watchesQ = useQuery({ queryKey: qk.watches(id), queryFn: () => api.watches(id) });
   const runnersQ = useQuery({ queryKey: qk.runners, queryFn: api.runners, refetchInterval: 15000 });
 
-  const [repoOpen, setRepoOpen] = useState(false);
+  const [repoOpen, setRepoOpen] = viewFlag('repos');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [repo, setRepo] = useState<RepoInput>(emptyRepo);
 
-  const [issueOpen, setIssueOpen] = useState(false);
+  const [issueOpen, setIssueOpen] = viewFlag('new-issue');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [autoRunNew, setAutoRunNew] = useState(false);
@@ -138,16 +148,16 @@ export default function ProjectPage() {
 
   const [watchRepoId, setWatchRepoId] = useState<number>(0);
   const [watchBranch, setWatchBranch] = useState('');
-  const [search, setSearch] = useSearchParams();
+  const [search] = useSearchParams();
 
-  const [cpOpen, setCpOpen] = useState(false);
-  const [cpInitRepoId, setCpInitRepoId] = useState<number | undefined>();
-  const [cpInitBranch, setCpInitBranch] = useState<string | undefined>();
+  const [cpOpen, setCpOpen] = viewFlag('cherry-pick');
+  const [cpInitRepoId] = useState<number | undefined>();
+  const [cpInitBranch] = useState<string | undefined>();
 
   const [draggingId, setDraggingId] = useState<number | null>(null);
   const [dragOverCol, setDragOverCol] = useState<StageColumn['id'] | null>(null);
 
-  const [doneModalOpen, setDoneModalOpen] = useState(false);
+  const [doneModalOpen, setDoneModalOpen] = viewFlag('history');
   const [doneTab, setDoneTab] = useState<DoneTab>('active');
   const [selectedDoneIds, setSelectedDoneIds] = useState<number[]>([]);
   const [doneSearchText, setDoneSearchText] = useState('');
@@ -155,11 +165,14 @@ export default function ProjectPage() {
   const [archivedLimit, setArchivedLimit] = useState(100);
 
   const [deleteProjectOpen, setDeleteProjectOpen] = useState(false);
-  const [prModalOpen, setPrModalOpen] = useState(false);
-  const [branchCleanupOpen, setBranchCleanupOpen] = useState(false);
-  const [commitsModal, setCommitsModal] = useState<{ repoId?: number; branch?: string; sha?: string } | null>(null);
-  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
-  const [readmeOpen, setReadmeOpen] = useState(false);
+  const [prModalOpen] = viewFlag('prs');
+  const [branchCleanupOpen, setBranchCleanupOpen] = viewFlag('branches');
+  const commitsOpen = view === 'commits';
+  const commitsRepoId = Number(search.get('repo')) || undefined;
+  const commitsBranch = search.get('branch') || undefined;
+  const commitsSha = search.get('sha') || undefined;
+  const [knowledgeOpen] = viewFlag('knowledge');
+  const [readmeOpen] = viewFlag('readme');
 
   const deleteIssueMut = useMutation({
     mutationFn: (issueId: number) => api.deleteIssue(issueId),
@@ -183,7 +196,7 @@ export default function ProjectPage() {
     onError: (e) => toast.error((e as Error).message),
   });
 
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = viewFlag('settings');
   const hooksQ = useQuery({ queryKey: qk.projectHooks(id), queryFn: () => api.detectHooks(id), enabled: settingsOpen });
   const pullStatusQ = useQuery({
     queryKey: qk.projectPullStatus(id),
@@ -221,6 +234,10 @@ export default function ProjectPage() {
   const [newRuleAgent, setNewRuleAgent] = useState('');
   const [newRulePrompt, setNewRulePrompt] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
+  const [infoOpen, setInfoOpen] = viewFlag('edit');
+  const [infoName, setInfoName] = useState('');
+  const [infoSlug, setInfoSlug] = useState('');
+  const [infoDesc, setInfoDesc] = useState('');
 
   const updateProjectMut = useMutation({
     mutationFn: (b: {
@@ -241,6 +258,27 @@ export default function ProjectPage() {
       qc.setQueryData(qk.project(id), updated);
       setSettingsOpen(false);
       toast.success('项目设置与自动化规则已保存');
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const pinMut = useMutation({
+    mutationFn: (pinned: boolean) => api.updateProject(id, { pinned }),
+    onSuccess: (updated) => {
+      qc.setQueryData(qk.project(id), updated);
+      qc.invalidateQueries({ queryKey: qk.projects });
+      toast.success(updated.pinned ? '已置顶到侧栏' : '已取消置顶');
+    },
+    onError: (e) => toast.error((e as Error).message),
+  });
+
+  const saveInfoMut = useMutation({
+    mutationFn: (b: { name: string; slug: string; description: string }) => api.updateProject(id, b),
+    onSuccess: (updated) => {
+      qc.setQueryData(qk.project(id), updated);
+      qc.invalidateQueries({ queryKey: qk.projects });
+      setInfoOpen(false);
+      toast.success('项目名称与介绍已更新');
     },
     onError: (e) => toast.error((e as Error).message),
   });
@@ -356,28 +394,6 @@ export default function ProjectPage() {
     },
     onError: (e) => toast.error((e as Error).message),
   });
-
-  const checkWatchesMut = useMutation({
-    mutationFn: () => api.checkWatches(id),
-    onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: qk.watches(id) });
-      qc.invalidateQueries({ queryKey: qk.issues(id) });
-      qc.invalidateQueries({ queryKey: qk.projectPRs(id) });
-      qc.invalidateQueries({ queryKey: qk.projectPRPages(id) });
-      qc.invalidateQueries({ queryKey: qk.notifications });
-      toast.success(
-        `已检查分支与 PR 状态：${r.watchesTriggered} 个分支有新推送，${r.prsUpdated} 个 PR 状态已更新`,
-      );
-    },
-    onError: (e) => toast.error((e as Error).message),
-  });
-
-  // Keep the full PR list warm while the project page is open. The PR modal
-  // reads the same cache, so opening it or switching to Merged/Closed is
-  // instant; open PRs still refresh every 60s and update the badge.
-  const projectPRsQ = useProjectPRPages(id, 60_000);
-  const projectPRs = projectPRsQ.data?.pages.flatMap((page) => page.prs ?? []) ?? [];
-  const openPRCount = filterPRs(projectPRs, 'open').length;
 
   const pullMut = useMutation({
     mutationFn: () => api.pullProject(id),
@@ -510,6 +526,15 @@ export default function ProjectPage() {
   });
 
   const p = project.data;
+
+  // Deep-linked /projects/:id/edit must show the project's current values.
+  useEffect(() => {
+    if (!infoOpen) return;
+    setInfoName(p?.name ?? '');
+    setInfoSlug(p?.slug ?? '');
+    setInfoDesc(p?.description ?? '');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [infoOpen, p?.id]);
   const allIssues = issues.data ?? [];
   const watches = watchesQ.data ?? [];
 
@@ -521,24 +546,19 @@ export default function ProjectPage() {
     const wantsPRs = search.get('prs') === '1';
     if (!watchID && !wantsCommits && !wantsPRs) return;
     if (watchID && watches.length === 0) return;
-    if (wantsPRs) setPrModalOpen(true);
+    if (wantsPRs) goView('prs');
     if (wantsCommits || watchID) {
       const watch = watchID ? watches.find((w) => w.id === watchID) : undefined;
-      setCommitsModal({
-        repoId: watch?.repoId ?? (Number(search.get('repo')) || undefined),
-        branch: watch?.branch ?? (search.get('branch') || undefined),
-        sha: watch?.lastSha ?? (search.get('sha') || undefined),
-      });
+      const q = new URLSearchParams();
+      const repo = watch?.repoId ?? (Number(search.get('repo')) || undefined);
+      const branch = watch?.branch ?? (search.get('branch') || undefined);
+      const sha = watch?.lastSha ?? (search.get('sha') || undefined);
+      if (repo) q.set('repo', String(repo));
+      if (branch) q.set('branch', branch);
+      if (sha) q.set('sha', sha);
+      nav(`/projects/${id}/commits${q.toString() ? `?${q}` : ''}`, { replace: true });
     }
-    const next = new URLSearchParams(search);
-    next.delete('watch');
-    next.delete('commits');
-    next.delete('repo');
-    next.delete('branch');
-    next.delete('sha');
-    next.delete('prs');
-    setSearch(next, { replace: true });
-  }, [search, watches, setSearch]);
+  }, [search, watches, id, nav, goView]);
 
   useEffect(() => {
     if (doneTab !== 'archived') return;
@@ -609,145 +629,29 @@ export default function ProjectPage() {
   };
 
   return (
-    <div className="page project-page">
-      <div className="project-header-section">
-        <Crumbs>
-          <Link to="/">项目</Link>
-          <span>/</span>
-          <span className="ellipsis">{p?.name ?? '…'}</span>
-        </Crumbs>
+    <div className={`page project-page${view ? ' project-view' : ''}`}>
+      <Crumbs>
+        <Link to="/">项目</Link>
+        <span>/</span>
+        <span className="ellipsis">{p?.name ?? '…'}</span>
+        {p?.slug && (
+          <span className="badge mono" title="项目唯一标识">
+            @{p.slug}
+          </span>
+        )}
+        {p?.version && (
+          <span className="badge" title="主分支最新版本 tag">
+            {p.version}
+          </span>
+        )}
+        {p?.description && (
+          <span className="muted small ellipsis" style={{ maxWidth: 420 }}>
+            {p.description}
+          </span>
+        )}
+      </Crumbs>
 
-      <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <div className="grow" style={{ minWidth: 0 }}>
-          <div className="row" style={{ gap: 10, alignItems: 'baseline', minWidth: 0 }}>
-            <h1 style={{ flex: 'none' }}>{p?.name ?? '加载中…'}</h1>
-            {p?.description && (
-              <span className="muted small ellipsis" style={{ flex: 1, minWidth: 0 }}>{p.description}</span>
-            )}
-          </div>
-          {p?.runnerId && (() => {
-            const r = (runnersQ.data?.runners ?? []).find((x) => x.id === p.runnerId);
-            return (
-              <div className="small" style={{ marginTop: 4 }}>
-                🖥️ 执行节点：<span className="mono">{r?.name || p.runnerId}</span>{' '}
-                <span style={{ color: r ? 'var(--success)' : 'var(--error)' }}>{r ? '在线' : '离线'}</span>
-              </div>
-            );
-          })()}
-        </div>
-        <button
-          className="ghost"
-          disabled={checkWatchesMut.isPending}
-          onClick={() => checkWatchesMut.mutate()}
-          title="立即拉取监控分支新推送，并检查所有 PR 合并状态"
-        >
-          {checkWatchesMut.isPending ? '检查中…' : '🔄 检查状态'}
-        </button>
-        <button
-          className="ghost"
-          disabled={(p?.repos ?? []).length === 0}
-          onClick={() => {
-            setCpInitRepoId(p?.repos?.[0]?.id);
-            setCpInitBranch(undefined);
-            setCpOpen(true);
-          }}
-          title="从指定分支选择 Commit，Cherry-Pick 提 PR"
-        >
-          🍒 Cherry-Pick
-        </button>
-
-        <button
-          className="ghost"
-          onClick={() => setPrModalOpen(true)}
-          title="查看并处理项目的所有 Pull Requests"
-          style={{ position: 'relative' }}
-        >
-          🔀 PR
-          {openPRCount > 0 && (
-            <span
-              style={{
-                marginLeft: 6,
-                background: '#22c55e',
-                color: '#fff',
-                borderRadius: 10,
-                padding: '1px 6px',
-                fontSize: 11,
-                fontWeight: 700,
-              }}
-            >
-              {openPRCount}
-            </span>
-          )}
-        </button>
-
-        <button
-          className="ghost"
-          onClick={() => setReadmeOpen(true)}
-          title="查看项目各仓库的 README"
-        >
-          📖 README
-        </button>
-
-        <button
-          className="ghost"
-          onClick={() => setKnowledgeOpen(true)}
-          title="查看与搜索项目知识库、本地文档与 GitHub Wiki"
-        >
-          📚 知识库
-        </button>
-
-        <button
-          className="ghost"
-          onClick={() => {
-            const curMode = p?.devMode || 'single_main';
-            setCfgDevMode(curMode);
-            setCfgTargetBranch(p?.targetBranch || (curMode === 'main_dev' ? 'dev' : 'main'));
-            setCfgRunnerID(p?.runnerId || '');
-            setCfgAutoPR(p?.autoPrOnConfirm ?? true);
-            setCfgAutoDevelop(p?.autoDevelop ?? false);
-            setCfgAutoDevelopAgent(p?.autoDevelopAgent ?? '');
-            setCfgAutoDevelopLabels((Array.isArray(p?.autoDevelopLabels) ? p.autoDevelopLabels : ['bug', 'fix', 'error', 'crash', 'regression', 'enhancement', 'feature', '需求', '缺陷', '优化', '功能', '报错', '崩溃']).join(', '));
-            setCfgAutoDevelopText(p?.autoDevelopText ?? false);
-            setCfgAutoDevelopAuthors((p?.autoDevelopAuthors ?? []).join(', '));
-            setCfgAutoDevelopDailyLimit(p?.autoDevelopDailyLimit || 5);
-            setCfgAutomationRules(p?.automationRules ?? []);
-            setCfgPullBranches((p?.pullBranches ?? []).join(', '));
-            setSettingsTab('mode');
-            setSettingsOpen(true);
-          }}
-          title={`项目设置：${p?.devMode === 'main_dev' ? 'main+dev (PR)' : '单一 main'} 模式，自动化与 Hooks`}
-        >
-          ⚙️ 设置
-          {(p?.automationRules?.filter((r) => r.enabled)?.length ?? 0) > 0 && (
-            <span
-              style={{
-                marginLeft: 5,
-                background: 'rgba(110, 123, 242, 0.2)',
-                color: 'var(--accent)',
-                padding: '1px 6px',
-                borderRadius: 999,
-                fontSize: 11,
-                fontWeight: 700,
-              }}
-            >
-              {p?.automationRules?.filter((r) => r.enabled)?.length}
-            </span>
-          )}
-        </button>
-        <PluginSlot
-          name="project.toolbar"
-          inline
-          context={{ projectId: id, projectName: p?.name, runnerId: p?.runnerId }}
-        />
-
-      </div>
-
-      <PluginSlot
-        name="project.header"
-        context={{ projectId: id, projectName: p?.name, runnerId: p?.runnerId }}
-        marginBottom={0}
-      />
-
+      {!view && (<>
       {/* 仓库与分支监控双栏面板 */}
       <div
         style={{
@@ -790,7 +694,18 @@ export default function ProjectPage() {
                 className="repo-chip"
                 title={`${r.remoteUrl}\n测试命令：${r.testCommand || '无'}`}
               >
-                <b>{r.name}</b>
+                <b>
+                  {(() => {
+                    const url = getRepoWebUrl(r);
+                    return url ? (
+                      <a href={url} target="_blank" rel="noreferrer" title={`在新标签页打开 ${url}`}>
+                        {r.name} ↗
+                      </a>
+                    ) : (
+                      r.name
+                    );
+                  })()}
+                </b>
                 <span className="dim">{r.provider}</span>
                 {r.ownerRepo && <span className="muted mono">{r.ownerRepo}</span>}
                 <span className="dim mono">@{r.defaultBranch}</span>
@@ -917,7 +832,7 @@ export default function ProjectPage() {
                             cursor: 'pointer',
                           }}
                           title={w.lastSha}
-                          onClick={() => setCommitsModal({ repoId: w.repoId, branch: w.branch, sha: w.lastSha })}
+                          onClick={() => nav(`/projects/${id}/commits?repo=${w.repoId}&branch=${encodeURIComponent(w.branch)}${w.lastSha ? `&sha=${w.lastSha}` : ''}`)}
                         >
                           {w.lastSha.slice(0, 7)}
                         </code>
@@ -930,7 +845,7 @@ export default function ProjectPage() {
                       className="small muted ellipsis grow"
                       style={{ cursor: 'pointer' }}
                       title={`点击查看详情: ${w.lastMessage || '无提交信息'}`}
-                      onClick={() => setCommitsModal({ repoId: w.repoId, branch: w.branch, sha: w.lastSha })}
+                      onClick={() => nav(`/projects/${id}/commits?repo=${w.repoId}&branch=${encodeURIComponent(w.branch)}${w.lastSha ? `&sha=${w.lastSha}` : ''}`)}
                     >
                       {w.lastMessage || '无提交信息'}{' '}
                       {w.lastAuthor && <span className="dim">({w.lastAuthor})</span>}
@@ -941,7 +856,7 @@ export default function ProjectPage() {
                     <button
                       className="sm ghost"
                       title="查看该分支的历史提交记录与详细信息"
-                      onClick={() => setCommitsModal({ repoId: w.repoId, branch: w.branch, sha: w.lastSha })}
+                      onClick={() => nav(`/projects/${id}/commits?repo=${w.repoId}&branch=${encodeURIComponent(w.branch)}${w.lastSha ? `&sha=${w.lastSha}` : ''}`)}
                     >
                       📜 提交记录
                     </button>
@@ -959,7 +874,6 @@ export default function ProjectPage() {
             )}
           </div>
         </div>
-      </div>
       </div>
 
       <>
@@ -1065,17 +979,30 @@ export default function ProjectPage() {
                   >
                     <div className="issue-card-top">
                       <span className="issue-card-repo">
-                        {it.repoId
-                          ? (p?.repos ?? []).find((r) => r.id === it.repoId)?.name || 'repo'
-                          : '未绑定仓库'}
-                        {it.repoId && (
-                          <span
-                            className={`issue-card-sync ${it.source === 'remote' ? 'synced' : 'pending'}`}
-                            title={it.source === 'remote' ? `已同步远程${it.remoteNumber ? ` #${it.remoteNumber}` : ''}` : '尚未同步到远程平台'}
-                          >
-                            {it.source === 'remote' ? '☁️' : '⚠️'}
-                          </span>
-                        )}
+                        {(() => {
+                          const boundRepo = it.repoId
+                            ? (p?.repos ?? []).find((r) => r.id === it.repoId)
+                            : undefined;
+                          const synced = it.source === 'remote';
+                          const syncable = !!boundRepo && boundRepo.provider !== 'plain';
+                          return (
+                            <>
+                              {it.repoId ? boundRepo?.name || 'repo' : '未绑定仓库'}
+                              {it.repoId && (synced || syncable) && (
+                                <span
+                                  className={`issue-card-sync ${synced ? 'synced' : 'pending'}`}
+                                  title={
+                                    synced
+                                      ? `已同步远程${it.remoteNumber ? ` #${it.remoteNumber}` : ''}`
+                                      : '仅本地存在，尚未同步到远程平台'
+                                  }
+                                >
+                                  {synced ? '☁️' : '📌'}
+                                </span>
+                              )}
+                            </>
+                          );
+                        })()}
                       </span>
                       <span className="issue-card-links">
                         <Link to={`/issues/${it.id}`} className="issue-card-link" title="打开 Issue 详情">
@@ -1132,10 +1059,11 @@ export default function ProjectPage() {
       </div>
       </>
 
+      </>)}
+
       {repoOpen && (
-        <Modal
+        <PageShell
           title="添加仓库"
-          onClose={() => setRepoOpen(false)}
           footer={
             <>
               <button onClick={() => setPickerOpen(true)}>📂 选择本地目录自动填充…</button>
@@ -1189,7 +1117,7 @@ export default function ProjectPage() {
             测试命令（可选）
             <input value={repo.testCommand} placeholder="pnpm test" onChange={(e) => setR('testCommand', e.target.value)} />
           </label>
-        </Modal>
+        </PageShell>
       )}
 
       {pickerOpen && <LocalDirPickerModal onClose={() => setPickerOpen(false)} onPick={handlePickedLocal} />}
@@ -1205,9 +1133,8 @@ export default function ProjectPage() {
       )}
 
       {issueOpen && (
-        <Modal
+        <PageShell
           title="新建 Issue"
-          onClose={closeIssueModal}
           footer={
             <>
               <label className="row small" style={{ gap: 6, cursor: 'pointer', marginRight: 'auto' }}>
@@ -1330,20 +1257,12 @@ export default function ProjectPage() {
               ))}
             </div>
           )}
-        </Modal>
+        </PageShell>
       )}
 
       {doneModalOpen && (
-        <Modal
+        <PageShell
           title={`✅ 已完成 / 归档 (${doneIssues.length} / ${archivedQ.isLoading ? '…' : archivedTotal})`}
-          size="xl"
-          onClose={() => {
-            setDoneModalOpen(false);
-            setDoneTab('active');
-            setSelectedDoneIds([]);
-            setDoneSearchText('');
-            setArchivedSearch('');
-          }}
           footer={
             <div className="row" style={{ width: '100%', justifyContent: 'space-between' }}>
               <div className="small muted">
@@ -1528,14 +1447,66 @@ export default function ProjectPage() {
               </div>
             )}
           </div>
-        </Modal>
+        </PageShell>
+      )}
+
+      {infoOpen && (
+        <PageShell
+          title="✏️ 编辑项目信息"
+          footer={
+            <>
+              <button onClick={() => setInfoOpen(false)}>取消</button>
+              <button
+                type="button"
+                className="ghost"
+                disabled={pinMut.isPending}
+                onClick={() => pinMut.mutate(!p?.pinned)}
+                title={p?.pinned ? '取消置顶（侧栏不再显示）' : '置顶到侧栏'}
+              >
+                {p?.pinned ? '📌 已置顶' : '📌 置顶'}
+              </button>
+              <button
+                className="primary"
+                disabled={!infoName.trim() || !infoSlug.trim() || saveInfoMut.isPending}
+                onClick={() =>
+                  saveInfoMut.mutate({ name: infoName.trim(), slug: infoSlug.trim(), description: infoDesc.trim() })
+                }
+              >
+                {saveInfoMut.isPending ? '保存中…' : '保存'}
+              </button>
+            </>
+          }
+        >
+          <div className="col" style={{ gap: 10 }}>
+            <label className="col small" style={{ gap: 4 }}>
+              <span className="muted">项目名称</span>
+              <input value={infoName} onChange={(e) => setInfoName(e.target.value)} placeholder="项目名称" />
+            </label>
+            <label className="col small" style={{ gap: 4 }}>
+              <span className="muted">项目标识（唯一，用于区分同名项目）</span>
+              <input
+                className="mono"
+                value={infoSlug}
+                onChange={(e) => setInfoSlug(e.target.value)}
+                placeholder="例如 xissue"
+              />
+            </label>
+            <label className="col small" style={{ gap: 4 }}>
+              <span className="muted">项目介绍</span>
+              <textarea
+                rows={4}
+                value={infoDesc}
+                onChange={(e) => setInfoDesc(e.target.value)}
+                placeholder="一句话说明这个项目"
+              />
+            </label>
+          </div>
+        </PageShell>
       )}
 
       {settingsOpen && (
-        <Modal
+        <PageShell
           title="⚙️ 项目设置与自动化系统 (ABC 体系)"
-          size="lg"
-          onClose={() => setSettingsOpen(false)}
           footer={
             <>
               <button onClick={() => setSettingsOpen(false)}>取消</button>
@@ -2476,30 +2447,24 @@ export default function ProjectPage() {
                     lineHeight: 1.7,
                   }}
                 >
-                  插件是全局能力，已统一移至顶部 <b>🧩 插件</b> 管理：启停、README 预览、config.json
+                  插件是全局能力，已统一移至左侧栏 <b>🧩 插件管理</b>：启停、README 预览、config.json
                   查看与编辑。插件目录仍为 <code>~/.xissue/plugins/</code>。
                 </div>
               </div>
             </div>
           )}
-        </Modal>
+        </PageShell>
       )}
 
-      {prModalOpen && <PRModal projectId={id} onClose={() => setPrModalOpen(false)} />}
+      {prModalOpen && <PRModal projectId={id} />}
       {branchCleanupOpen && (
         <BranchCleanupModal
           repos={p?.repos ?? []}
           onClose={() => setBranchCleanupOpen(false)}
         />
       )}
-      {commitsModal && (
-        <CommitsModal
-          projectId={id}
-          repoId={commitsModal.repoId}
-          branch={commitsModal.branch}
-          sha={commitsModal.sha}
-          onClose={() => setCommitsModal(null)}
-        />
+      {commitsOpen && (
+        <CommitsModal projectId={id} repoId={commitsRepoId} branch={commitsBranch} sha={commitsSha} />
       )}
 
       {deleteProjectOpen && p && (
@@ -2511,22 +2476,11 @@ export default function ProjectPage() {
       )}
 
       {readmeOpen && (
-        <ProjectReadmeModal
-          projectId={id}
-          onClose={() => setReadmeOpen(false)}
-          onOpenKnowledge={() => {
-            setReadmeOpen(false);
-            setKnowledgeOpen(true);
-          }}
-        />
+        <ProjectReadmeModal projectId={id} onOpenKnowledge={() => goView('knowledge')} />
       )}
 
       {knowledgeOpen && (
-        <KnowledgeBaseModal
-          projectId={id}
-          projectName={p?.name}
-          onClose={() => setKnowledgeOpen(false)}
-        />
+        <KnowledgeBaseModal projectId={id} projectName={p?.name} />
       )}
 
       <PluginSlot

@@ -15,9 +15,9 @@ import (
 type dummyNotifier struct{}
 
 func (d *dummyNotifier) BroadcastRunEvent(runID, issueID int64, ev *domain.RunEvent) {}
-func (d *dummyNotifier) BroadcastRunUpdated(r *domain.Run)                            {}
-func (d *dummyNotifier) BroadcastIssueUpdated(i *domain.Issue)                        {}
-func (d *dummyNotifier) BroadcastNotification(n *domain.Notification)                 {}
+func (d *dummyNotifier) BroadcastRunUpdated(r *domain.Run)                           {}
+func (d *dummyNotifier) BroadcastIssueUpdated(i *domain.Issue)                       {}
+func (d *dummyNotifier) BroadcastNotification(n *domain.Notification)                {}
 
 func TestArchiveRun(t *testing.T) {
 	tmpDir := t.TempDir()

@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { PluginSlot } from '../components/PluginFrame';
 import { LabelPicker, splitLabels } from '../components/LabelPicker';
 import { availableRemoteAgentNames } from '../logic/agents';
 import { isLocalGitPath } from '../logic/repos';
+import { getRepoWebUrl } from '../gitUrls';
 import {
   Crumbs,
   editorUrl,
@@ -16,7 +17,6 @@ import {
   RunStatusTag,
 } from '../components/common';
 import { EventStream } from '../components/EventStream';
-import { AgentManagerModal } from '../components/AgentManagerModal';
 import { formatChangeRecord } from '../components/CherryPickModal';
 import { LazyDiffEditor } from '../components/LazyDiffEditor';
 const TerminalModal = lazy(() =>
@@ -78,6 +78,10 @@ function timelineIcon(kind: string): string {
 }
 
 export default function IssuePage() {
+  const { ['*']: issueSplat } = useParams();
+  const issueView = (issueSplat ?? '').split('/')[0];
+  const nav = useNavigate();
+  const [search] = useSearchParams();
   const id = Number(useParams().id);
   const qc = useQueryClient();
 
@@ -226,9 +230,7 @@ export default function IssuePage() {
   const [customModel, setCustomModel] = useState<string>('');
   const [prompt, setPrompt] = useState<string>('');
   const [newOpen, setNewOpen] = useState(false);
-  const [agentMgrOpen, setAgentMgrOpen] = useState(false);
   const [archiveModalData, setArchiveModalData] = useState<{ dir: string; analysis: string; events: string } | null>(null);
-  const [terminalRun, setTerminalRun] = useState<Run | null>(null);
   const [archiveTab, setArchiveTab] = useState<'analysis' | 'events'>('analysis');
 
   useEffect(() => {
@@ -522,10 +524,26 @@ export default function IssuePage() {
 
   return (
     <div className="page-full">
+      {issueView !== 'terminal' && (<>
       <Crumbs>
         <Link to="/">项目</Link>
         <span>/</span>
         {project ? <Link to={`/projects/${project.id}`}>{project.name}</Link> : <span>…</span>}
+        {project?.slug && (
+          <span className="badge mono" title="项目唯一标识">
+            @{project.slug}
+          </span>
+        )}
+        {project?.version && (
+          <span className="badge" title="主分支最新版本 tag">
+            {project.version}
+          </span>
+        )}
+        {project?.description && (
+          <span className="muted small ellipsis" style={{ maxWidth: 360 }}>
+            {project.description}
+          </span>
+        )}
         <span>/</span>
         <span className="mono">{issue?.key ?? `#${id}`}</span>
       </Crumbs>
@@ -561,11 +579,18 @@ export default function IssuePage() {
                   )
                 )}
                 {!issue?.repoId && <span className="badge">仅本地</span>}
-                {issue?.repoId && (
-                  <span className="badge">
-                    📦 {(project?.repos ?? []).find((r) => r.id === issue.repoId)?.name || 'repo'}
-                  </span>
-                )}
+                {issue?.repoId && (() => {
+                  const repo = (project?.repos ?? []).find((r) => r.id === issue.repoId);
+                  const url = getRepoWebUrl(repo);
+                  const label = `📦 ${repo?.name || 'repo'}`;
+                  return url ? (
+                    <a className="badge" href={url} target="_blank" rel="noreferrer" title={`在新标签页打开 ${url}`}>
+                      {label} ↗
+                    </a>
+                  ) : (
+                    <span className="badge">{label}</span>
+                  );
+                })()}
                 {issue?.parentIssueId && (
                   <Link to={`/issues/${issue.parentIssueId}`} className="badge" title="父任务">
                     ↳ {parentQ.data?.key || '父任务'}
@@ -890,7 +915,7 @@ export default function IssuePage() {
                     type="button"
                     className="sm ghost"
                     title="在 Run 工作区打开交互式 Shell"
-                    onClick={() => setTerminalRun(currentRun)}
+                    onClick={() => nav(`/issues/${id}/terminal?run=${currentRun.id}`)}
                   >
                     ⌨️ 终端
                   </button>
@@ -1000,7 +1025,7 @@ export default function IssuePage() {
           onClose={() => setNewOpen(false)}
           footer={
             <>
-              <button type="button" onClick={() => setAgentMgrOpen(true)}>
+              <button type="button" onClick={() => window.open('/agents', '_blank')}>
                 ⚙ 配置 Agent 与模型…
               </button>
               <span className="grow" />
@@ -1141,8 +1166,6 @@ export default function IssuePage() {
           </label>
         </Modal>
       )}
-
-      {agentMgrOpen && <AgentManagerModal onClose={() => setAgentMgrOpen(false)} />}
 
       {/* 编辑 Issue 弹窗 */}
       {subOpen && (
@@ -1335,15 +1358,20 @@ export default function IssuePage() {
           </div>
         </Modal>
       )}
-      {terminalRun && (
-        <Suspense fallback={null}>
-          <TerminalModal
-            runId={terminalRun.id}
-            workdir={terminalRun.workdir}
-            onClose={() => setTerminalRun(null)}
-          />
-        </Suspense>
-      )}
+      </>)}
+
+      {issueView === 'terminal' && (() => {
+        const runId = Number(search.get('run'));
+        const tRun = runs.find((r) => r.id === runId) ?? currentRun;
+        if (!tRun?.workdir) {
+          return <div className="page empty">该 Run 没有可用的工作区目录</div>;
+        }
+        return (
+          <Suspense fallback={null}>
+            <TerminalModal runId={tRun.id} workdir={tRun.workdir} onClose={() => nav(`/issues/${id}`)} />
+          </Suspense>
+        );
+      })()}
 
       <PluginSlot
         name="issue.page"

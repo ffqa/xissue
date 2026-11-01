@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from './api';
 import { useRealtime } from './realtime';
@@ -10,13 +10,15 @@ import { MonitorModal } from './components/MonitorModal';
 import { UsageModal } from './components/UsageModal';
 import { PluginManagerModal } from './components/PluginManagerModal';
 import { StatusBar } from './components/StatusBar';
+import { Sidebar } from './components/Sidebar';
+import { fmtTime } from './components/common';
 import { SettingsModal } from './components/SettingsModal';
 import { MCPModal } from './components/MCPModal';
 import { SchedulesModal } from './components/SchedulesModal';
 import { JobsModal } from './components/JobsModal';
 import { normalizeNotificationRoutes, writeBrowserRoutes } from './notificationSettings';
-import { fmtTime } from './components/common';
 import ProjectsPage from './pages/ProjectsPage';
+import NewProjectPage from './pages/NewProjectPage';
 import ProjectPage from './pages/ProjectPage';
 import IssuePage from './pages/IssuePage';
 import PluginPage from './pages/PluginPage';
@@ -212,87 +214,24 @@ function NotificationBell({ onOpenSettings }: { onOpenSettings: () => void }) {
   );
 }
 
-function LegacyProjectViewRedirect({ kind }: { kind: 'commits' | 'prs' }) {
-  const { id } = useParams();
-  const [search] = useSearchParams();
-  const next = new URLSearchParams(search);
-  next.set(kind === 'commits' ? 'commits' : 'prs', '1');
-  return <Navigate to={`/projects/${id}?${next.toString()}`} replace />;
-}
-
-function SystemMenu({
-  onSettings,
-  onAutomation,
-  onMonitor,
-  onPlugins,
-  onAgents,
-  onMCP,
-  onUsage,
-}: {
-  onSettings: () => void;
-  onAutomation: () => void;
-  onMonitor: () => void;
-  onPlugins: () => void;
-  onAgents: () => void;
-  onMCP: () => void;
-  onUsage: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const wrapRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDocClick = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDocClick);
-    return () => document.removeEventListener('mousedown', onDocClick);
-  }, [open]);
-
-  const item = (label: string, handler: () => void, hint?: string) => (
-    <button
-      type="button"
-      className="dropdown-item"
-      title={hint}
-      onClick={() => {
-        setOpen(false);
-        handler();
-      }}
-    >
-      {label}
-    </button>
-  );
-
+function SettingsRoute() {
+  const { tab } = useParams();
+  const nav = useNavigate();
+  const tabs = ['general', 'channels', 'routes', 'agents', 'automation'] as const;
+  const initial = (tabs as readonly string[]).includes(tab ?? '') ? (tab as (typeof tabs)[number]) : 'general';
   return (
-    <div className="dropdown-wrap" ref={wrapRef}>
-      <button
-        type="button"
-        className="ghost sm"
-        title="系统设置：全局设置、监控、插件、MCP/Agent、自动化"
-        onClick={() => setOpen((v) => !v)}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
-      >
-        ⚙️
-      </button>
-      {open && (
-        <div className="dropdown-menu">
-          {item('⚙️ 全局设置', onSettings, '通知、浏览器提醒、更新与自动化概览')}
-          {item('📡 监控中心', onMonitor, '查看监控状态、日志与通知配置')}
-          {item('📊 用量统计', onUsage, '查看 Agent Token、上下文与费用汇总')}
-          {item('🧩 插件管理', onPlugins, '启停插件、查看 README 与 config.json')}
-          {item('🤖 Agent 管理', onAgents, '管理 Agent、默认模型与运行参数')}
-          {item('🔌 MCP 接入', onMCP, '安装 MCP 到 IDE / Agent，选择 Stdio 或 HTTP')}
-          <div className="dropdown-divider" />
-          {item('⚡ 自动化规则', onAutomation, '管理全局与项目级自动化规则')}
-        </div>
-      )}
-    </div>
+    <SettingsModal
+      initialTab={initial}
+      onOpenAgents={() => nav('/agents')}
+      onOpenMCP={() => nav('/mcp')}
+    />
   );
 }
 
 export default function App() {
   const qc = useQueryClient();
   useRealtime(qc);
+  const nav = useNavigate();
   const [theme, toggleTheme] = useTheme();
   const notificationConfigQ = useQuery({
     queryKey: qk.monitorConfig,
@@ -304,126 +243,66 @@ export default function App() {
       writeBrowserRoutes(normalizeNotificationRoutes(notificationConfigQ.data.notificationRoutes));
     }
   }, [notificationConfigQ.data]);
-  const [agentMgrOpen, setAgentMgrOpen] = useState(false);
-  const [monitorOpen, setMonitorOpen] = useState(false);
-  const [pluginsOpen, setPluginsOpen] = useState(false);
-  const [mcpOpen, setMcpOpen] = useState(false);
-  const [usageOpen, setUsageOpen] = useState(false);
-  const [schedulesOpen, setSchedulesOpen] = useState(false);
-  const [jobsOpen, setJobsOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'general' | 'channels' | 'routes' | 'automation'>('general');
-  const [settingsFromMonitor, setSettingsFromMonitor] = useState(false);
-
 
   return (
     <div className="app">
-      <header className="topbar">
-        <Link to="/" className="brand">
-          xIssue
-        </Link>
-        <div id="crumbs" className="crumbs grow" />
-        <NotificationBell
-          onOpenSettings={() => {
-            setSettingsFromMonitor(false);
-            setSettingsTab('routes');
-            setSettingsOpen(true);
-          }}
-        />
-        <SystemMenu
-          onSettings={() => {
-            setSettingsFromMonitor(false);
-            setSettingsTab('general');
-            setSettingsOpen(true);
-          }}
-          onAutomation={() => {
-            setSettingsFromMonitor(false);
-            setSettingsTab('automation');
-            setSettingsOpen(true);
-          }}
-          onMonitor={() => setMonitorOpen(true)}
-          onPlugins={() => setPluginsOpen(true)}
-          onAgents={() => setAgentMgrOpen(true)}
-          onMCP={() => setMcpOpen(true)}
-          onUsage={() => setUsageOpen(true)}
-        />
-        <button
-          className="ghost sm"
-          title={theme === 'dark' ? '切换为亮色模式' : '切换为暗色模式'}
-          onClick={toggleTheme}
-          style={{ fontSize: 14, padding: '4px 8px' }}
-        >
-          {theme === 'dark' ? '☀️' : '🌙'}
-        </button>
-      </header>
-      <main className="main">
-        <Routes>
-          <Route path="/" element={<ProjectsPage />} />
-          <Route path="/projects/:id" element={<ProjectPage />} />
-          <Route path="/projects/:id/commits" element={<LegacyProjectViewRedirect kind="commits" />} />
-          <Route path="/projects/:id/prs" element={<LegacyProjectViewRedirect kind="prs" />} />
-          <Route path="/issues/:id" element={<IssuePage />} />
-          <Route path="/plugins/:id" element={<PluginPage />} />
-          <Route path="*" element={<div className="page empty">页面不存在</div>} />
-        </Routes>
-      </main>
-      <StatusBar
-        onOpenSchedules={() => setSchedulesOpen(true)}
-        onOpenJobs={() => setJobsOpen(true)}
-      />
-      {agentMgrOpen && <AgentManagerModal onClose={() => setAgentMgrOpen(false)} />}
-      {mcpOpen && <MCPModal onClose={() => setMcpOpen(false)} />}
-      {usageOpen && <UsageModal onClose={() => setUsageOpen(false)} />}
-      {jobsOpen && <JobsModal onClose={() => setJobsOpen(false)} />}
-      {schedulesOpen && (
-        <SchedulesModal
-          onClose={() => setSchedulesOpen(false)}
-          onOpenMonitor={() => {
-            setSchedulesOpen(false);
-            setMonitorOpen(true);
-          }}
-          onOpenSettings={() => {
-            setSchedulesOpen(false);
-            setSettingsFromMonitor(false);
-            setSettingsTab('general');
-            setSettingsOpen(true);
-          }}
-        />
-      )}
-      {monitorOpen && (
-        <MonitorModal
-          onClose={() => setMonitorOpen(false)}
-          onOpenSettings={() => {
-            setMonitorOpen(false);
-            setSettingsFromMonitor(true);
-            setSettingsTab('channels');
-            setSettingsOpen(true);
-          }}
-        />
-      )}
-      {pluginsOpen && <PluginManagerModal onClose={() => setPluginsOpen(false)} />}
-      {settingsOpen && (
-        <SettingsModal
-          initialTab={settingsTab}
-          onOpenAgents={() => {
-            setSettingsOpen(false);
-            setAgentMgrOpen(true);
-          }}
-          onOpenMCP={() => {
-            setSettingsOpen(false);
-            setMcpOpen(true);
-          }}
-          onClose={() => {
-            setSettingsOpen(false);
-            if (settingsFromMonitor) {
-              setSettingsFromMonitor(false);
-              setMonitorOpen(true);
-            }
-          }}
-        />
-      )}
+      <Sidebar />
+      <div className="app-main">
+        <header className="topbar">
+          <div id="crumbs" className="crumbs grow" />
+          <button
+            className="ghost sm"
+            style={{ fontSize: 16, padding: '4px 8px' }}
+            title="系统设置：全局设置、监控、用量、插件、Agent、MCP、计划任务、任务队列"
+            onClick={() => nav('/settings/general')}
+          >
+            ⚙️
+          </button>
+          <NotificationBell onOpenSettings={() => nav('/settings/routes')} />
+          <button
+            className="ghost sm"
+            title={theme === 'dark' ? '切换为亮色模式' : '切换为暗色模式'}
+            onClick={toggleTheme}
+            style={{ fontSize: 14, padding: '4px 8px' }}
+          >
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
+        </header>
+        <main className="main">
+          <Routes>
+            <Route path="/" element={<ProjectsPage />} />
+            <Route path="/new-project" element={<NewProjectPage />} />
+            <Route path="/projects/:id" element={<ProjectPage />} />
+            <Route path="/projects/:id/*" element={<ProjectPage />} />
+            <Route path="/issues/:id" element={<IssuePage />} />
+            <Route path="/issues/:id/*" element={<IssuePage />} />
+            <Route path="/plugins/:id" element={<PluginPage />} />
+            <Route path="/settings" element={<Navigate to="/settings/general" replace />} />
+            <Route path="/settings/:tab" element={<SettingsRoute />} />
+            <Route
+              path="/monitor"
+              element={<MonitorModal onOpenSettings={() => nav('/settings/channels')} />}
+            />
+            <Route path="/usage" element={<UsageModal />} />
+            <Route path="/plugins" element={<PluginManagerModal />} />
+            <Route path="/agents" element={<AgentManagerModal />} />
+            <Route path="/mcp" element={<MCPModal />} />
+            <Route
+              path="/schedules"
+              element={
+                <SchedulesModal
+                  onOpenMonitor={() => nav('/monitor')}
+                  onOpenSettings={() => nav('/settings/channels')}
+                />
+              }
+            />
+            <Route path="/jobs" element={<JobsModal />} />
+            <Route path="*" element={<div className="page empty">页面不存在</div>} />
+          </Routes>
+        </main>
+        <StatusBar onOpenSchedules={() => nav('/schedules')} onOpenJobs={() => nav('/jobs')} />
+      </div>
       <Toaster />
     </div>
   );
 }
-

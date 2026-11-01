@@ -43,6 +43,44 @@ function ensureEscapeListener() {
   );
 }
 
+// PageShell renders a routed feature page: fixed header with actions, a body that
+// scrolls independently, and an optional action footer.
+export function PageShell({
+  title,
+  onEscape,
+  children,
+  footer,
+  bodyStyle,
+  headerActions,
+}: {
+  title: ReactNode;
+  onEscape?: () => void;
+  children: ReactNode;
+  footer?: ReactNode;
+  bodyStyle?: React.CSSProperties;
+  headerActions?: ReactNode;
+}) {
+  useEffect(() => {
+    if (!onEscape) return;
+    ensureEscapeListener();
+    escapeStack.push(onEscape);
+    return () => {
+      const idx = escapeStack.lastIndexOf(onEscape);
+      if (idx >= 0) escapeStack.splice(idx, 1);
+    };
+  }, [onEscape]);
+  return (
+    <div className="page-shell">
+      <div className="page-shell-h">
+        <h2 className="grow">{title}</h2>
+        {headerActions}
+      </div>
+      <div className="page-shell-b" style={bodyStyle}>{children}</div>
+      {footer && <div className="page-shell-f">{footer}</div>}
+    </div>
+  );
+}
+
 export function Modal({
   title,
   onClose,

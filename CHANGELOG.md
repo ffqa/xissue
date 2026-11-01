@@ -4,6 +4,34 @@
 
 版本策略（0.x）：patch 用于兼容的修复/小功能，minor 用于破坏性变更（状态/API/数据结构），patch 号不要求连续填满。
 
+## [0.7.0] - 2026-11-01
+
+### Added
+
+- 侧栏导航重构：项目空间与系统设置分两态，前者显示「全部项目」+ 置顶项目 + 当前项目菜单，后者由右上角 `⚙️` 进入并显示系统菜单；侧栏可收缩并记忆状态。
+- 项目内功能全部整页化并拥有独立路由：`/projects/:id/{settings,edit,repos,knowledge,readme,prs,commits,cherry-pick,branches,history}`、`/issues/:id/terminal?run=N`、`/settings/:tab`、`/monitor`、`/usage`、`/plugins`、`/agents`、`/mcp`、`/schedules`、`/jobs`、`/new-project`；旧 `?commits=1` / `?prs=1` 深链自动跳转。
+- 项目唯一标识 `slug`：创建时自动生成、老库启动回填、可在「项目信息」编辑；冲突/非法格式返回 400。
+- 项目主版本：列表与详情返回主仓库最新 semver tag，项目卡片、页头与面包屑展示。
+- 项目置顶 `pinned`：列表接口置顶优先，侧栏「全部项目」下只显示置顶项目；项目卡片与项目信息页可切换。
+- Issue 页保留项目上下文：侧栏显示当前项目菜单与「当前 Issue」。
+- `GET /api/runs/{id}/changes?patch=1` 返回 `worktreePath` 与完整 unified diff（含未跟踪文件，单仓 256KB 截断）。
+- MCP 新增 `xissue_get_run_changes`、`xissue_send_message`、`xissue_submit_run`。
+- `PATCH /api/issues/{id}` 支持 `{"archived": true|false}`；`runner.doneArchiveMaxCount`（默认 20）按项目保留最近完成的 N 条。
+- 用量统计拆分「缓存读取」token，输入/缓存/输出/总计口径一致。
+
+### Changed
+
+- 直接合入（`merge_local`）失败时 Run 记为 `failed`、Issue 停留在 `review`，不再误标 Done 被自动归档。
+- 直接合入前自动 `rebase` 到最新目标分支；冲突时中止并返回明确错误，成功或失败都会清理临时分支。
+- 用量页、看板等页面改为完整页面布局，看板四列自适应高度、页面不再出现外层滚动条。
+- 无 `-token` 时拒绝监听非回环地址（API 暴露终端与文件写入能力）。
+
+### Fixed
+
+- 手动同步与后台同步互斥，避免同一 Issue 并发触发重复自动预开发；重复的失败/额度提示不再刷屏。
+- Done 自动归档按 `completed_at` 判断，评论不再让旧任务逃避归档。
+- 仓库外链：项目仓库与 Issue 所属仓库可跳转到对应平台页面。
+
 ## [0.6.1] - 2026-10-31
 
 ### Changed

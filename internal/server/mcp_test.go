@@ -3,7 +3,10 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/xpier/xissue/internal/store"
 )
 
 func TestDetectQoderConfig(t *testing.T) {
@@ -52,5 +55,58 @@ func TestDetectQoderConfig(t *testing.T) {
 	}
 	if name != "Qoder (~/.qoder/mcp.json)" {
 		t.Errorf("unexpected name: %s", name)
+	}
+}
+
+func TestMCPRunToolDefinitions(t *testing.T) {
+	names := map[string]bool{}
+	for _, def := range mcpToolDefinitions() {
+		if n, ok := def["name"].(string); ok {
+			names[n] = true
+		}
+	}
+	for _, want := range []string{"xissue_get_run_changes", "xissue_send_message", "xissue_submit_run"} {
+		if !names[want] {
+			t.Fatalf("missing MCP tool %q", want)
+		}
+	}
+	text, isErr := (&Server{}).callMCPTool(t.Context(), "xissue_submit_run", map[string]any{"runId": float64(1), "mode": "bogus"})
+	if !isErr || !strings.Contains(text, "mode must be") {
+		t.Fatalf("invalid mode call = %q, err=%v", text, isErr)
+	}
+}
+
+// merge_local is UI-only: an unattended agent must not merge into the target
+// branch, and auto-develop runs belong to the harness's own submit flow.
+func TestMCPSubmitRunGuards(t *testing.T) {
+	srv, st, _ := newTestServer(t)
+	ctx := t.Context()
+
+	proj, err := st.CreateProject(ctx, "MCPGate", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "demo", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.CreateRun(ctx, issue.ID, "fake", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	text, isErr := srv.callMCPTool(ctx, "xissue_submit_run", map[string]any{"runId": float64(run.ID), "mode": "merge_local"})
+	if !isErr || !strings.Contains(text, "merge_local") {
+		t.Fatalf("merge_local via MCP = %q, err=%v", text, isErr)
+	}
+
+	autoPR := true
+	run, err = st.UpdateRun(ctx, run.ID, store.RunUpdate{AutoPR: &autoPR})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, isErr = srv.callMCPTool(ctx, "xissue_submit_run", map[string]any{"runId": float64(run.ID), "mode": "pr"})
+	if !isErr || !strings.Contains(text, "auto-develop") {
+		t.Fatalf("auto-PR submit via MCP = %q, err=%v", text, isErr)
 	}
 }

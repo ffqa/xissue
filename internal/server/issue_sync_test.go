@@ -72,6 +72,33 @@ printf '%s' '[{"number":42,"title":"App crashes on start","body":"error","labels
 	}
 }
 
+// Failed/blocked auto-develop attempts retry on every sync; the notification
+// comment must only appear once per issue timeline.
+func TestAutoDevelopCommentDedup(t *testing.T) {
+	srv, st, _ := newTestServer(t)
+	ctx := t.Context()
+
+	proj, err := st.CreateProject(ctx, "Dedup", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "demo", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "🤖 自动预开发启动失败: agent not found"
+	srv.addAutoDevelopCommentOnce(ctx, issue.ID, body)
+	srv.addAutoDevelopCommentOnce(ctx, issue.ID, body)
+
+	comments, err := st.ListComments(ctx, issue.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("expected 1 deduped comment, got %d", len(comments))
+	}
+}
+
 func TestGlobalAutoDevelopGateBypassesProjectOptIn(t *testing.T) {
 	srv, st, tmpDir := newTestServer(t)
 	if err := srv.cfg.UpdateMonitor(config.MonitorConfig{

@@ -195,3 +195,120 @@ func TestEnsureMirrorRepairsBareHeadMismatch(t *testing.T) {
 		t.Fatalf("worktree missing pushed file: %v", err)
 	}
 }
+
+// TestMergeBranchToTargetRebasesStaleWorktree reproduces the parallel-run case:
+// the worktree branched off an older main while another run already advanced main
+// in the local repository, whose working tree also has uncommitted edits.
+func TestMergeBranchToTargetRebasesStaleWorktree(t *testing.T) {
+	ctx := t.Context()
+	localDir := t.TempDir()
+	if _, err := Run(ctx, localDir, "init", "-b", "main"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	_, _ = Run(ctx, localDir, "config", "user.name", "Tester")
+	_, _ = Run(ctx, localDir, "config", "user.email", "tester@example.com")
+	if _, err := Run(ctx, localDir, "commit", "--allow-empty", "-m", "init"); err != nil {
+		t.Fatalf("initial commit: %v", err)
+	}
+
+	mirrorDir := t.TempDir()
+	if err := EnsureMirror(ctx, localDir, mirrorDir); err != nil {
+		t.Fatalf("EnsureMirror: %v", err)
+	}
+	wtDir := t.TempDir()
+	if err := AddWorktree(ctx, mirrorDir, wtDir, "agent/stale-run", "main"); err != nil {
+		t.Fatalf("AddWorktree: %v", err)
+	}
+	defer RemoveWorktree(ctx, mirrorDir, wtDir, "agent/stale-run")
+	if err := os.WriteFile(filepath.Join(wtDir, "hello.txt"), []byte("world\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CommitAll(ctx, wtDir, "add hello.txt"); err != nil {
+		t.Fatalf("CommitAll: %v", err)
+	}
+
+	// Another run lands on main first, and the local working tree stays dirty.
+	if err := os.WriteFile(filepath.Join(localDir, "other.txt"), []byte("other\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CommitAll(ctx, localDir, "other run"); err != nil {
+		t.Fatalf("commit other: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(localDir, "dirty.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := MergeBranchToTarget(ctx, wtDir, mirrorDir, localDir, "agent/stale-run", "main", "merge stale run"); err != nil {
+		t.Fatalf("MergeBranchToTarget: %v", err)
+	}
+	// The dirty working tree is only ref-updated, so assert on main's tree.
+	for _, name := range []string{"hello.txt", "other.txt"} {
+		if _, err := Run(ctx, localDir, "show", "main:"+name); err != nil {
+			t.Fatalf("main missing %s after merge: %v", name, err)
+		}
+	}
+	if out, err := Run(ctx, localDir, "branch", "--list", "agent/stale-run"); err != nil || strings.TrimSpace(out) != "" {
+		t.Fatalf("temp branch not cleaned up: %q, %v", out, err)
+	}
+}
+
+func TestDiffIncludesUntrackedAndTruncates(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	if _, err := Run(ctx, dir, "init", "-b", "main"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	_, _ = Run(ctx, dir, "config", "user.name", "Tester")
+	_, _ = Run(ctx, dir, "config", "user.email", "tester@example.com")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CommitAll(ctx, dir, "init"); err != nil {
+		t.Fatalf("CommitAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("brand new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	patch, err := Diff(ctx, dir, "main", MaxPatchBytes)
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	for _, want := range []string{"diff --git a/a.txt b/a.txt", "diff --git a/new.txt b/new.txt", "brand new"} {
+		if !strings.Contains(patch, want) {
+			t.Fatalf("patch missing %q:\n%s", want, patch)
+		}
+	}
+
+	// The patch must apply cleanly to the base tree.
+	base := t.TempDir()
+	if _, err := Run(ctx, base, "init", "-b", "main"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	_, _ = Run(ctx, base, "config", "user.name", "Tester")
+	_, _ = Run(ctx, base, "config", "user.email", "tester@example.com")
+	if err := os.WriteFile(filepath.Join(base, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CommitAll(ctx, base, "init"); err != nil {
+		t.Fatal(err)
+	}
+	patchFile := filepath.Join(t.TempDir(), "changes.patch")
+	if err := os.WriteFile(patchFile, []byte(patch), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := Run(ctx, base, "apply", "--check", "--", patchFile); err != nil {
+		t.Fatalf("git apply --check failed: %v %s", err, out)
+	}
+
+	short, err := Diff(ctx, dir, "main", 10)
+	if err != nil {
+		t.Fatalf("Diff truncated: %v", err)
+	}
+	if !strings.Contains(short, "patch truncated") {
+		t.Fatalf("expected truncation marker, got %q", short)
+	}
+}

@@ -2,11 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { Markdown, Modal } from './common';
+import { Markdown, PageShell } from './common';
 import { toast } from '../toast';
 import type { PluginInfo } from '../types';
 
-export function PluginManagerModal({ onClose }: { onClose: () => void }) {
+export function PluginManagerModal() {
   const qc = useQueryClient();
   const pluginsQ = useQuery({ queryKey: qk.plugins, queryFn: api.plugins });
   const plugins = pluginsQ.data ?? [];
@@ -90,23 +90,16 @@ export function PluginManagerModal({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Modal
+    <PageShell
       title="🧩 全局插件管理"
-      size="xl"
-      onClose={onClose}
       footer={
         <>
           <span className="small dim grow">
             插件目录：<code className="mono">{pluginsDir}</code>
             {' · '}停用后不会再触发；config.json 保存后立即生效。
           </span>
-          <button type="button" onClick={onClose}>
-            关闭
-          </button>
         </>
       }
-      style={{ height: 'min(860px, 92vh)' }}
-      bodyStyle={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}
     >
       {pluginsQ.isLoading ? (
         <div className="empty">正在读取插件…</div>
@@ -308,7 +301,7 @@ export function PluginManagerModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
       )}
-    </Modal>
+    </PageShell>
   );
 }
 

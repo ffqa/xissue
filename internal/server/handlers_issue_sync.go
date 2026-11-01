@@ -23,6 +23,11 @@ func (s *Server) handleSyncProject(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	// Serialize with the background sync: a manual sync racing the periodic one
+	// would both see zero runs for an issue and start duplicate auto-develop
+	// runs (double agent cost, duplicate PRs).
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
 	s.refreshProjectRepos(r.Context(), proj)
 	imported, err := s.syncProjectIssues(r.Context(), proj)
 	if err != nil {
@@ -360,7 +365,7 @@ func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key, a
 		limit = 5
 	}
 	if count >= limit {
-		_, _ = s.st.AddComment(ctx, issue.ID, "system", fmt.Sprintf("🤖 自动预开发已达到今日上限 (%d)，未启动新的开发任务。", limit))
+		s.addAutoDevelopCommentOnce(ctx, issue.ID, fmt.Sprintf("🤖 自动预开发已达到今日上限 (%d)，未启动新的开发任务。", limit))
 		return
 	}
 	agent := strings.TrimSpace(p.AutoDevelopAgent)
@@ -371,10 +376,25 @@ func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key, a
 		agent = s.runner.DefaultAgentName()
 	}
 	if agent == "" {
-		_, _ = s.st.AddComment(ctx, issue.ID, "system", "🤖 自动预开发已开启，但未配置任何 Agent，无法启动。请在设置中配置 Agent 或指定预开发 Agent。")
+		s.addAutoDevelopCommentOnce(ctx, issue.ID, "🤖 自动预开发已开启，但未配置任何 Agent，无法启动。请在设置中配置 Agent 或指定预开发 Agent。")
 		return
 	}
 	if _, err := s.runner.StartAutoDevelopRun(ctx, issue.ID, agent, runner.AutoDevelopPrompt(issue)); err != nil {
-		_, _ = s.st.AddComment(ctx, issue.ID, "system", "🤖 自动预开发启动失败: "+err.Error())
+		s.addAutoDevelopCommentOnce(ctx, issue.ID, "🤖 自动预开发启动失败: "+err.Error())
 	}
+}
+
+// addAutoDevelopCommentOnce writes a system comment unless the same text was
+// already posted. Failed or quota-blocked attempts run again on every sync, so
+// an identical comment must not spam the issue timeline.
+func (s *Server) addAutoDevelopCommentOnce(ctx context.Context, issueID int64, body string) {
+	comments, err := s.st.ListComments(ctx, issueID)
+	if err == nil {
+		for _, c := range comments {
+			if c.Author == "system" && c.Body == body {
+				return
+			}
+		}
+	}
+	_, _ = s.st.AddComment(ctx, issueID, "system", body)
 }

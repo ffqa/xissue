@@ -1,10 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { Modal } from './common';
+import { PageShell } from './common';
 import { toast } from '../toast';
 import { copyText } from '../clipboard';
 
-export function MCPModal({ onClose }: { onClose: () => void }) {
+export function MCPModal() {
   const qc = useQueryClient();
   const mcpQ = useQuery({ queryKey: qk.mcpStatus, queryFn: api.mcpStatus });
   const mcpInstallMut = useMutation({
@@ -19,17 +19,14 @@ export function MCPModal({ onClose }: { onClose: () => void }) {
   });
 
   return (
-    <Modal
+    <PageShell
       title="🔌 MCP 接入管理"
-      size="lg"
-      onClose={onClose}
       footer={
         <>
           <span className="small dim">
             每个 IDE / Agent 可以选择 Stdio 独立进程，或共享一个 HTTP MCP 服务以节省内存。
           </span>
           <span className="grow" />
-          <button onClick={onClose}>关闭</button>
         </>
       }
     >
@@ -171,6 +168,6 @@ export function MCPModal({ onClose }: { onClose: () => void }) {
           Windsurf 支持一键写入。若开启了访问 token，请把请求头改为 <code>Authorization: Bearer &lt;token&gt;</code>。
         </div>
       </div>
-    </Modal>
+    </PageShell>
   );
 }

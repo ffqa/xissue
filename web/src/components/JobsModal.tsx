@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { fmtTime, Modal } from './common';
+import { fmtTime, PageShell } from './common';
 import { toast } from '../toast';
 import type { Job } from '../types';
 
@@ -8,7 +8,7 @@ function jobLabel(job: Job): string {
   return job.payload?.branch || job.kind;
 }
 
-export function JobsModal({ onClose }: { onClose: () => void }) {
+export function JobsModal() {
   const qc = useQueryClient();
   // StatusBar owns the polling timer for this shared query.
   const jobsQ = useQuery({ queryKey: qk.jobs, queryFn: () => api.jobs(50) });
@@ -26,11 +26,8 @@ export function JobsModal({ onClose }: { onClose: () => void }) {
   });
 
   return (
-    <Modal
+    <PageShell
       title={`📋 任务队列（${active.length} 个进行中/排队）`}
-      size="lg"
-      onClose={onClose}
-      footer={<button onClick={onClose}>关闭</button>}
     >
       <div className="col" style={{ gap: 6 }}>
         {jobsQ.isLoading && <div className="empty">加载中…</div>}
@@ -56,6 +53,6 @@ export function JobsModal({ onClose }: { onClose: () => void }) {
           </div>
         ))}
       </div>
-    </Modal>
+    </PageShell>
   );
 }

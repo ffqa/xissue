@@ -6,16 +6,14 @@ import { toast } from '../toast';
 import { copyText } from '../clipboard';
 
 interface MonitorModalProps {
-  onClose: () => void;
   onOpenSettings?: () => void;
 }
 
-export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSettings }) => {
+export const MonitorModal: React.FC<MonitorModalProps> = ({ onOpenSettings }) => {
   const qc = useQueryClient();
   const [hours, setHours] = useState<number>(8);
   const [levelFilter, setLevelFilter] = useState<string>('all');
   const [copied, setCopied] = useState(false);
-  const [isMaximized, setIsMaximized] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
 
   // 监控运行时状态与日志
@@ -113,17 +111,6 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
     onError: (err: Error) => toast.error(`同步失败: ${err.message}`),
   });
 
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', handleKey, true);
-    return () => window.removeEventListener('keydown', handleKey, true);
-  }, [onClose]);
-
   const status = statusQ.data;
   const rawLogs = logsQ.data ?? [];
 
@@ -165,33 +152,8 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
   };
 
   return (
-    <div
-      className="modal-backdrop"
-      onClick={onClose}
-      style={{
-        zIndex: 110,
-        paddingTop: isMaximized ? 0 : '4vh',
-        alignItems: isMaximized ? 'stretch' : 'flex-start',
-      }}
-    >
-      <div
-        className="modal"
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: isMaximized ? '100vw' : 'min(980px, 95vw)',
-          height: isMaximized ? '100vh' : 'min(880px, 90vh)',
-          maxWidth: isMaximized ? '100vw' : '95vw',
-          maxHeight: isMaximized ? '100vh' : '90vh',
-          borderRadius: isMaximized ? 0 : 12,
-          padding: isMaximized ? '16px 24px' : '20px 24px',
-          display: 'flex',
-          flexDirection: 'column',
-          boxSizing: 'border-box',
-          gap: 12,
-          background: 'var(--bg-1)',
-          border: isMaximized ? 'none' : '1px solid var(--border-strong)',
-        }}
-      >
+    <div className="page-shell">
+      <div className="page-shell-b">
         {/* 顶部标题栏与控制按钮 */}
         <div
           style={{
@@ -259,22 +221,6 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
               title="配置监控活跃时间段、Issue 同步与自动开发"
             >
               ⚙️ 策略与通知
-            </button>
-            <button
-              className="ghost sm"
-              onClick={() => setIsMaximized(!isMaximized)}
-              title={isMaximized ? '还原窗口' : '全屏显示'}
-              style={{ fontSize: 13, padding: '4px 10px' }}
-            >
-              {isMaximized ? '🗗' : '⛶'}
-            </button>
-            <button
-              className="ghost sm"
-              onClick={onClose}
-              title="关闭 (Esc)"
-              style={{ fontSize: 14, padding: '4px 8px' }}
-            >
-              ✕
             </button>
           </div>
         </div>
@@ -708,9 +654,6 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onClose, onOpenSetti
           <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
             共 {logs.length} 条记录（自动保留最近 8 小时 / 当天，单机日志文件防膨胀）
           </span>
-          <button className="ghost sm" onClick={onClose} style={{ padding: '4px 14px' }}>
-            关闭
-          </button>
         </div>
       </div>
     </div>

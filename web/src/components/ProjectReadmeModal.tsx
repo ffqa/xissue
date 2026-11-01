@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { Markdown, Modal } from './common';
+import { Markdown, PageShell } from './common';
 
 interface Props {
   projectId: number;
-  onClose: () => void;
   onOpenKnowledge: () => void;
 }
 
-export function ProjectReadmeModal({ projectId, onClose, onOpenKnowledge }: Props) {
+export function ProjectReadmeModal({ projectId, onOpenKnowledge }: Props) {
   const readmesQ = useQuery({
     queryKey: qk.projectReadmes(projectId),
     queryFn: () => api.projectReadmes(projectId),
@@ -30,10 +29,8 @@ export function ProjectReadmeModal({ projectId, onClose, onOpenKnowledge }: Prop
   const foundCount = readmes.filter((r) => r.found).length;
 
   return (
-    <Modal
+    <PageShell
       title="📖 项目 README"
-      size="xl"
-      onClose={onClose}
       headerActions={
         <>
           {!readmesQ.isLoading && !readmesQ.error && readmes.length > 0 && (
@@ -87,6 +84,6 @@ export function ProjectReadmeModal({ projectId, onClose, onOpenKnowledge }: Prop
           )}
         </>
       )}
-    </Modal>
+    </PageShell>
   );
 }

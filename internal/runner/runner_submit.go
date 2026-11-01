@@ -190,8 +190,26 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 		}
 	}
 
+	// A failed merge_local must not look successful: the branch was pushed, but
+	// the commits never reached the target branch. Keeping the issue in review
+	// also keeps it out of doneArchiveMaxCount.
+	mergeFailed := req.Mode == "merge_local" && hasFailures
+	mergeErrText := ""
+	if mergeFailed {
+		msgs := make([]string, 0, len(results))
+		for _, res := range results {
+			if res.Error != "" {
+				msgs = append(msgs, res.RepoName+": "+res.Error)
+			}
+		}
+		mergeErrText = strings.Join(msgs, "; ")
+	}
+
 	if anyPushed {
 		st := domain.RunSubmitted
+		if mergeFailed {
+			st = domain.RunFailed
+		}
 		prState := ""
 		if firstPRURL != "" {
 			prState = "open"
@@ -201,6 +219,9 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 			TargetBranch: &firstTargetBranch,
 			ChangeRecord: &lastChangeRecord,
 			Ended:        true,
+		}
+		if mergeFailed {
+			upd.Error = &mergeErrText
 		}
 		// A plain push (including CI fixes on an existing PR branch) must not
 		// clear the PR URL/state recorded by the earlier submission.
@@ -215,12 +236,18 @@ func (r *Runner) Submit(ctx context.Context, runID int64, req SubmitRequest) ([]
 		if len(prLinks) > 0 || run.PRURL != "" {
 			ist = domain.IssuePROpen
 		}
+		if mergeFailed {
+			ist = domain.IssueReview
+		}
 		if u, err := r.st.UpdateIssue(ctx, issue.ID, store.IssuePatch{Status: &ist}); err == nil {
 			r.notify.BroadcastIssueUpdated(u)
 		}
 		note := lastChangeRecord
 		if note == "" {
 			note = fmt.Sprintf("Submitted branch `%s`.", run.Branch)
+		}
+		if mergeFailed {
+			note = "⚠️ 直接合入失败，Issue 保持 Review：\n" + mergeErrText + "\n\n" + note
 		}
 		_, _ = r.st.AddComment(ctx, issue.ID, "system", "```text\n"+note+"\n```")
 		if issue.Source == "remote" && issue.RepoID != nil && issue.RemoteNumber != nil {

@@ -140,7 +140,7 @@ done
 		t.Fatal("large (>32KiB) remote message event was not persisted")
 	}
 
-	changes, err := srv.runner.Changes(ctx, run.ID)
+	changes, err := srv.runner.Changes(ctx, run.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}

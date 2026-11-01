@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { Modal } from './common';
+import { PageShell } from './common';
 import { toast } from '../toast';
 import { useTheme } from '../theme';
 import type { AgentRoles, AutomationRule } from '../types';
@@ -23,12 +23,10 @@ import {
 type SettingsTab = 'general' | 'channels' | 'routes' | 'agents' | 'automation';
 
 export function SettingsModal({
-  onClose,
   initialTab = 'general',
   onOpenAgents,
   onOpenMCP,
 }: {
-  onClose: () => void;
   initialTab?: SettingsTab;
   onOpenAgents?: () => void;
   onOpenMCP?: () => void;
@@ -36,7 +34,6 @@ export function SettingsModal({
   const qc = useQueryClient();
   const [theme, toggleTheme] = useTheme();
   const [tab, setTab] = useState<SettingsTab>(initialTab);
-  const [expanded, setExpanded] = useState(false);
 
   const configQ = useQuery({ queryKey: qk.monitorConfig, queryFn: api.monitorConfig });
   const settingsQ = useQuery({ queryKey: qk.settings, queryFn: api.settings });
@@ -197,10 +194,6 @@ export function SettingsModal({
         e.preventDefault();
         saveCurrent();
       }
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'f') {
-        e.preventDefault();
-        setExpanded((v) => !v);
-      }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -217,28 +210,18 @@ export function SettingsModal({
   );
 
   return (
-    <Modal
+    <PageShell
       title="⚙️ 全局设置"
-      size="xl"
-      fullscreen={expanded}
-      style={expanded ? undefined : { height: '84vh' }}
-      headerActions={
-        <button className="ghost sm" onClick={() => setExpanded((v) => !v)} title="切换全屏">
-          {expanded ? '⤡ 还原' : '⛶ 全屏'}
-        </button>
-      }
-      onClose={onClose}
       footer={
         <div className="row" style={{ width: '100%', justifyContent: 'space-between' }}>
           <span className="small dim">
             {tab === 'routes'
               ? 'In-app 始终记录；浏览器通知按本机设置生效。'
               : tab === 'automation'
-                ? '全局规则修改会立即保存；Ctrl/Cmd+S 保存，Ctrl/Cmd+Shift+F 切换全屏。'
+                ? '全局规则修改会立即保存；Ctrl/Cmd+S 保存。'
                 : '全局设置会立即保存到本机 config.yaml。'}
           </span>
           <div className="row" style={{ gap: 8 }}>
-            <button onClick={onClose}>关闭</button>
             {(tab === 'general' || tab === 'agents') && (
               <button
                 className="primary"
@@ -741,7 +724,7 @@ export function SettingsModal({
                         {p.active} 条启用 / 共 {p.total} 条规则
                       </div>
                     </div>
-                    <a className="sm ghost btn" href={`/projects/${p.id}`} onClick={onClose} style={{ textDecoration: 'none' }}>
+                    <a className="sm ghost btn" href={`/projects/${p.id}`} style={{ textDecoration: 'none' }}>
                       打开项目设置
                     </a>
                   </div>
@@ -752,6 +735,6 @@ export function SettingsModal({
           )}
         </div>
       </div>
-    </Modal>
+    </PageShell>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { Modal } from './common';
+import { PageShell } from './common';
 import { toast } from '../toast';
 import { copyText } from '../clipboard';
 import type { CherryPickResult, Repo } from '../types';
@@ -162,10 +162,8 @@ export function CherryPickModal({
       );
 
   return (
-    <Modal
+    <PageShell
       title="🍒 Cherry-Pick 改动创建 PR & 生成标准改动记录"
-      size="lg"
-      onClose={onClose}
       footer={
         result ? (
           <>
@@ -463,6 +461,6 @@ export function CherryPickModal({
           </div>
         </div>
       )}
-    </Modal>
+    </PageShell>
   );
 }

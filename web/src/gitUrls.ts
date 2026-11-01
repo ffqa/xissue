@@ -16,6 +16,27 @@ function repoPath(ownerRepo: string): string {
     .join('/');
 }
 
+const PROVIDER_BASE: Record<string, string> = {
+  github: 'https://github.com',
+  gitlab: 'https://gitlab.com',
+  gitea: 'https://gitea.com',
+};
+
+// getRepoWebUrl resolves the browsable repository page, or null for local-only repos.
+export function getRepoWebUrl(repo?: Repo): string | null {
+  if (!repo) return null;
+  const remote = repo.remoteUrl?.trim() || '';
+  const ownerRepo = repo.ownerRepo?.trim();
+  const base = remoteOrigin(remote);
+  if (repo.provider !== 'plain' && ownerRepo) {
+    return `${base || PROVIDER_BASE[repo.provider] || PROVIDER_BASE.github}/${repoPath(ownerRepo)}`;
+  }
+  if (/^https?:\/\//i.test(remote)) {
+    return remote.replace(/\.git$/, '');
+  }
+  return null;
+}
+
 export function getCommitWebUrl(repo?: Repo, sha?: string): string | null {
   if (!repo || !sha) return null;
   const ownerRepo = repo.ownerRepo?.trim();

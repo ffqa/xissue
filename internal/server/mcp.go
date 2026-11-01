@@ -284,6 +284,44 @@ func mcpToolDefinitions() []map[string]any {
 				},
 			},
 		},
+		{
+			"name":        "xissue_get_run_changes",
+			"description": "Get a run's changed files grouped per repository, including each worktreePath and the unified patch so the caller can run verification commands and feed an independent reviewer.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"runId"},
+				"properties": map[string]any{
+					"runId":     map[string]any{"type": "number", "description": "Run ID"},
+					"withPatch": map[string]any{"type": "boolean", "description": "Include the unified diff (default: true)"},
+				},
+			},
+		},
+		{
+			"name":        "xissue_send_message",
+			"description": "Send a follow-up message to a run, resuming its warm agent session so the agent can keep editing the worktree.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"runId", "text"},
+				"properties": map[string]any{
+					"runId": map[string]any{"type": "number", "description": "Run ID"},
+					"text":  map[string]any{"type": "string", "description": "Message / instructions for the agent"},
+				},
+			},
+		},
+		{
+			"name":        "xissue_submit_run",
+			"description": "Submit a run: pr (open a pull request) or push (push the branch only). merge_local is intentionally unavailable over MCP so unattended agents cannot merge into the target branch; use the web UI for that. The run's worktree is removed afterwards.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"runId", "mode"},
+				"properties": map[string]any{
+					"runId":         map[string]any{"type": "number", "description": "Run ID"},
+					"mode":          map[string]any{"type": "string", "enum": []string{"pr", "push"}, "description": "Submit mode (merge_local is only available from the web UI)"},
+					"targetBranch":  map[string]any{"type": "string", "description": "Target branch (default: project/repo default branch)"},
+					"commitMessage": map[string]any{"type": "string", "description": "Commit message (default: issue title + key)"},
+				},
+			},
+		},
 	}
 }
 
@@ -463,6 +501,63 @@ func (s *Server) callMCPTool(ctx context.Context, name string, args map[string]a
 			limit = 10
 		}
 		results, err := knowledge.SearchDocs(ctx, s.cfg.DataDir, p, query, limit)
+		if err != nil {
+			return "error: " + err.Error(), true
+		}
+		b, _ := json.MarshalIndent(results, "", "  ")
+		return string(b), false
+
+	case "xissue_get_run_changes":
+		rid := numArg("runId")
+		if rid <= 0 {
+			return "error: runId is required", true
+		}
+		withPatch := true
+		if _, ok := args["withPatch"].(bool); ok {
+			withPatch = boolArg("withPatch")
+		}
+		changes, err := s.runner.Changes(ctx, rid, withPatch)
+		if err != nil {
+			return "error: " + err.Error(), true
+		}
+		b, _ := json.MarshalIndent(changes, "", "  ")
+		return string(b), false
+
+	case "xissue_send_message":
+		rid := numArg("runId")
+		text := strArg("text")
+		if rid <= 0 || text == "" {
+			return "error: runId and text are required", true
+		}
+		if err := s.runner.SendMessage(ctx, rid, text); err != nil {
+			return "error: " + err.Error(), true
+		}
+		b, _ := json.MarshalIndent(map[string]any{"ok": true, "runId": rid}, "", "  ")
+		return string(b), false
+
+	case "xissue_submit_run":
+		rid := numArg("runId")
+		mode := strArg("mode")
+		if rid <= 0 {
+			return "error: runId is required", true
+		}
+		switch mode {
+		case "pr", "push":
+		default:
+			return "error: mode must be one of pr, push (merge_local is only available from the web UI)", true
+		}
+		if run, gerr := s.st.GetRun(ctx, rid); gerr != nil {
+			return "error: " + gerr.Error(), true
+		} else if run.AutoPR {
+			// Auto-develop runs are submitted by the harness itself after a
+			// successful turn; an agent must not be able to submit them early.
+			return "error: this run is managed by auto-develop and cannot be submitted manually", true
+		}
+		results, err := s.runner.Submit(ctx, rid, runner.SubmitRequest{
+			Mode:          mode,
+			TargetBranch:  strArg("targetBranch"),
+			CommitMessage: strArg("commitMessage"),
+		})
 		if err != nil {
 			return "error: " + err.Error(), true
 		}

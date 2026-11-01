@@ -3,13 +3,12 @@ import type { ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import type { DocItem } from '../types';
-import { Modal, Markdown, fmtTime } from './common';
+import { PageShell, Markdown, fmtTime } from './common';
 import { toast } from '../toast';
 
 interface Props {
   projectId: number;
   projectName?: string;
-  onClose: () => void;
 }
 
 const CATEGORY_META = {
@@ -63,14 +62,13 @@ function buildDirTree(docs: DocItem[]): DirNode {
   return root;
 }
 
-export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
+export function KnowledgeBaseModal({ projectId, projectName }: Props) {
   const qc = useQueryClient();
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [editContent, setEditContent] = useState('');
-  const [fullscreen, setFullscreen] = useState(false);
   const [sidebarHidden, setSidebarHidden] = useState(false);
   const collapsedInitialized = useRef(false);
 
@@ -191,25 +189,15 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
   }, [isEditing, saveDocMut]);
 
   return (
-    <Modal
+    <PageShell
       title={
         <div className="row" style={{ alignItems: 'center', gap: 10 }}>
           <span>📚 项目知识库与 Wiki</span>
           {projectName && <span className="muted small font-normal">({projectName})</span>}
         </div>
       }
-      size="xl"
-      style={fullscreen ? undefined : { width: 'min(1400px, 96vw)' }}
-      fullscreen={fullscreen}
       headerActions={
         <div className="row" style={{ gap: 4 }}>
-          <button
-            className="ghost sm"
-            title={fullscreen ? '退出全屏' : '全屏查看 (Esc 可退出)'}
-            onClick={() => setFullscreen((v) => !v)}
-          >
-            {fullscreen ? '🗗' : '⛶'}
-          </button>
           <button
             className="ghost sm"
             title={sidebarHidden ? '显示目录侧栏' : '隐藏目录侧栏，最大化阅读宽度'}
@@ -219,21 +207,13 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
           </button>
         </div>
       }
-      onClose={onClose}
       onEscape={() => {
-        if (isEditing) {
-          setIsEditing(false);
-        } else if (fullscreen) {
-          setFullscreen(false);
-        } else {
-          onClose();
-        }
+        if (isEditing) setIsEditing(false);
       }}
       bodyStyle={{
         padding: 0,
         overflow: 'hidden',
-        height: fullscreen ? undefined : '78vh',
-        minHeight: fullscreen ? 0 : 520,
+        minHeight: 0,
         display: 'flex',
         flexDirection: 'column',
       }}
@@ -499,7 +479,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
                     }}
                   />
                 ) : (
-                  <div style={{ maxWidth: fullscreen || sidebarHidden ? 1200 : 1050, margin: '0 auto', wordBreak: 'break-word' }}>
+                  <div style={{ maxWidth: sidebarHidden ? 1200 : 1050, margin: '0 auto', wordBreak: 'break-word' }}>
                     <Markdown>{curDoc.content || '*(此文档为空)*'}</Markdown>
                   </div>
                 )}
@@ -508,7 +488,7 @@ export function KnowledgeBaseModal({ projectId, projectName, onClose }: Props) {
           )}
         </div>
       </div>
-    </Modal>
+    </PageShell>
   );
 
   function renderGroupHeader(key: string, depth: number, icon: string, label: string, count: number) {

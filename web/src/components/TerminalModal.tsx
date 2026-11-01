@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
-import { Modal } from './common';
+import { PageShell } from './common';
 
 type ConnectionState = 'connecting' | 'open' | 'closed' | 'error';
 
@@ -143,7 +143,7 @@ export function TerminalModal({
           : '已断开';
 
   return (
-    <Modal
+    <PageShell
       title={
         <span className="row" style={{ gap: 10 }}>
           <span>⌨️ 工作区终端</span>
@@ -151,10 +151,7 @@ export function TerminalModal({
           <span className="small muted mono">{workdir}</span>
         </span>
       }
-      onClose={onClose}
-      size="xl"
       bodyStyle={{ padding: 0, minHeight: 0 }}
-      style={{ width: 'min(1280px, 96vw)', height: '82vh' }}
       footer={
         <>
           <span className="small muted">终端运行在 Run 工作区内；关闭窗口会结束该 Shell。</span>
@@ -171,6 +168,6 @@ export function TerminalModal({
       <div className="terminal-shell">
         <div ref={hostRef} className="terminal-host" />
       </div>
-    </Modal>
+    </PageShell>
   );
 }

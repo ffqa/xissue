@@ -48,6 +48,9 @@ export type DevMode = 'single_main' | 'main_dev';
 export interface Project {
   id: number;
   name: string;
+  slug: string;
+  version?: string;
+  pinned: boolean;
   description: string;
   devMode?: DevMode;
   targetBranch: string;
@@ -367,7 +370,9 @@ export interface RepoChanges {
   repoId: number;
   repoName: string;
   branch: string;
+  worktreePath?: string;
   files: ChangedFile[];
+  patch?: string;
 }
 
 export interface SubmitResult {
@@ -723,6 +728,7 @@ export interface UsageDay {
   date: string;
   runs: number;
   inputTokens: number;
+  cachedTokens: number;
   outputTokens: number;
   totalTokens: number;
   costByCurrency: Record<string, number>;
@@ -734,6 +740,7 @@ export interface UsageReport {
   totals: {
     runs: number;
     inputTokens: number;
+    cachedTokens: number;
     outputTokens: number;
     totalTokens: number;
     costByCurrency: Record<string, number>;

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { Modal } from './common';
+import { PageShell } from './common';
 import { toast } from '../toast';
 import type { AgentInfo } from '../types';
 
-export function AgentManagerModal({ onClose }: { onClose: () => void }) {
+export function AgentManagerModal() {
   const qc = useQueryClient();
   const agentsQ = useQuery({ queryKey: qk.agents, queryFn: api.agents });
   const agents = agentsQ.data ?? [];
@@ -142,10 +142,8 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
     : discovered;
 
   return (
-    <Modal
+    <PageShell
       title="🤖 Agent 管理"
-      size="lg"
-      onClose={onClose}
       footer={
         <>
           <button
@@ -169,9 +167,6 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
               删除此 Agent
             </button>
           )}
-          <button type="button" onClick={onClose}>
-            关闭
-          </button>
           <button
             type="button"
             className="primary"
@@ -385,7 +380,7 @@ export function AgentManagerModal({ onClose }: { onClose: () => void }) {
           />
         </label>
       </div>
-    </Modal>
+    </PageShell>
   );
 }
 

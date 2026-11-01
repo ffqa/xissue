@@ -35,13 +35,14 @@ type PermissionPolicy struct {
 // RunnerConfig controls local execution.
 type RunnerConfig struct {
 	MaxConcurrent          int  `yaml:"maxConcurrent"`
-	MaxQueuedRuns          int  `yaml:"maxQueuedRuns"`          // 0 = unlimited pending queue
-	MemoryBudgetMB         int  `yaml:"memoryBudgetMB"`         // 0 = unlimited
-	UseSystemdRun          bool `yaml:"useSystemdRun"`          // Linux: wrap agents with systemd-run --user --scope
-	IdleTimeoutSec         int  `yaml:"idleTimeoutSec"`         // stop idle agent process while waiting for review
-	EventRetentionDays     int  `yaml:"eventRetentionDays"`     // 0 = keep run_events forever
-	WorkspaceRetentionDays int  `yaml:"workspaceRetentionDays"` // 0 = keep run workdirs forever
-	DoneArchiveDays        int  `yaml:"doneArchiveDays"`        // move done issues older than N days to archive; 0 = keep forever
+	MaxQueuedRuns          int  `yaml:"maxQueuedRuns"`                                  // 0 = unlimited pending queue
+	MemoryBudgetMB         int  `yaml:"memoryBudgetMB"`                                 // 0 = unlimited
+	UseSystemdRun          bool `yaml:"useSystemdRun"`                                  // Linux: wrap agents with systemd-run --user --scope
+	IdleTimeoutSec         int  `yaml:"idleTimeoutSec"`                                 // stop idle agent process while waiting for review
+	EventRetentionDays     int  `yaml:"eventRetentionDays"`                             // 0 = keep run_events forever
+	WorkspaceRetentionDays int  `yaml:"workspaceRetentionDays"`                         // 0 = keep run workdirs forever
+	DoneArchiveDays        int  `yaml:"doneArchiveDays"`                                // move done issues older than N days to archive; 0 = keep forever
+	DoneArchiveMaxCount    int  `yaml:"doneArchiveMaxCount" json:"doneArchiveMaxCount"` // keep at most N unarchived done issues per project; 0 = unlimited
 }
 
 // MonitorConfig controls branch and PR background monitoring and external notifications.
@@ -323,6 +324,7 @@ func Default() *Config {
 			EventRetentionDays:     7,
 			WorkspaceRetentionDays: 7,
 			DoneArchiveDays:        30,
+			DoneArchiveMaxCount:    20,
 		},
 		Monitor: MonitorConfig{
 			Enabled:         true,
@@ -386,6 +388,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Runner.DoneArchiveDays < 0 {
 		cfg.Runner.DoneArchiveDays = 0
+	}
+	if cfg.Runner.DoneArchiveMaxCount < 0 {
+		cfg.Runner.DoneArchiveMaxCount = 0
 	}
 	if cfg.Runner.WorkspaceRetentionDays < 0 {
 		cfg.Runner.WorkspaceRetentionDays = 0

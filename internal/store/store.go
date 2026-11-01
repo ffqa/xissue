@@ -96,7 +96,12 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE runs ADD COLUMN change_record TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`)
 	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN archived_at TEXT`)
+	// completed_at records when an issue reached done, so archive rules do not
+	// depend on updated_at (comments bump it). Existing done rows backfill once.
+	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN completed_at TEXT`)
+	_, _ = db.Exec(`UPDATE issues SET completed_at=updated_at WHERE status='done' AND completed_at IS NULL`)
 	_, _ = db.Exec(`ALTER TABLE issues ADD COLUMN parent_issue_id INTEGER REFERENCES issues(id) ON DELETE SET NULL`)
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN dev_mode TEXT NOT NULL DEFAULT 'single_main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN target_branch TEXT NOT NULL DEFAULT 'main'`)
 	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1`)
@@ -124,6 +129,9 @@ func Open(path string) (*Store, error) {
 	_, _ = db.Exec(`ALTER TABLE comments ADD COLUMN remote_id TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE comments ADD COLUMN remote_url TEXT NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_comments_remote ON comments(issue_id, remote_id) WHERE remote_id <> ''`)
+	if err := migrateProjectSlugs(db); err != nil {
+		return nil, fmt.Errorf("migrate project slugs: %w", err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -152,21 +160,139 @@ func nullInt(ns sql.NullInt64) *int64 {
 	return &v
 }
 
+// slugify turns a project name into a URL-safe identifier. Non-ASCII names
+// (e.g. pure Chinese) fall back to a numeric suffix so the slug stays unique.
+func slugify(name string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			lastDash = false
+		case r == '-' || r == '_' || r == ' ' || r == '.' || r == '/':
+			if b.Len() > 0 && !lastDash {
+				b.WriteByte('-')
+				lastDash = true
+			}
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if len(out) > 48 {
+		out = strings.TrimRight(out[:48], "-")
+	}
+	return out
+}
+
+var (
+	ErrInvalidProjectSlug = errors.New("项目标识格式不正确")
+	ErrProjectSlugTaken   = errors.New("项目标识已被占用")
+)
+
+func validateProjectSlug(slug string) error {
+	if slug == "" {
+		return fmt.Errorf("项目标识不能为空")
+	}
+	for i, r := range slug {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-'
+		if !ok || (i == 0 && r == '-') {
+			return fmt.Errorf("项目标识只能包含小写字母、数字和 -，且不能以 - 开头")
+		}
+	}
+	if len(slug) > 48 {
+		return fmt.Errorf("项目标识最长 48 个字符")
+	}
+	return nil
+}
+
+func migrateProjectSlugs(db *sql.DB) error {
+	_, _ = db.Exec(`ALTER TABLE projects ADD COLUMN slug TEXT NOT NULL DEFAULT ''`)
+	rows, err := db.Query(`SELECT id, name, slug FROM projects ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	type row struct {
+		id   int64
+		name string
+		slug string
+	}
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.name, &r.slug); err != nil {
+			rows.Close()
+			return err
+		}
+		if r.slug == "" {
+			pending = append(pending, r)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range pending {
+		base := slugify(r.name)
+		if base == "" {
+			base = fmt.Sprintf("project-%d", r.id)
+		}
+		slug := base
+		for i := 2; ; i++ {
+			var existing int64
+			err := db.QueryRow(`SELECT id FROM projects WHERE slug=? AND id<>?`, slug, r.id).Scan(&existing)
+			if errors.Is(err, sql.ErrNoRows) {
+				break
+			}
+			if err != nil {
+				return err
+			}
+			slug = fmt.Sprintf("%s-%d", base, i)
+		}
+		if _, err := db.Exec(`UPDATE projects SET slug=? WHERE id=?`, slug, r.id); err != nil {
+			return err
+		}
+	}
+	// Only create the unique index once every row has a value.
+	_, _ = db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_slug ON projects(slug)`)
+	return nil
+}
+
+// uniqueProjectSlug returns base or base-2, base-3… that no other project uses.
+func (s *Store) uniqueProjectSlug(ctx context.Context, base string, excludeID int64) (string, error) {
+	if base == "" {
+		base = "project"
+	}
+	slug := base
+	for i := 2; i < 1000; i++ {
+		var existing int64
+		err := s.db.QueryRowContext(ctx, `SELECT id FROM projects WHERE slug=? AND id<>?`, slug, excludeID).Scan(&existing)
+		if errors.Is(err, sql.ErrNoRows) {
+			return slug, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		slug = fmt.Sprintf("%s-%d", base, i)
+	}
+	return "", fmt.Errorf("无法为 %q 生成唯一项目标识", base)
+}
+
 // ---------- Projects ----------
 
-const projectCols = `id, name, description, dev_mode, target_branch, auto_pr_on_confirm, automation_rules, auto_develop, auto_develop_agent, auto_develop_labels, auto_develop_text, auto_develop_authors, auto_develop_daily_limit, pull_branches, runner_id, created_at, updated_at`
+const projectCols = `id, name, slug, description, pinned, dev_mode, target_branch, auto_pr_on_confirm, automation_rules, auto_develop, auto_develop_agent, auto_develop_labels, auto_develop_text, auto_develop_authors, auto_develop_daily_limit, pull_branches, runner_id, created_at, updated_at`
 
 func scanProject(s interface{ Scan(...any) error }) (domain.Project, error) {
 	var p domain.Project
 	var c, u string
-	var autoPR, autoDevelop, autoDevelopText, autoDevelopDailyLimit int
+	var autoPR, autoDevelop, autoDevelopText, autoDevelopDailyLimit, pinned int
 	var devMode string
 	var autoRulesRaw, autoLabelsRaw, autoAuthorsRaw, pullBranchesRaw string
-	err := s.Scan(&p.ID, &p.Name, &p.Description, &devMode, &p.TargetBranch, &autoPR, &autoRulesRaw, &autoDevelop, &p.AutoDevelopAgent, &autoLabelsRaw, &autoDevelopText, &autoAuthorsRaw, &autoDevelopDailyLimit, &pullBranchesRaw, &p.RunnerID, &c, &u)
+	err := s.Scan(&p.ID, &p.Name, &p.Slug, &p.Description, &pinned, &devMode, &p.TargetBranch, &autoPR, &autoRulesRaw, &autoDevelop, &p.AutoDevelopAgent, &autoLabelsRaw, &autoDevelopText, &autoAuthorsRaw, &autoDevelopDailyLimit, &pullBranchesRaw, &p.RunnerID, &c, &u)
 	if err != nil {
 		return p, err
 	}
 	p.CreatedAt, p.UpdatedAt = parseTime(c), parseTime(u)
+	p.Pinned = pinned != 0
 	p.AutoPROnConfirm = autoPR != 0
 	p.AutoDevelop = autoDevelop != 0
 	p.AutoDevelopText = autoDevelopText != 0
@@ -207,7 +333,7 @@ func scanProject(s interface{ Scan(...any) error }) (domain.Project, error) {
 }
 
 func (s *Store) ListProjects(ctx context.Context) ([]domain.Project, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+projectCols+` FROM projects ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+projectCols+` FROM projects ORDER BY pinned DESC, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -256,8 +382,12 @@ func (s *Store) CreateProject(ctx context.Context, name, desc string, devMode ..
 		targetBranch = "dev"
 	}
 	labelsJSON, _ := json.Marshal(domain.DefaultAutoDevelopLabels())
-	res, err := s.db.ExecContext(ctx, `INSERT INTO projects(name, description, dev_mode, target_branch, auto_pr_on_confirm, auto_develop_labels, auto_develop_daily_limit, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)`,
-		name, desc, string(dm), targetBranch, 1, string(labelsJSON), 5, t, t)
+	slug, err := s.uniqueProjectSlug(ctx, slugify(name), 0)
+	if err != nil {
+		return nil, err
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT INTO projects(name, slug, description, dev_mode, target_branch, auto_pr_on_confirm, auto_develop_labels, auto_develop_daily_limit, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		name, slug, desc, string(dm), targetBranch, 1, string(labelsJSON), 5, t, t)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +397,9 @@ func (s *Store) CreateProject(ctx context.Context, name, desc string, devMode ..
 
 type ProjectPatch struct {
 	Name                  *string                  `json:"name"`
+	Slug                  *string                  `json:"slug"`
 	Description           *string                  `json:"description"`
+	Pinned                *bool                    `json:"pinned"`
 	DevMode               *domain.DevMode          `json:"devMode"`
 	TargetBranch          *string                  `json:"targetBranch"`
 	AutoPROnConfirm       *bool                    `json:"autoPrOnConfirm"`
@@ -292,6 +424,23 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 	}
 	if patch.Description != nil {
 		p.Description = *patch.Description
+	}
+	if patch.Pinned != nil {
+		p.Pinned = *patch.Pinned
+	}
+	if patch.Slug != nil {
+		slug := strings.TrimSpace(*patch.Slug)
+		if err := validateProjectSlug(slug); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidProjectSlug, err)
+		}
+		unique, err := s.uniqueProjectSlug(ctx, slug, id)
+		if err != nil {
+			return nil, err
+		}
+		if unique != slug {
+			return nil, fmt.Errorf("%w: %q", ErrProjectSlugTaken, slug)
+		}
+		p.Slug = slug
 	}
 	if patch.DevMode != nil {
 		dm := *patch.DevMode
@@ -373,6 +522,10 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 	if p.AutoPROnConfirm {
 		autoInt = 1
 	}
+	pinnedInt := 0
+	if p.Pinned {
+		pinnedInt = 1
+	}
 	autoDevInt := 0
 	if p.AutoDevelop {
 		autoDevInt = 1
@@ -385,8 +538,8 @@ func (s *Store) UpdateProject(ctx context.Context, id int64, patch ProjectPatch)
 	pullBranchesJSON, _ := json.Marshal(p.PullBranches)
 	labelsJSON, _ := json.Marshal(p.AutoDevelopLabels)
 	authorsJSON, _ := json.Marshal(p.AutoDevelopAuthors)
-	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, description=?, dev_mode=?, target_branch=?, auto_pr_on_confirm=?, automation_rules=?, auto_develop=?, auto_develop_agent=?, auto_develop_labels=?, auto_develop_text=?, auto_develop_authors=?, auto_develop_daily_limit=?, pull_branches=?, runner_id=?, updated_at=? WHERE id=?`,
-		p.Name, p.Description, string(p.DevMode), p.TargetBranch, autoInt, string(rulesJSON), autoDevInt, p.AutoDevelopAgent, string(labelsJSON), autoDevTextInt, string(authorsJSON), p.AutoDevelopDailyLimit, string(pullBranchesJSON), p.RunnerID, now(), id); err != nil {
+	if _, err := s.db.ExecContext(ctx, `UPDATE projects SET name=?, slug=?, description=?, pinned=?, dev_mode=?, target_branch=?, auto_pr_on_confirm=?, automation_rules=?, auto_develop=?, auto_develop_agent=?, auto_develop_labels=?, auto_develop_text=?, auto_develop_authors=?, auto_develop_daily_limit=?, pull_branches=?, runner_id=?, updated_at=? WHERE id=?`,
+		p.Name, p.Slug, p.Description, pinnedInt, string(p.DevMode), p.TargetBranch, autoInt, string(rulesJSON), autoDevInt, p.AutoDevelopAgent, string(labelsJSON), autoDevTextInt, string(authorsJSON), p.AutoDevelopDailyLimit, string(pullBranchesJSON), p.RunnerID, now(), id); err != nil {
 		return nil, err
 	}
 	return s.GetProject(ctx, id)
@@ -785,6 +938,7 @@ type IssuePatch struct {
 	Labels   *[]string             `json:"labels"`
 	Priority *domain.IssuePriority `json:"priority"`
 	Status   *domain.IssueStatus   `json:"status"`
+	Archived *bool                 `json:"archived"`
 }
 
 func (s *Store) UpdateIssue(ctx context.Context, id int64, p IssuePatch) (*domain.Issue, error) {
@@ -796,7 +950,7 @@ func (s *Store) UpdateIssue(ctx context.Context, id int64, p IssuePatch) (*domai
 	if p.Status != nil && !domain.ValidIssueStatus(*p.Status) {
 		return nil, fmt.Errorf("invalid status %q", *p.Status)
 	}
-	if p.Status != nil && *p.Status != domain.IssueDone {
+	if p.Status != nil && *p.Status != domain.IssueDone && p.Archived == nil {
 		sets = append(sets, "archived_at=NULL")
 	}
 	if p.Priority != nil && !domain.ValidIssuePriority(*p.Priority) {
@@ -817,6 +971,20 @@ func (s *Store) UpdateIssue(ctx context.Context, id int64, p IssuePatch) (*domai
 	}
 	if p.Status != nil {
 		sets, args = append(sets, "status=?"), append(args, *p.Status)
+		if *p.Status == domain.IssueDone {
+			if old.Status != domain.IssueDone {
+				sets, args = append(sets, "completed_at=?"), append(args, now())
+			}
+		} else {
+			sets = append(sets, "completed_at=NULL")
+		}
+	}
+	if p.Archived != nil {
+		if *p.Archived {
+			sets, args = append(sets, "archived_at=?"), append(args, now())
+		} else {
+			sets = append(sets, "archived_at=NULL")
+		}
 	}
 	sets, args = append(sets, "updated_at=?"), append(args, now())
 	args = append(args, id)
@@ -861,13 +1029,58 @@ func (s *Store) ListSubIssues(ctx context.Context, parentID int64) ([]domain.Iss
 // The done status and updated_at are preserved; archived_at is the only change.
 func (s *Store) ArchiveDoneIssuesBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE issues SET archived_at=? WHERE status=? AND archived_at IS NULL AND updated_at < ?`,
+		`UPDATE issues SET archived_at=? WHERE status=? AND archived_at IS NULL AND COALESCE(completed_at, updated_at) < ?`,
 		now(), domain.IssueDone, cutoff.UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return 0, err
 	}
 	n, _ := res.RowsAffected()
 	return int(n), nil
+}
+
+// ArchiveDoneIssuesOverLimit keeps at most keep unarchived done issues per
+// project and archives the oldest ones beyond that limit.
+func (s *Store) ArchiveDoneIssuesOverLimit(ctx context.Context, keep int) (int, error) {
+	if keep <= 0 {
+		return 0, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, project_id FROM issues WHERE status=? AND archived_at IS NULL ORDER BY project_id ASC, COALESCE(completed_at, updated_at) DESC, id DESC`,
+		domain.IssueDone)
+	if err != nil {
+		return 0, err
+	}
+	seen := map[int64]int{}
+	var ids []int64
+	for rows.Next() {
+		var id, pid int64
+		if err := rows.Scan(&id, &pid); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		seen[pid]++
+		if seen[pid] > keep {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, now())
+	ph := make([]string, len(ids))
+	for i, id := range ids {
+		ph[i] = "?"
+		args = append(args, id)
+	}
+	if _, err := s.db.ExecContext(ctx, `UPDATE issues SET archived_at=? WHERE id IN (`+strings.Join(ph, ",")+`)`, args...); err != nil {
+		return 0, err
+	}
+	return len(ids), nil
 }
 
 func (s *Store) AddIssueEvent(ctx context.Context, issueID int64, kind, actor, message string) error {

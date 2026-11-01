@@ -36,7 +36,10 @@ const (
 type Project struct {
 	ID                    int64            `json:"id"`
 	Name                  string           `json:"name"`
+	Slug                  string           `json:"slug"`    // 项目唯一标识（URL 安全），创建时自动生成，可在项目信息里修改
+	Version               string           `json:"version"` // 主版本：主仓库最新 semver tag（只读，API 计算）
 	Description           string           `json:"description"`
+	Pinned                bool             `json:"pinned"` // 置顶项目显示在侧栏「全部项目」之下
 	DevMode               DevMode          `json:"devMode"`
 	TargetBranch          string           `json:"targetBranch"`
 	AutoPROnConfirm       bool             `json:"autoPrOnConfirm"`

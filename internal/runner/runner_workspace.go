@@ -55,7 +55,7 @@ func (r *Runner) prepareWorkspace(ctx context.Context, run *domain.Run, proj *do
 	return nil
 }
 
-func (r *Runner) Changes(ctx context.Context, runID int64) ([]RepoChanges, error) {
+func (r *Runner) Changes(ctx context.Context, runID int64, withPatch bool) ([]RepoChanges, error) {
 	run, proj, err := r.runAndProject(ctx, runID)
 	if err != nil {
 		return nil, err
@@ -81,12 +81,19 @@ func (r *Runner) Changes(ctx context.Context, runID int64) ([]RepoChanges, error
 		if err != nil || files == nil {
 			files = []gitx.FileChange{}
 		}
-		out = append(out, RepoChanges{
-			RepoID:   repo.ID,
-			RepoName: repo.Name,
-			Branch:   run.Branch,
-			Files:    files,
-		})
+		rc := RepoChanges{
+			RepoID:       repo.ID,
+			RepoName:     repo.Name,
+			Branch:       run.Branch,
+			WorktreePath: wt,
+			Files:        files,
+		}
+		if withPatch {
+			if patch, perr := gitx.Diff(ctx, wt, repo.DefaultBranch, gitx.MaxPatchBytes); perr == nil {
+				rc.Patch = patch
+			}
+		}
+		out = append(out, rc)
 	}
 	return out, nil
 }

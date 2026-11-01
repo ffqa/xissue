@@ -140,69 +140,68 @@ func (r *Runner) sendExternalNotification(kind, title, body, link string) {
 	allowTelegram := notificationRouteAllows(mon.NotificationRoutes, kind, "telegram")
 	allowWebhook := notificationRouteAllows(mon.NotificationRoutes, kind, "webhook")
 
-	go func() {
+	// Each channel gets its own goroutine and timeout: an unreachable
+	// telegram.org must not starve the webhook or notification plugins.
+	post := func(url string, payload []byte, name string, secrets ...string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-
-		// 1. Telegram Bot 推送
-		if allowTelegram && tgToken != "" && tgChatID != "" {
-			payload, _ := json.Marshal(telegramPayload(tgChatID, title, body, link))
-			tgURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", tgToken)
-			req, err := http.NewRequestWithContext(ctx, "POST", tgURL, bytes.NewReader(payload))
-			if err == nil {
-				req.Header.Set("Content-Type", "application/json")
-				resp, rerr := http.DefaultClient.Do(req)
-				if rerr != nil {
-					r.LogMonitor("WARN", "notify", fmt.Sprintf("Telegram Bot 推送失败: %v", rerr))
-				} else {
-					detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-					resp.Body.Close()
-					if resp.StatusCode >= 300 {
-						r.LogMonitor("WARN", "notify", fmt.Sprintf("Telegram Bot 推送失败 (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(detail))))
-					} else {
-						r.LogMonitor("EVENT", "notify", fmt.Sprintf("已成功通过 Telegram Bot 推送通知: %s", title))
-					}
-				}
-			}
+		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
+		if err != nil {
+			return
 		}
-
-		// 2. 通用 Webhook 推送 (飞书/企微/钉钉/Slack/自定义)
-		if allowWebhook && webhookURL != "" {
-			payload, _ := json.Marshal(webhookPayload(kind, title, body, link))
-			req, err := http.NewRequestWithContext(ctx, "POST", webhookURL, bytes.NewReader(payload))
-			if err == nil {
-				req.Header.Set("Content-Type", "application/json")
-				resp, rerr := http.DefaultClient.Do(req)
-				if rerr != nil {
-					r.LogMonitor("WARN", "notify", fmt.Sprintf("Webhook 推送失败: %v", rerr))
-				} else {
-					detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-					resp.Body.Close()
-					if resp.StatusCode >= 300 {
-						r.LogMonitor("WARN", "notify", fmt.Sprintf("Webhook 推送失败 (HTTP %d): %s", resp.StatusCode, strings.TrimSpace(string(detail))))
-					} else {
-						r.LogMonitor("EVENT", "notify", fmt.Sprintf("已成功通过 Webhook 推送通知: %s", title))
-					}
-				}
+		req.Header.Set("Content-Type", "application/json")
+		resp, rerr := http.DefaultClient.Do(req)
+		if rerr != nil {
+			errMsg := rerr.Error()
+			for _, sec := range secrets {
+				errMsg = strings.ReplaceAll(errMsg, sec, "***")
 			}
+			r.LogMonitor("WARN", "notify", fmt.Sprintf("%s 推送失败: %s", name, errMsg))
+			return
 		}
-
-		// 3. 自定义通知扩展钩子与插件 (on-notify / notification_dispatch)
-		if r.automation != nil {
-			notifyCtx := &automation.NotificationEventContext{
-				Kind:      kind,
-				Title:     title,
-				Body:      body,
-				Link:      link,
-				Timestamp: time.Now().Format(time.RFC3339),
-			}
-			payload := automation.PREventContext{
-				Event:        "notification_dispatch",
-				Notification: notifyCtx,
-			}
-			_, _ = r.automation.ExecutePlugins(ctx, payload)
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			r.LogMonitor("WARN", "notify", fmt.Sprintf("%s 推送失败 (HTTP %d): %s", name, resp.StatusCode, strings.TrimSpace(string(detail))))
+			return
 		}
-	}()
+		r.LogMonitor("EVENT", "notify", fmt.Sprintf("已成功通过 %s 推送通知: %s", name, title))
+	}
+
+	// 1. Telegram Bot 推送
+	if allowTelegram && tgToken != "" && tgChatID != "" {
+		payload, _ := json.Marshal(telegramPayload(tgChatID, title, body, link))
+		tgURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", tgToken)
+		go post(tgURL, payload, "Telegram Bot", tgToken)
+	}
+
+	// 2. 通用 Webhook 推送 (飞书/企微/钉钉/Slack/自定义)
+	if allowWebhook && webhookURL != "" {
+		payload, _ := json.Marshal(webhookPayload(kind, title, body, link))
+		go post(webhookURL, payload, "Webhook", webhookURL)
+	}
+
+	// 3. 自定义通知扩展钩子与插件 (on-notify / notification_dispatch)
+	if r.automation != nil {
+		notifyCtx := &automation.NotificationEventContext{
+			Kind:      kind,
+			Title:     title,
+			Body:      body,
+			Link:      link,
+			Timestamp: time.Now().Format(time.RFC3339),
+		}
+		payload := automation.PREventContext{
+			Event:        "notification_dispatch",
+			Notification: notifyCtx,
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if _, err := r.automation.ExecutePlugins(ctx, payload); err != nil {
+				r.LogMonitor("WARN", "notify", fmt.Sprintf("通知插件执行失败: %v", err))
+			}
+		}()
+	}
 }
 
 func telegramMessage(title, body, link string) string {
@@ -1655,14 +1654,12 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 		repo, _ = r.st.GetRepo(ctx, *issue.RepoID)
 	}
 
-	// Prefer the repo's own local working tree. For remote repos the run worktree
-	// is used, but hooks stay gated by isTrustedAuthor below.
+	// Layer 2 scripts come from a user-owned working copy only. A run worktree
+	// contains agent-written code, so executing its hooks on a PR comment would
+	// let a crafted issue run arbitrary code locally (same rule as pr_merged).
 	workdir := ""
 	if repo != nil && gitx.IsLocalDir(repo.RemoteURL) {
 		workdir = repo.RemoteURL
-	}
-	if workdir == "" {
-		workdir = run.Workdir
 	}
 
 	merged := false
@@ -1799,6 +1796,12 @@ func (r *Runner) executeActions(ctx context.Context, actions []domain.RuleAction
 		switch act.Type {
 		case "merge_pr":
 			if repo == nil || prDetail.Number <= 0 {
+				continue
+			}
+			// Trust gate: same as trigger_run. Without it, any external
+			// commenter matching a rule pattern could merge the PR.
+			if !isTrustedAuthor(trig.Author, prDetail.Author, trig.Rules) {
+				r.LogMonitor("WARN", "automation", fmt.Sprintf("%s 作者 @%s 非信任人员，已阻断 merge_pr 自动合并", trig.Label, trig.Author))
 				continue
 			}
 			strategy := act.Strategy

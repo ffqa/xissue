@@ -1,15 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { fmtTime, Modal } from './common';
+import { fmtTime, PageShell } from './common';
 import type { ScheduledTask } from '../types';
 import { toast } from '../toast';
 
 export function SchedulesModal({
-  onClose,
   onOpenMonitor,
   onOpenSettings,
 }: {
-  onClose: () => void;
   onOpenMonitor: () => void;
   onOpenSettings: () => void;
 }) {
@@ -29,11 +27,8 @@ export function SchedulesModal({
   });
   const tasks = tasksQ.data ?? [];
   return (
-    <Modal
+    <PageShell
       title="⏱ 定时任务"
-      size="lg"
-      onClose={onClose}
-      footer={<button onClick={onClose}>关闭</button>}
     >
       <div className="col" style={{ gap: 8 }}>
         <div className="small dim">
@@ -79,6 +74,6 @@ export function SchedulesModal({
           </div>
         ))}
       </div>
-    </Modal>
+    </PageShell>
   );
 }

@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { Modal, fmtTime } from './common';
+import { PageShell, fmtTime } from './common';
 import type { UsageDay, UsageReport } from '../types';
 
 function fmtTokens(n: number): string {
@@ -21,42 +21,47 @@ function fmtCosts(costs: Record<string, number> | undefined): string {
 function UsageRows({ days, report }: { days: UsageDay[]; report: UsageReport }) {
   if (days.length === 0) return <div className="empty">该时间范围内没有 Run 记录。</div>;
   return (
-    <table className="table">
-      <thead>
-        <tr>
-          <th>日期</th>
-          <th>Runs</th>
-          <th>输入</th>
-          <th>输出</th>
-          <th>总计</th>
-          <th>费用</th>
-        </tr>
-      </thead>
-      <tbody>
-        {days.map((d) => (
-          <tr key={d.date}>
-            <td className="mono">{d.date}</td>
-            <td>{d.runs}</td>
-            <td>{fmtTokens(d.inputTokens)}</td>
-            <td>{fmtTokens(d.outputTokens)}</td>
-            <td>{fmtTokens(d.totalTokens)}</td>
-            <td>{fmtCosts(d.costByCurrency)}</td>
+    <div className="card" style={{ overflow: 'hidden' }}>
+      <table className="table">
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th className="num">Runs</th>
+            <th className="num" title="未命中缓存的输入 token">输入</th>
+            <th className="num" title="命中缓存的输入 token（已包含在总计里）">缓存读取</th>
+            <th className="num">输出</th>
+            <th className="num">总计</th>
+            <th className="num">费用</th>
           </tr>
-        ))}
-        <tr>
-          <td><b>合计</b></td>
-          <td><b>{report.totals.runs}</b></td>
-          <td><b>{fmtTokens(report.totals.inputTokens)}</b></td>
-          <td><b>{fmtTokens(report.totals.outputTokens)}</b></td>
-          <td><b>{fmtTokens(report.totals.totalTokens)}</b></td>
-          <td><b>{fmtCosts(report.totals.costByCurrency)}</b></td>
-        </tr>
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          {days.map((d) => (
+            <tr key={d.date}>
+              <td className="mono">{d.date}</td>
+              <td className="num">{d.runs}</td>
+              <td className="num">{fmtTokens(d.inputTokens)}</td>
+              <td className="num">{fmtTokens(d.cachedTokens)}</td>
+              <td className="num">{fmtTokens(d.outputTokens)}</td>
+              <td className="num">{fmtTokens(d.totalTokens)}</td>
+              <td className="num">{fmtCosts(d.costByCurrency)}</td>
+            </tr>
+          ))}
+          <tr>
+            <td><b>合计</b></td>
+            <td className="num"><b>{report.totals.runs}</b></td>
+            <td className="num"><b>{fmtTokens(report.totals.inputTokens)}</b></td>
+            <td className="num"><b>{fmtTokens(report.totals.cachedTokens)}</b></td>
+            <td className="num"><b>{fmtTokens(report.totals.outputTokens)}</b></td>
+            <td className="num"><b>{fmtTokens(report.totals.totalTokens)}</b></td>
+            <td className="num"><b>{fmtCosts(report.totals.costByCurrency)}</b></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   );
 }
 
-export function UsageModal({ onClose }: { onClose: () => void }) {
+export function UsageModal() {
   const [days, setDays] = useState(30);
   const usageQ = useQuery({
     queryKey: qk.usage(days),
@@ -66,15 +71,12 @@ export function UsageModal({ onClose }: { onClose: () => void }) {
   const report = usageQ.data;
 
   return (
-    <Modal
+    <PageShell
       title="📊 Agent 用量与费用"
-      onClose={onClose}
-      size="xl"
       footer={
         <>
           <span className="small muted">数据来自 ACP usage_update 与 Agent 返回的结束回合 usage；未上报的 Agent 显示为 0。</span>
           <span className="grow" />
-          <button type="button" onClick={onClose}>关闭</button>
         </>
       }
     >
@@ -98,16 +100,19 @@ export function UsageModal({ onClose }: { onClose: () => void }) {
       {report && (
         <>
           <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
-            <div className="card" style={{ padding: 12, minWidth: 150 }}>
+            <div className="card" style={{ padding: 12, flex: '1 1 160px', minWidth: 150 }}>
               <div className="small muted">Runs</div>
               <div style={{ fontSize: 24 }}>{report.totals.runs}</div>
             </div>
-            <div className="card" style={{ padding: 12, minWidth: 170 }}>
+            <div className="card" style={{ padding: 12, flex: '1 1 200px', minWidth: 170 }}>
               <div className="small muted">Token 总量</div>
               <div style={{ fontSize: 24 }}>{fmtTokens(report.totals.totalTokens)}</div>
-              <div className="small muted">输入 {fmtTokens(report.totals.inputTokens)} · 输出 {fmtTokens(report.totals.outputTokens)}</div>
+              <div className="small muted">
+                输入 {fmtTokens(report.totals.inputTokens)} · 缓存读取 {fmtTokens(report.totals.cachedTokens)} · 输出{' '}
+                {fmtTokens(report.totals.outputTokens)}
+              </div>
             </div>
-            <div className="card" style={{ padding: 12, minWidth: 180 }}>
+            <div className="card" style={{ padding: 12, flex: '1 1 200px', minWidth: 180 }}>
               <div className="small muted">费用</div>
               <div style={{ fontSize: 24 }}>{fmtCosts(report.totals.costByCurrency)}</div>
               <div className="small muted">按 Agent 上报币种汇总</div>
@@ -121,27 +126,42 @@ export function UsageModal({ onClose }: { onClose: () => void }) {
             {report.topRuns.length === 0 ? (
               <div className="small muted">暂无数据</div>
             ) : (
-              <table className="table">
-                <thead>
-                  <tr><th>Run</th><th>Agent</th><th>模型</th><th>Token</th><th>费用</th><th>时间</th></tr>
-                </thead>
-                <tbody>
-                  {report.topRuns.map((r) => (
-                    <tr key={r.id}>
-                      <td><Link to={`/issues/${r.issueId}`}>#{r.id}</Link></td>
-                      <td>{r.agent}</td>
-                      <td className="mono">{r.model || '—'}</td>
-                      <td>{fmtTokens(r.totalTokens)}</td>
-                      <td>{fmtCosts({ [r.costCurrency || 'USD']: r.costAmount })}</td>
-                      <td className="small muted">{fmtTime(r.createdAt)}</td>
+              <div className="card" style={{ overflow: 'hidden' }}>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Run</th>
+                      <th>Agent</th>
+                      <th>模型</th>
+                      <th className="num" title="未命中缓存的输入 token">输入</th>
+                      <th className="num" title="命中缓存的输入 token">缓存读取</th>
+                      <th className="num">输出</th>
+                      <th className="num">总计</th>
+                      <th className="num">费用</th>
+                      <th>时间</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {report.topRuns.map((r) => (
+                      <tr key={r.id}>
+                        <td><Link to={`/issues/${r.issueId}`}>#{r.id}</Link></td>
+                        <td>{r.agent}</td>
+                        <td className="mono">{r.model || '—'}</td>
+                        <td className="num">{fmtTokens(r.inputTokens)}</td>
+                        <td className="num">{fmtTokens(Math.max(r.totalTokens - r.inputTokens - r.outputTokens, 0))}</td>
+                        <td className="num">{fmtTokens(r.outputTokens)}</td>
+                        <td className="num">{fmtTokens(r.totalTokens)}</td>
+                        <td className="num">{fmtCosts({ [r.costCurrency || 'USD']: r.costAmount })}</td>
+                        <td className="small muted">{fmtTime(r.createdAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </>
       )}
-    </Modal>
+    </PageShell>
   );
 }

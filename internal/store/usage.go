@@ -11,6 +11,7 @@ import (
 type UsageTotal struct {
 	Runs           int64              `json:"runs"`
 	InputTokens    int64              `json:"inputTokens"`
+	CachedTokens   int64              `json:"cachedTokens"` // cached reads; reported totals include them
 	OutputTokens   int64              `json:"outputTokens"`
 	TotalTokens    int64              `json:"totalTokens"`
 	CostByCurrency map[string]float64 `json:"costByCurrency"`
@@ -21,6 +22,7 @@ type UsageDay struct {
 	Date           string             `json:"date"`
 	Runs           int64              `json:"runs"`
 	InputTokens    int64              `json:"inputTokens"`
+	CachedTokens   int64              `json:"cachedTokens"`
 	OutputTokens   int64              `json:"outputTokens"`
 	TotalTokens    int64              `json:"totalTokens"`
 	CostByCurrency map[string]float64 `json:"costByCurrency"`
@@ -47,17 +49,21 @@ func (s *Store) UsageReport(ctx context.Context, since time.Time) (UsageReport, 
 		Daily:   []UsageDay{},
 		TopRuns: []domain.Run{},
 	}
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(total_tokens),0)
+	// Cached reads are part of the agent-reported total but not of input_tokens,
+	// so surface them instead of letting 输入/输出/总计 look inconsistent.
+	const cachedExpr = `COALESCE(SUM(CASE WHEN total_tokens > input_tokens + output_tokens THEN total_tokens - input_tokens - output_tokens ELSE 0 END),0)`
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(input_tokens),0), `+cachedExpr+`, COALESCE(SUM(output_tokens),0)
 		FROM runs WHERE created_at >= ?`, sinceStr).
-		Scan(&rep.Totals.Runs, &rep.Totals.InputTokens, &rep.Totals.OutputTokens, &rep.Totals.TotalTokens)
+		Scan(&rep.Totals.Runs, &rep.Totals.InputTokens, &rep.Totals.CachedTokens, &rep.Totals.OutputTokens)
 	if err != nil {
 		return rep, err
 	}
+	rep.Totals.TotalTokens = rep.Totals.InputTokens + rep.Totals.CachedTokens + rep.Totals.OutputTokens
 	if err := s.scanUsageCosts(ctx, `SELECT cost_currency, SUM(cost_amount) FROM runs WHERE created_at >= ? AND cost_amount > 0 GROUP BY cost_currency`, sinceStr, rep.Totals.CostByCurrency); err != nil {
 		return rep, err
 	}
 
-	rows, err := s.db.QueryContext(ctx, `SELECT substr(created_at,1,10) AS day, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0), COALESCE(SUM(total_tokens),0)
+	rows, err := s.db.QueryContext(ctx, `SELECT substr(created_at,1,10) AS day, COUNT(*), COALESCE(SUM(input_tokens),0), `+cachedExpr+`, COALESCE(SUM(output_tokens),0)
 		FROM runs WHERE created_at >= ? GROUP BY day ORDER BY day`, sinceStr)
 	if err != nil {
 		return rep, err
@@ -65,10 +71,11 @@ func (s *Store) UsageReport(ctx context.Context, since time.Time) (UsageReport, 
 	for rows.Next() {
 		var d UsageDay
 		d.CostByCurrency = map[string]float64{}
-		if err := rows.Scan(&d.Date, &d.Runs, &d.InputTokens, &d.OutputTokens, &d.TotalTokens); err != nil {
+		if err := rows.Scan(&d.Date, &d.Runs, &d.InputTokens, &d.CachedTokens, &d.OutputTokens); err != nil {
 			rows.Close()
 			return rep, err
 		}
+		d.TotalTokens = d.InputTokens + d.CachedTokens + d.OutputTokens
 		rep.Daily = append(rep.Daily, d)
 	}
 	if err := rows.Err(); err != nil {

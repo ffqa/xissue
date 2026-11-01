@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, qk } from '../api';
-import { fmtTime, Modal } from './common';
+import { fmtTime, PageShell } from './common';
 import { toast } from '../toast';
 import type { Repo } from '../types';
 
@@ -106,11 +106,8 @@ export function BranchCleanupModal({
   }, [repoId, branchesQ.isLoading, branchesQ.isError, branchesQ.error, branches, selected, allSelected]);
 
   return (
-    <Modal
+    <PageShell
       title="🧹 清理已合并分支"
-      size="xl"
-      onClose={deleteMut.isPending ? () => {} : onClose}
-      style={{ height: 'min(760px, 90vh)' }}
       footer={
         <button onClick={onClose} disabled={deleteMut.isPending}>
           {deleteMut.isPending ? '加入队列中…' : '关闭'}
@@ -143,6 +140,6 @@ export function BranchCleanupModal({
       </div>
       {body}
       </div>
-    </Modal>
+    </PageShell>
   );
 }

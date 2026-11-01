@@ -1,7 +1,9 @@
 CREATE TABLE IF NOT EXISTS projects (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     name               TEXT NOT NULL,
+    slug               TEXT NOT NULL DEFAULT '',
     description        TEXT NOT NULL DEFAULT '',
+    pinned             INTEGER NOT NULL DEFAULT 0,
     dev_mode           TEXT NOT NULL DEFAULT 'single_main',
     target_branch      TEXT NOT NULL DEFAULT 'main',
     auto_pr_on_confirm INTEGER NOT NULL DEFAULT 1,
@@ -45,6 +47,7 @@ CREATE TABLE IF NOT EXISTS issues (
     status        TEXT NOT NULL,
     created_at    TEXT NOT NULL,
     updated_at    TEXT NOT NULL,
+    completed_at  TEXT,
     archived_at   TEXT,
     UNIQUE(project_id, key)
 );

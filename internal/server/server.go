@@ -21,7 +21,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.6.1"
+const Version = "0.7.0"
 
 type Server struct {
 	cfg    *config.Config
@@ -31,6 +31,7 @@ type Server struct {
 	hub    *Hub
 	mux    *http.ServeMux
 
+	versionCache     sync.Map // repoID -> projectVersionEntry (latest semver tag)
 	syncMu           sync.Mutex
 	lastIssueSync    time.Time
 	lastSyncImported int

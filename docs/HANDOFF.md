@@ -29,7 +29,7 @@
 
 ### 2.1 Git 监控交互精简与提交详情弹窗
 - **精简交互**: 从分支监控卡片中彻底移除了容易造成误解与无意义操作的 `Cherry-Pick` 按钮，文案整体精简（“监控”、“最新推送”等）；
-- **提交记录弹窗 ([`CommitsModal.tsx`](file:///Users/gouki/server/ide/web/src/components/CommitsModal.tsx) / [`CommitsPanel.tsx`](file:///Users/gouki/server/ide/web/src/components/CommitsPanel.tsx))**：
+- **提交记录弹窗 ([`CommitsModal.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/components/CommitsModal.tsx) / [`CommitsPanel.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/components/CommitsPanel.tsx))**：
   - 点击「📜 提交记录」在项目页直接弹出宽幅弹窗，查看该分支最近 50 条 Commit 列表；
   - 支持查看提交主题（Subject）、提交作者与原始提交时间；
   - 提供一键复制 Commit SHA；
@@ -38,10 +38,10 @@
 
 ### 2.2 自动化引擎联动分支推送与 DeepSeek Harness 级插件系统
 - **自动化支持 `branch_push` 触发器**:
-  - 在 [`internal/domain/domain.go`](file:///Users/gouki/server/ide/internal/domain/domain.go) 和 [`internal/automation/engine.go`](file:///Users/gouki/server/ide/internal/automation/engine.go) 中引入分支新提交触发器；
+  - 在 [`internal/domain/domain.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/domain/domain.go) 和 [`internal/automation/engine.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/automation/engine.go) 中引入分支新提交触发器；
   - 过滤条件支持：分支名精确/正则匹配（`branch`）、提交作者过滤（`author`）、提交说明正则（`pattern`）；过滤基于本次推送的 tip commit（最新提交）；
   - 联动动作支持：自动新建 Issue（`create_issue`）、自动调度指定 Agent 执行（`trigger_run`）、自动拉取本地代码（`pull_local`）以及发送通知（`notify`）。
-- **插件与 Hook 定制规范 ([`docs/PLUGINS_AND_HOOKS.md`](file:///Users/gouki/server/ide/docs/PLUGINS_AND_HOOKS.md))**:
+- **插件与 Hook 定制规范 ([`docs/PLUGINS_AND_HOOKS.md`](file:///Users/gouki/server/wwwroot/xpier/xissue/docs/PLUGINS_AND_HOOKS.md))**:
   - 设计并落地了三层定制架构（Event Hooks、Filter/Enrich Plugins、Action Providers）；
   - 已落地的生命周期注入点（与代码一致）：`branch_push`、`pr_created`、`pr_merged`、`pr_comment`、`pr_review`、`notification_dispatch`、`issue_created`、`issue_status_changed`、`run_started`、`run_finished`；`tool_call_intercept` 仍为后续规划项；
   - 带有 15 秒执行超时保护（Unix 下按进程组 SIGKILL，子进程不会残留），采用标准输入输出 JSON 契约通信，确保宿主程序永不死锁；项目级 Hook 仅对本地目录仓库执行，`pr_comment`/`pr_review` 另有作者信任门控；
@@ -55,20 +55,20 @@
   2. **错误被静默吞掉**: 原先在探测 Agent 时，所有错误（LookPath 失败、命令执行失败、缺依赖、ACP 协商失败）全部被 `if err == nil` 吞掉，并直接返回空列表 `[]`，前端页面显示为空白，没有任何原因和操作指导；
   3. **配置文件路径跨系统差异**: 原先仅针对 macOS 硬编码了 `~/.config/opencode`，未适配 Windows（`%APPDATA%/opencode`）及 Linux 路径。
 - **落地的根治措施**:
-  - 新建 [`internal/runner/env.go`](file:///Users/gouki/server/ide/internal/runner/env.go)，提供 `EnsureEnhancedPath()` 和 `LookupAgentBinary()`：服务在 `main()` 启动时自动扫描注入系统与包管理器常见目录到 `PATH` 中；在执行探测和启动 Agent 时自动解析绝对路径；
+  - 新建 [`internal/runner/env.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/runner/env.go)，提供 `EnsureEnhancedPath()` 和 `LookupAgentBinary()`：服务在 `main()` 启动时自动扫描注入系统与包管理器常见目录到 `PATH` 中；在执行探测和启动 Agent 时自动解析绝对路径；
   - 支持 nvm / fnm / asdf / mise / Volta / pnpm / npm-global，以及 macOS Herd 内置 nvm（`~/Library/Application Support/Herd/config/nvm/versions/node/*/bin`）等自定义版本管理器路径；回退命中后会把所在目录补进子进程 `PATH`，确保 `npx` 能找到同目录的 `node`；
-  - 在 [`internal/runner/runner.go`](file:///Users/gouki/server/ide/internal/runner/runner.go) 的 `AgentModels` 中新增 `probeError` 字段；
-  - 前端界面（[`AgentManagerModal.tsx`](file:///Users/gouki/server/ide/web/src/components/AgentManagerModal.tsx) 与 [`IssuePage.tsx`](file:///Users/gouki/server/ide/web/src/pages/IssuePage.tsx)）当检测到探测失败或未返回模型时，显示醒目的诊断提示条，精确提示具体原因并提供修复指引。
+  - 在 [`internal/runner/runner.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/runner/runner.go) 的 `AgentModels` 中新增 `probeError` 字段；
+  - 前端界面（[`AgentManagerModal.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/components/AgentManagerModal.tsx) 与 [`IssuePage.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/pages/IssuePage.tsx)）当检测到探测失败或未返回模型时，显示醒目的诊断提示条，精确提示具体原因并提供修复指引。
 
 ### 2.4 Wiki 知识库深层目录与弹窗滚动优化
 - **Wiki 深层目录递归扫描**:
-  - 在 [`internal/knowledge/knowledge.go`](file:///Users/gouki/server/ide/internal/knowledge/knowledge.go) 中将原有的单层 `os.ReadDir` 升级为 `filepath.WalkDir` 递归遍历，支持多级深层 Markdown 文件（例如 `guides/advanced/setup.md`）的扫描、全文搜索与持久化保存；
+  - 在 [`internal/knowledge/knowledge.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/knowledge/knowledge.go) 中将原有的单层 `os.ReadDir` 升级为 `filepath.WalkDir` 递归遍历，支持多级深层 Markdown 文件（例如 `guides/advanced/setup.md`）的扫描、全文搜索与持久化保存；
   - 前端在列表和搜索结果中增加目录标签展示（如 `📁 guides/advanced`），层级分明；
-  - 增加深层目录单元测试 [`internal/knowledge/knowledge_test.go`](file:///Users/gouki/server/ide/internal/knowledge/knowledge_test.go)。
+  - 增加深层目录单元测试 [`internal/knowledge/knowledge_test.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/knowledge/knowledge_test.go)。
 - **全局弹窗 Esc 键关闭体验**:
-  - 通用组件 [`common.tsx`](file:///Users/gouki/server/ide/web/src/components/common.tsx)（`Modal`）升级在捕获阶段监听 `Escape` 键；
-  - [`WatchCommitDetailModal.tsx`](file:///Users/gouki/server/ide/web/src/components/WatchCommitDetailModal.tsx) 和 [`MonitorModal.tsx`](file:///Users/gouki/server/ide/web/src/components/MonitorModal.tsx) 补齐 Esc 键关闭；
-  - [`KnowledgeBaseModal.tsx`](file:///Users/gouki/server/ide/web/src/components/KnowledgeBaseModal.tsx) 中实现：编辑态下按 Esc 优先退出编辑状态，非编辑态下直接关闭弹窗。
+  - 通用组件 [`common.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/components/common.tsx)（`Modal`）升级在捕获阶段监听 `Escape` 键；
+  - [`WatchCommitDetailModal.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/components/WatchCommitDetailModal.tsx) 和 [`MonitorModal.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/components/MonitorModal.tsx) 补齐 Esc 键关闭；
+  - [`KnowledgeBaseModal.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/components/KnowledgeBaseModal.tsx) 中实现：编辑态下按 Esc 优先退出编辑状态，非编辑态下直接关闭弹窗。
 - **Wiki 列表页与详情页滚动卡死根治**:
   - **根因**: CSS Flex 规范中子元素默认 `min-height: auto` 导致内容无限撑大容器，无法收缩触发 `overflowY: auto`；且外层 `.modal-b` 固有高度和 padding 产生了多余的外层滚动条，拦截了内层滚轮事件；
   - **修复**: 给 `Modal` 增加 `bodyStyle` 配置，消除外层滚动冲突；在左侧列表容器与右侧内容容器上显式声明 `minHeight: 0` 和 `overflowY: auto`，实现左侧列表与右侧长 Markdown 详情各自平滑独立滚动。
@@ -478,7 +478,7 @@
 ### 2.54 移除 Backlog，Done 自动归档（0.6.0）
 
 - **移除 Backlog**: 状态集合只保留 `todo/running/review/pr_open/done/failed`；删除 Backlog 页签、面板、拖拽排序 API 与 `backlogRank`。启动迁移把旧 `backlog` 行改为 `todo`，不丢数据。
-- **Done 自动归档**: `issues.archived_at` 记录归档时间；`runner.doneArchiveDays`（默认 30，0=不归档）在后台启动后 30 秒及每 6 小时把 `done` 且超过保留期的 Issue 标记归档；不删除数据，不改变 `status`，重新打开（状态改回 Todo/Running 等）会清除归档标记。
+- **Done 自动归档**: `issues.archived_at` 记录归档时间；`runner.doneArchiveDays`（默认 30，0=不归档）在后台启动后 30 秒及每 6 小时把 `done` 且超过保留期的 Issue 标记归档；`runner.doneArchiveMaxCount`（默认 20，0=不限制）同时把每个项目超出上限的最早完成 Issue 归档；两者都按 `issues.completed_at`（进入 done 的时间，重新打开即清空）判断，评论只更新 `updated_at`，不会让旧 issue 看起来像刚完成；`PATCH /api/issues/{id}` 传 `{"archived": true|false}` 可立即归档/取消归档；不删除数据，不改变 `status`，重新打开（状态改回 Todo/Running 等）会清除归档标记。
 - **UI**: Done 列只显示未归档；「已完成 / 归档」弹窗分两个页签，归档页显示归档时间，可搜索/批量删除。
 - **验证**: store 归档测试（首次归档、幂等、重新打开清除）、Go 测试、tsc/vitest、真实 API 列表字段。
 
@@ -511,28 +511,28 @@ flowchart TD
 
 | 模块 | 核心文件路径 | 关键职责说明 |
 | :--- | :--- | :--- |
-| **入口与环境** | [`cmd/xissue/main.go`](file:///Users/gouki/server/ide/cmd/xissue/main.go) | 程序启动入口，调用 `EnsureEnhancedPath()` 补齐环境变量 |
-| **服务常驻** | [`cmd/xissue/service.go`](file:///Users/gouki/server/ide/cmd/xissue/service.go) | macOS LaunchAgent / Linux systemd 安装、卸载、状态查询与重启 |
-| **跨平台信号** | [`cmd/xissue/kill_posix.go`](file:///Users/gouki/server/ide/cmd/xissue/kill_posix.go)<br>[`cmd/xissue/kill_windows.go`](file:///Users/gouki/server/ide/cmd/xissue/kill_windows.go) | 跨平台进程优雅终止与强制退出封装 |
-| **环境与命令** | [`internal/runner/env.go`](file:///Users/gouki/server/ide/internal/runner/env.go) | 智能扫描用户目录并增强 PATH，`LookupAgentBinary` 解析可执行路径 |
-| **Agent 调度** | [`internal/runner/runner.go`](file:///Users/gouki/server/ide/internal/runner/runner.go) | Agent 模型探测（带 `probeError`）、Run 状态机、工作区管理 |
-| **自动预开发** | [`internal/runner/autodevelop.go`](file:///Users/gouki/server/ide/internal/runner/autodevelop.go) | Issue 需求/Bug 判定、预开发提示词、完成后自动创建 PR（不合并） |
-| **远程 Runner 协议** | [`internal/remote/protocol.go`](file:///Users/gouki/server/ide/internal/remote/protocol.go) | 服务端与远程执行节点之间的 WebSocket 帧、Job、RPC 与权限消息 |
-| **远程 Runner 客户端** | [`internal/remoterunner/client.go`](file:///Users/gouki/server/ide/internal/remoterunner/client.go)<br>[`internal/remoterunner/job.go`](file:///Users/gouki/server/ide/internal/remoterunner/job.go) | 主动拨号、断线重连、远程工作区、ACP 会话/权限/用量、diff/提交 RPC |
-| **远程 Runner 管理** | [`internal/server/remote_manager.go`](file:///Users/gouki/server/ide/internal/server/remote_manager.go) | 节点注册/认证、Run 路由、事件与状态落库、远程权限、PR 创建与清理 |
-| **运行路由桥** | [`internal/runner/remote.go`](file:///Users/gouki/server/ide/internal/runner/remote.go) | `RemoteExecutor` 接口与本地/远程 Run 操作分支 |
-| **知识库/Wiki** | [`internal/knowledge/knowledge.go`](file:///Users/gouki/server/ide/internal/knowledge/knowledge.go) | Wiki 与本地 Docs 递归扫描、全文搜索、正文读取与持久化保存 |
-| **知识库测试** | [`internal/knowledge/knowledge_test.go`](file:///Users/gouki/server/ide/internal/knowledge/knowledge_test.go) | 包含深层 Wiki 目录与搜索的自动化测试 |
-| **自动化引擎** | [`internal/automation/engine.go`](file:///Users/gouki/server/ide/internal/automation/engine.go) | 自动化规则评估、分支推送触发、动作派发与 Hook 事件派发 |
-| **插件系统** | [`internal/automation/manifest.go`](file:///Users/gouki/server/ide/internal/automation/manifest.go) | API v1 清单校验、事件白名单、entrypoint 逃逸防护 |
-| **插件安装** | [`internal/automation/install.go`](file:///Users/gouki/server/ide/internal/automation/install.go) | 目录索引、git clone、原子安装与 enable/disable |
-| **插件文档** | [`docs/PLUGINS_AND_HOOKS.md`](file:///Users/gouki/server/ide/docs/PLUGINS_AND_HOOKS.md) | Hook 与插件编写方案、注入点数据契约、调试指南 |
+| **入口与环境** | [`cmd/xissue/main.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/cmd/xissue/main.go) | 程序启动入口，调用 `EnsureEnhancedPath()` 补齐环境变量 |
+| **服务常驻** | [`cmd/xissue/service.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/cmd/xissue/service.go) | macOS LaunchAgent / Linux systemd 安装、卸载、状态查询与重启 |
+| **跨平台信号** | [`cmd/xissue/kill_posix.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/cmd/xissue/kill_posix.go)<br>[`cmd/xissue/kill_windows.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/cmd/xissue/kill_windows.go) | 跨平台进程优雅终止与强制退出封装 |
+| **环境与命令** | [`internal/runner/env.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/runner/env.go) | 智能扫描用户目录并增强 PATH，`LookupAgentBinary` 解析可执行路径 |
+| **Agent 调度** | [`internal/runner/runner.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/runner/runner.go) | Agent 模型探测（带 `probeError`）、Run 状态机、工作区管理 |
+| **自动预开发** | [`internal/runner/autodevelop.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/runner/autodevelop.go) | Issue 需求/Bug 判定、预开发提示词、完成后自动创建 PR（不合并） |
+| **远程 Runner 协议** | [`internal/remote/protocol.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/remote/protocol.go) | 服务端与远程执行节点之间的 WebSocket 帧、Job、RPC 与权限消息 |
+| **远程 Runner 客户端** | [`internal/remoterunner/client.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/remoterunner/client.go)<br>[`internal/remoterunner/job.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/remoterunner/job.go) | 主动拨号、断线重连、远程工作区、ACP 会话/权限/用量、diff/提交 RPC |
+| **远程 Runner 管理** | [`internal/server/remote_manager.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/server/remote_manager.go) | 节点注册/认证、Run 路由、事件与状态落库、远程权限、PR 创建与清理 |
+| **运行路由桥** | [`internal/runner/remote.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/runner/remote.go) | `RemoteExecutor` 接口与本地/远程 Run 操作分支 |
+| **知识库/Wiki** | [`internal/knowledge/knowledge.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/knowledge/knowledge.go) | Wiki 与本地 Docs 递归扫描、全文搜索、正文读取与持久化保存 |
+| **知识库测试** | [`internal/knowledge/knowledge_test.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/knowledge/knowledge_test.go) | 包含深层 Wiki 目录与搜索的自动化测试 |
+| **自动化引擎** | [`internal/automation/engine.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/automation/engine.go) | 自动化规则评估、分支推送触发、动作派发与 Hook 事件派发 |
+| **插件系统** | [`internal/automation/manifest.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/automation/manifest.go) | API v1 清单校验、事件白名单、entrypoint 逃逸防护 |
+| **插件安装** | [`internal/automation/install.go`](file:///Users/gouki/server/wwwroot/xpier/xissue/internal/automation/install.go) | 目录索引、git clone、原子安装与 enable/disable |
+| **插件文档** | [`docs/PLUGINS_AND_HOOKS.md`](file:///Users/gouki/server/wwwroot/xpier/xissue/docs/PLUGINS_AND_HOOKS.md) | Hook 与插件编写方案、注入点数据契约、调试指南 |
 | **插件模板** | [ffqa/xissue-plugin-template](https://github.com/ffqa/xissue-plugin-template) | Python/Node/Shell 入口、fixtures、清单校验与 CI |
 | **官方插件目录** | [ffqa/xissue-plugins](https://github.com/ffqa/xissue-plugins) | 通知渠道、提交追踪与 Run 审计插件 |
-| **通用弹窗** | [`web/src/components/common.tsx`](file:///Users/gouki/server/ide/web/src/components/common.tsx) | 统一 `Modal` 组件，支持 Esc 监听、`bodyStyle` 定制 |
-| **知识库弹窗** | [`web/src/components/KnowledgeBaseModal.tsx`](file:///Users/gouki/server/ide/web/src/components/KnowledgeBaseModal.tsx) | 深层目录展示、独立滚动区域、Markdown 预览与实时编辑 |
-| **提交详情弹窗** | [`web/src/components/WatchCommitDetailModal.tsx`](file:///Users/gouki/server/ide/web/src/components/WatchCommitDetailModal.tsx) | 分支历史 Commit 详情查看、外链跳转、一键生成 Issue |
-| **监控弹窗** | [`web/src/components/MonitorModal.tsx`](file:///Users/gouki/server/ide/web/src/components/MonitorModal.tsx) | 分支监控状态、即时触发、活跃时间段配置与日志查看 |
+| **通用弹窗** | [`web/src/components/common.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/components/common.tsx) | 统一 `Modal` 组件，支持 Esc 监听、`bodyStyle` 定制 |
+| **知识库弹窗** | [`web/src/components/KnowledgeBaseModal.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/components/KnowledgeBaseModal.tsx) | 深层目录展示、独立滚动区域、Markdown 预览与实时编辑 |
+| **提交详情弹窗** | [`web/src/components/WatchCommitDetailModal.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/components/WatchCommitDetailModal.tsx) | 分支历史 Commit 详情查看、外链跳转、一键生成 Issue |
+| **监控弹窗** | [`web/src/components/MonitorModal.tsx`](file:///Users/gouki/server/wwwroot/xpier/xissue/web/src/components/MonitorModal.tsx) | 分支监控状态、即时触发、活跃时间段配置与日志查看 |
 
 ---
 

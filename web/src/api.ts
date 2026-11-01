@@ -212,7 +212,9 @@ export const api = {
     id: number,
     b: {
       name?: string;
+      slug?: string;
       description?: string;
+      pinned?: boolean;
       devMode?: DevMode;
       targetBranch?: string;
       autoPrOnConfirm?: boolean;

@@ -154,7 +154,7 @@ func (s *Server) handleRunChanges(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ch, err := s.runner.Changes(r.Context(), id)
+	ch, err := s.runner.Changes(r.Context(), id, r.URL.Query().Get("patch") == "1")
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return

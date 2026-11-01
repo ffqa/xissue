@@ -40,8 +40,8 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 	if list == nil {
 		list = []domain.Project{}
 	}
-	// Keep GET /api/projects a pure database read. Remote detection used to run
-	// here synchronously; one stale local repo could delay the whole homepage.
+	// Version comes from local mirror tags (cached), not from the network.
+	s.fillProjectVersions(r.Context(), list)
 	writeJSON(w, http.StatusOK, list)
 }
 
@@ -86,6 +86,7 @@ func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
 		s.refreshProjectRepos(ctx, p)
 		cancel()
 	}
+	s.fillProjectVersion(r.Context(), p)
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -119,6 +120,10 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := s.st.UpdateProject(r.Context(), id, patch)
 	if err != nil {
+		if errors.Is(err, store.ErrInvalidProjectSlug) || errors.Is(err, store.ErrProjectSlugTaken) {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
 		writeStoreErr(w, err)
 		return
 	}

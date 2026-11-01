@@ -39,15 +39,28 @@ func ValidateSHA(s string) error {
 
 // Run executes git with args in dir and returns trimmed stdout.
 func Run(ctx context.Context, dir string, args ...string) (string, error) {
+	out, stderr, err := runOutput(ctx, dir, args...)
+	if err != nil {
+		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr))
+	}
+	return strings.TrimRight(out, "\n"), nil
+}
+
+// runOutput keeps stdout on a non-zero exit, which `git diff --no-index` uses to signal differences.
+func runOutput(ctx context.Context, dir string, args ...string) (string, string, error) {
+	return runOutputEnv(ctx, dir, nil, args...)
+}
+
+// runOutputEnv is runOutput with extra environment entries (e.g. GIT_INDEX_FILE).
+func runOutputEnv(ctx context.Context, dir string, extraEnv []string, args ...string) (string, string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(cmd.Env, extraEnv...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
-	}
-	return strings.TrimRight(out.String(), "\n"), nil
+	err := cmd.Run()
+	return out.String(), errb.String(), err
 }
 
 var mirrorLocks sync.Map // path -> *sync.Mutex
@@ -277,6 +290,52 @@ func Changes(ctx context.Context, dir, base string) ([]FileChange, error) {
 	out := make([]FileChange, 0, len(order))
 	for _, p := range order {
 		out = append(out, *byPath[p])
+	}
+	return out, nil
+}
+
+// MaxPatchBytes caps the unified diff returned for a single repository.
+const MaxPatchBytes = 256 << 10
+
+// Diff renders the unified diff of dir against base, including untracked files,
+// truncated to maxBytes at a line boundary. The result applies with `git apply`.
+func Diff(ctx context.Context, dir, base string, maxBytes int) (string, error) {
+	mergeBase := mergeBaseFor(ctx, dir, base)
+	untracked, err := Run(ctx, dir, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return "", err
+	}
+	// A throwaway index seeded with the merge base lets `git diff` render the
+	// untracked files as regular new-file diffs (uniform a/ b/ prefixes) without
+	// touching the agent's real index.
+	idxFile, err := os.CreateTemp("", "xissue-diff-index-*")
+	if err != nil {
+		return "", err
+	}
+	idxPath := idxFile.Name()
+	idxFile.Close()
+	_ = os.Remove(idxPath)
+	defer func() { _ = os.Remove(idxPath) }()
+	env := []string{"GIT_INDEX_FILE=" + idxPath}
+	if _, stderr, err := runOutputEnv(ctx, dir, env, "read-tree", mergeBase); err != nil {
+		return "", fmt.Errorf("git read-tree: %v: %s", err, strings.TrimSpace(stderr))
+	}
+	if paths := splitLines(untracked); len(paths) > 0 {
+		args := append([]string{"--literal-pathspecs", "add", "-N", "--"}, paths...)
+		if _, stderr, err := runOutputEnv(ctx, dir, env, args...); err != nil {
+			return "", fmt.Errorf("git add -N: %v: %s", err, strings.TrimSpace(stderr))
+		}
+	}
+	out, stderr, err := runOutputEnv(ctx, dir, env, "diff", "--no-color", "--no-ext-diff", "-M")
+	if err != nil {
+		return "", fmt.Errorf("git diff: %v: %s", err, strings.TrimSpace(stderr))
+	}
+	if maxBytes > 0 && len(out) > maxBytes {
+		out = out[:maxBytes]
+		if i := strings.LastIndexByte(out, '\n'); i > 0 {
+			out = out[:i]
+		}
+		out += "\n... (patch truncated)\n"
 	}
 	return out, nil
 }
@@ -629,8 +688,37 @@ func MergeBranchToTarget(ctx context.Context, wtDir, mirrorPath, remoteURL, sour
 		return "", fmt.Errorf("rev-parse HEAD: %w", err)
 	}
 
-	// First push the source branch to the local directory's repo so it receives the commits.
-	_ = Push(ctx, wtDir, sourceBranch)
+	// The run's temp branch only carries commits into the local repository. Drop
+	// it there and in the mirror on every exit path, so failed rebases/merges do
+	// not accumulate agent/* branches.
+	defer func() {
+		for _, dir := range []string{remoteURL, mirrorPath} {
+			if dir == "" {
+				continue
+			}
+			// Fails harmlessly while the branch is still checked out in the
+			// worktree; RemoveWorktree deletes it there.
+			_, _ = Run(ctx, dir, "branch", "-D", "--", sourceBranch)
+		}
+	}()
+
+	// Rebase onto the latest target first: parallel or sequential runs otherwise
+	// merge a stale base and trip the ancestor checks in the local repository.
+	if _, ferr := Run(ctx, wtDir, "fetch", "origin", targetBranch); ferr == nil {
+		if _, rerr := Run(ctx, wtDir, "rebase", "origin/"+targetBranch); rerr != nil {
+			_, _ = Run(ctx, wtDir, "rebase", "--abort")
+			return headSHA, fmt.Errorf("rebase 到 origin/%s 失败（存在冲突），请处理冲突后重试: %w", targetBranch, rerr)
+		}
+		if rebased, rerr := Run(ctx, wtDir, "rev-parse", "HEAD"); rerr == nil && rebased != headSHA {
+			headSHA = rebased
+			// The temp branch was rewritten, so the copy pushed before the rebase is obsolete.
+			_, _ = Run(ctx, wtDir, "push", "-f", "origin", "--", sourceBranch+":"+sourceBranch)
+		} else {
+			_ = Push(ctx, wtDir, sourceBranch)
+		}
+	} else {
+		_ = Push(ctx, wtDir, sourceBranch)
+	}
 
 	// Check current branch of the local directory.
 	curBranch, err := Run(ctx, remoteURL, "rev-parse", "--abbrev-ref", "HEAD")
@@ -668,7 +756,7 @@ func MergeBranchToTarget(ctx context.Context, wtDir, mirrorPath, remoteURL, sour
 		}
 	}
 
-	// Also update mirror's ref
+	// Also update mirror's ref; the deferred cleanup drops the temp branch.
 	if mirrorPath != "" {
 		_, _ = Run(ctx, mirrorPath, "fetch", "origin")
 	}

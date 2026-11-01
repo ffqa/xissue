@@ -87,7 +87,7 @@ interface Issue {
   activeRunId: number | null;   // 最近一次 Run
   awaiting: boolean;            // 最近一次 Run 正在等待权限审批
   createdAt: string; updatedAt: string;
-  archivedAt?: string | null;  // done 超过 doneArchiveDays 后自动标记，不改变 status
+  archivedAt?: string | null;  // done 超过 doneArchiveDays 或超出 doneArchiveMaxCount 后自动标记（按完成时间，不改变 status）
   syncError?: string;           // 仅创建响应：远程同步失败原因，本地 Issue 仍保留
 }
 
@@ -173,7 +173,7 @@ interface RunEvent {
 | GET | `/api/runners` | `{ runners: [{ id, name, version, online, connectedAt }] }`；远程 Runner 通过 `GET /api/runners/ws`（WebSocket，`xissue runner`）注册 |
 | GET | `/api/projects` | `Project[]` |
 | POST | `/api/projects` | `{ name, description }` → `Project` |
-| GET / PATCH / DELETE | `/api/projects/{id}` | PATCH `{ name?, description? }` |
+| GET / PATCH / DELETE | `/api/projects/{id}` | PATCH `{ name?, description?, pinned? }`；`pinned: true` 的项目显示在侧栏「全部项目」之下（列表按置顶优先排序） |
 | POST | `/api/projects/{id}/repos` | `{ name, provider, remoteUrl, ownerRepo, defaultBranch, testCommand }` → `Repo`；`name` 会去除首尾空白，必须是单个目录名（字母数字开头，可含空格、`.`、`-`、`_`，禁止 `/`、`\`、`..`、`.git`） |
 | DELETE | `/api/projects/{id}/repos/{repoId}` | 仓库仍被 Issue 引用时返回 409，避免 `repo_id` 被置空后执行范围丢失 |
 | GET | `/api/repos/{repoId}/merged-branches?refresh=1` | 已合并到默认分支、且 tip 作者匹配本机 Git 身份的远程分支 → `MergedBranch[]` |
@@ -196,7 +196,7 @@ interface RunEvent {
 | DELETE | `/api/mcp` | 无状态 MCP 会话终止，返回 204 |
 | GET | `/api/projects/{id}/issues` | `Issue[]` |
 | POST | `/api/projects/{id}/issues` | `{ title, body, labels?, priority?, repoId?, parentId?, syncRemote? }` → `Issue`。`syncRemote=true` 且仓库支持 Issue 时，后端创建远程 Issue 并把 `source/key/remoteNumber/remoteUrl` 绑定到本地行；失败返回 201 + `syncError`，本地 Issue 保留 |
-| GET / PATCH | `/api/issues/{id}` | PATCH `{ title?, body?, labels?, priority?, status? }` |
+| GET / PATCH | `/api/issues/{id}` | PATCH `{ title?, body?, labels?, priority?, status?, archived? }`；`archived: true/false` 立即归档/取消归档（设置/清空 `archived_at`） |
 | POST | `/api/issues/{id}/publish` | `{ repoId }` 把本地 Issue 发布到平台 → `Issue`；`repoId` 必须属于 Issue 所在项目，否则 400 |
 | GET / POST | `/api/issues/{id}/comments` | POST `{ body }` |
 | GET | `/api/issues/{id}/events` | `IssueEvent[]`（状态/优先级/标签/远程同步/附件等时间线事件） |
@@ -212,10 +212,10 @@ interface RunEvent {
 | POST | `/api/runs/{id}/message` | `{ text }` 追加指令 / 打回反馈（会话结束后会自动恢复会话） |
 | POST | `/api/runs/{id}/permissions/{requestId}` | `{ optionId }` |
 | POST | `/api/runs/{id}/cancel` | |
-| GET | `/api/runs/{id}/changes` | `[{ repoId, repoName, branch, files: [{ path, status, additions, deletions }] }]`，status 为 `M/A/D/R/?` |
+| GET | `/api/runs/{id}/changes?patch=1` | `[{ repoId, repoName, branch, worktreePath, files: [{ path, status, additions, deletions }], patch? }]`，status 为 `M/A/D/R/?`；`patch=1` 时附相对于 merge-base 的完整 unified diff（含未跟踪新文件，单仓上限 256KB） |
 | GET | `/api/runs/{id}/file?repoId=&path=&side=base\|work` | `{ content: string }`，base 为默认分支版本；路径必须位于仓库 worktree 内 |
 | PUT | `/api/runs/{id}/file?repoId=&path=` | `{ content }` 保存到工作区；拒绝绝对路径、`..` 与逃逸 worktree 的符号链接 |
-| POST | `/api/runs/{id}/submit` | `{ mode: "merge_local" \| "pr" \| "push", title?, body?, commitMessage?, targetBranch?, changeItems?, remark? }` → `{ results: [{ repoId, repoName, branch, targetBranch, commit, prUrl, changeRecord, error }] }` |
+| POST | `/api/runs/{id}/submit` | `{ mode: "merge_local" \| "pr" \| "push", title?, body?, commitMessage?, targetBranch?, changeItems?, remark? }` → `{ results: [{ repoId, repoName, branch, targetBranch, commit, prUrl, changeRecord, error }] }`；`merge_local` 任一仓库合入失败时 Run 记为 `failed` 且 Issue 停留在 `review`（不会变 Done 被自动归档） |
 | POST | `/api/runs/{id}/discard` | 删除 worktree 与分支 |
 
 ## WebSocket

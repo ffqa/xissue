@@ -59,10 +59,12 @@ type AgentModels struct {
 
 // RepoChanges groups file diffs per repository for the review screen.
 type RepoChanges struct {
-	RepoID   int64             `json:"repoId"`
-	RepoName string            `json:"repoName"`
-	Branch   string            `json:"branch"`
-	Files    []gitx.FileChange `json:"files"`
+	RepoID       int64             `json:"repoId"`
+	RepoName     string            `json:"repoName"`
+	Branch       string            `json:"branch"`
+	WorktreePath string            `json:"worktreePath,omitempty"`
+	Files        []gitx.FileChange `json:"files"`
+	Patch        string            `json:"patch,omitempty"`
 }
 
 // SubmitRequest commits and pushes (and optionally opens PRs) across modified repos.
@@ -165,6 +167,7 @@ type Runner struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
 	stopOnce        sync.Once
+	startMu         sync.Mutex // serializes the active-run check + run creation
 	watchMu         sync.Mutex
 	watchWG         sync.WaitGroup
 	archiveMu       sync.Mutex
@@ -781,19 +784,15 @@ func (r *Runner) startRun(ctx context.Context, issueID int64, agentName, modelNa
 			}
 		}
 	}
-	if remoteRun {
-		if r.issueHasActiveRunAny(ctx, issueID) {
-			return nil, errors.New("this issue already has an active run in progress")
-		}
-	} else {
-		r.mu.Lock()
-		for _, a := range r.active {
-			if a.issueID == issueID {
-				r.mu.Unlock()
-				return nil, errors.New("this issue already has an active run in progress")
-			}
-		}
-		r.mu.Unlock()
+	// Serialize check-then-create: two concurrent StartRun calls for the same
+	// issue (e.g. a card drag plus an automation trigger, or two parallel syncs)
+	// must not both pass the active-run check and create duplicate runs/PRs.
+	r.startMu.Lock()
+	defer r.startMu.Unlock()
+	if r.issueHasActiveRunAny(ctx, issueID) {
+		return nil, errors.New("this issue already has an active run in progress")
+	}
+	if !remoteRun {
 		binPath, err := LookupAgentBinary(ac.Command)
 		if err != nil {
 			return nil, fmt.Errorf("agent binary %q not found in PATH or standard user directories", ac.Command)

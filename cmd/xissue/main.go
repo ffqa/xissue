@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -131,6 +132,13 @@ func main() {
 		return
 	}
 
+	// Without a token the Host-header check is the only barrier, and any client
+	// can send Host: 127.0.0.1. Bound to a non-loopback address that means full
+	// remote control (terminal shell, file writes, agent runs) for the LAN.
+	if cfg.Token == "" && !isLoopbackListen(cfg.Listen) {
+		log.Fatalf("refusing to listen on %s without -token: the API exposes a shell terminal and file writes. Set -token or listen on 127.0.0.1", cfg.Listen)
+	}
+
 	for _, dir := range []string{cfg.DataDir, cfg.MirrorsDir(), cfg.RunsDir(), cfg.IssuesDir()} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			log.Fatalf("mkdir %s: %v", dir, err)
@@ -165,6 +173,18 @@ func main() {
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
+}
+
+func isLoopbackListen(addr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // runMCPStdio bridges standard MCP JSON-RPC 2.0 over stdin/stdout to the running xIssue HTTP server.

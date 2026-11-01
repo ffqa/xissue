@@ -314,12 +314,44 @@ func installService() {
 		}
 
 		uid := os.Getuid()
+		domain := fmt.Sprintf("gui/%d", uid)
+		labelRef := fmt.Sprintf("%s/%s", domain, serviceLabel)
+		before := listenerPIDs(7789)
 		terminateProcessesByPath(persistentBin)
-		_ = exec.Command("launchctl", "bootout", fmt.Sprintf("gui/%d/%s", uid, serviceLabel)).Run()
-		if out, err := exec.Command("launchctl", "bootstrap", fmt.Sprintf("gui/%d", uid), targetPlist).CombinedOutput(); err != nil {
-			// 如果 bootstrap 报错已存在，尝试 kickstart
-			_ = exec.Command("launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/%s", uid, serviceLabel)).Run()
-			_ = out
+		// Wait for the old process to release the port before re-registering.
+		for i := 0; i < 50 && isPortListening(7789); i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
+		_ = exec.Command("launchctl", "bootout", labelRef).Run()
+		for i := 0; i < 50; i++ {
+			if exec.Command("launchctl", "print", labelRef).Run() != nil {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		var bootErr string
+		loaded := false
+		// bootout is asynchronous; retry bootstrap instead of assuming success.
+		for attempt := 0; attempt < 5; attempt++ {
+			if out, err := exec.Command("launchctl", "bootstrap", domain, targetPlist).CombinedOutput(); err == nil {
+				loaded = true
+				break
+			} else {
+				bootErr = strings.TrimSpace(string(out))
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+		if !loaded {
+			_ = exec.Command("launchctl", "kickstart", "-k", labelRef).Run()
+			loaded = exec.Command("launchctl", "print", labelRef).Run() == nil
+		}
+		if !loaded {
+			fmt.Fprintf(os.Stderr, "服务注册失败 (launchctl bootstrap): %s\n", bootErr)
+			os.Exit(1)
+		}
+		if !waitForListenerRestart(7789, before, 15*time.Second) {
+			fmt.Fprintf(os.Stderr, "服务已注册但端口 7789 未在预期时间内就绪，请查看日志: %s\n", logFile)
+			os.Exit(1)
 		}
 
 		fmt.Println("✓ 已成功安装为开机自启常驻服务 (macOS LaunchAgent):")

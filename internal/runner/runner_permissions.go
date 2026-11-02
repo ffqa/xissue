@@ -103,6 +103,16 @@ func (r *Runner) handlePermission(ctx context.Context, act *activeRun, req acp.P
 func (r *Runner) autoApproveOption(runID int64, kind, title string, tc map[string]any, opts []acp.PermissionOption) string {
 	rawText := fmt.Sprintf("%s %v", title, tc["rawInput"])
 	perm := r.cfg.PermissionsSnapshot()
+	if perm.AutoApproveAll {
+		// yolo/bypass: every request is approved, including calls that would
+		// otherwise match AlwaysAskPatterns (git push, rm -rf, …).
+		for _, o := range opts {
+			if o.Kind == "allow_once" || o.Kind == "allow_always" {
+				return o.OptionID
+			}
+		}
+		return ""
+	}
 	alwaysAsk := perm.AlwaysAskPatterns
 	autoAllow := perm.AutoAllowKinds
 	allowedKinds := map[string]bool{}

@@ -516,6 +516,13 @@
 - **PR 去重**: 列表/分页接口按 PR URL 去重；本地-only 仓库（包括 `git init` 后无远端）不参与 PR 查询，探测逻辑会把残留平台配置降级为 `plain`。
 - **验证**: store 用例（搜索/状态/跨项目隔离/编号）、MCP 用例（批量/更新/删除/编号）、PR 去重用例；浏览器实测三个项目插槽 iframe 均挂载。
 
+### 2.59 默认放行 Agent 权限请求（0.8.2）
+
+- **默认 yolo/bypass**: `permissions.autoApproveAll` 默认 `true`，Agent 的 `session/request_permission` 会自动选择 `allow_once/allow_always`，包括 `git push`、`rm -rf` 等原本命中 `alwaysAskPatterns` 的调用；Run 不再停在「待审批」。
+- **恢复审批**: 在 `~/.xissue/config.yaml` 设 `permissions.autoApproveAll: false`，即回到按 `autoAllowKinds` 放行、`alwaysAskPatterns` 强制询问的行为。
+- **风险**: 打开后 Agent 的任意命令都会被批准，提示词注入的 Issue 也可能直接执行命令/联网；仅在受信项目上使用。
+- **验证**: `TestAutoApproveAllBypassesAlwaysAsk` 覆盖默认放行、关闭后 execute 重新询问、read 仍按 kinds 放行。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

@@ -7,6 +7,12 @@
 - 处理完一个任务批次且没有排队的后续任务时，**立即发版**，不把已提交改动留在未发布状态。
 - 每个 tag 必须有对应 CHANGELOG 条目；发布流程见 `scripts/brew-publish.sh` 与 `.github/workflows/release.yml`。
 
+## [0.8.2] - 2026-11-02
+
+### Changed
+
+- Agent 权限请求默认放行（yolo / bypass）：`permissions.autoApproveAll` 默认 `true`，Run 不再因 `execute`、`fetch`、`git push` 等请求停在「待审批」；设为 `false` 可恢复原来的按 kinds 放行 + 强制询问行为。
+
 ## [0.8.1] - 2026-11-02
 
 ### Changed

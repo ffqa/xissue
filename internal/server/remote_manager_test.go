@@ -336,6 +336,8 @@ done
 	cfg := config.Default()
 	cfg.DataDir = filepath.Join(root, "server-data")
 	cfg.Monitor.Enabled = false
+	// Interactive approval path: keep prompts on despite the yolo default.
+	cfg.Permissions.AutoApproveAll = false
 	cfg.Agents["fake"] = config.AgentConfig{Command: agent, MemoryMB: 10}
 	st, err := store.Open(filepath.Join(root, "test.db"))
 	if err != nil {
@@ -387,10 +389,10 @@ done
 		}
 		return false
 	})
-	got, _ := st.GetRun(ctx, run.ID)
-	if got.Status != domain.RunAwaiting {
-		t.Fatalf("status while awaiting = %s", got.Status)
-	}
+	waitFor(t, 5*time.Second, "run awaiting approval", func() bool {
+		got, _ := st.GetRun(ctx, run.ID)
+		return got.Status == domain.RunAwaiting
+	})
 	if err := srv.runner.RespondPermission(run.ID, requestID, "allow-1"); err != nil {
 		t.Fatal(err)
 	}

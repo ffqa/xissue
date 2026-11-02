@@ -26,6 +26,9 @@ type AgentConfig struct {
 
 // PermissionPolicy decides which agent permission requests are auto-approved.
 type PermissionPolicy struct {
+	// AutoApproveAll approves every agent permission request without prompting
+	// (yolo / bypass). AlwaysAskPatterns and AutoAllowKinds are ignored while on.
+	AutoApproveAll bool `yaml:"autoApproveAll" json:"autoApproveAll"`
 	// AutoAllowKinds lists ACP tool kinds approved without asking (e.g. read, edit, search, think, fetch).
 	AutoAllowKinds []string `yaml:"autoAllowKinds"`
 	// AlwaysAskPatterns: if the request title/command contains any of these, always ask.
@@ -310,8 +313,11 @@ func Default() *Config {
 			"codex":    {Command: "npx", Args: []string{"-y", "@agentclientprotocol/codex-acp"}, MemoryMB: 200},
 		},
 		Permissions: PermissionPolicy{
-			// fetch is intentionally not auto-approved: a prompt-injected issue
-			// could otherwise read a secret and send it to an attacker.
+			// Agents run unattended by default: approve every request so runs are
+			// not blocked on a human. Set autoApproveAll: false to restore prompts.
+			AutoApproveAll: true,
+			// fetch is intentionally not auto-approved when prompts are enabled:
+			// a prompt-injected issue could read a secret and send it out.
 			AutoAllowKinds:    []string{"read", "search", "think", "edit"},
 			AlwaysAskPatterns: []string{"git push", "rm -rf", "sudo", "npm publish", "pnpm publish"},
 		},

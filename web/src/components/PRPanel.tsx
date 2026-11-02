@@ -84,20 +84,24 @@ export function PRPanel({ projectId }: { projectId: number }) {
         <div className="row" style={{ gap: 6 }}>
           {(
             [
-              { id: 'open', label: '待处理 (Open)' },
-              { id: 'merged', label: '已合并 (Merged)' },
-              { id: 'closed', label: '已关闭 (Closed)' },
-              { id: 'all', label: '全部 (All)' },
+              { id: 'open', label: '待处理', hint: 'Open' },
+              { id: 'merged', label: '已合并', hint: 'Merged' },
+              { id: 'closed', label: '已关闭', hint: 'Closed' },
+              { id: 'all', label: '全部', hint: 'All' },
             ] as const
-          ).map((t) => (
-            <button
-              key={t.id}
-              className={`sm ${filterState === t.id ? 'primary' : 'ghost'}`}
-              onClick={() => setFilterState(t.id)}
-            >
-              {t.label}
-            </button>
-          ))}
+          ).map((t) => {
+            const count = t.id === 'all' ? prs.length : prs.filter((pr) => pr.state === t.id).length;
+            return (
+              <button
+                key={t.id}
+                className={`sm ${filterState === t.id ? 'primary' : 'ghost'}`}
+                title={`${t.label} (${t.hint})`}
+                onClick={() => setFilterState(t.id)}
+              >
+                {t.label} {count}
+              </button>
+            );
+          })}
           <span className="small muted" style={{ marginLeft: 4 }}>共 {filteredPRs.length} 个 PR</span>
         </div>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
@@ -138,8 +142,16 @@ export function PRPanel({ projectId }: { projectId: number }) {
           )}
           {!prsQ.isLoading && !prsQ.isError && filteredPRs.length === 0 && (
             <div className="empty">
-              当前状态下无 Pull Request。
-              {filterState !== 'all' && (
+              {prs.length === 0
+                ? '这个仓库还没有任何 Pull Request。'
+                : filterState === 'open'
+                  ? '没有待处理的 PR。'
+                  : filterState === 'merged'
+                    ? '没有已合并的 PR。'
+                    : filterState === 'closed'
+                      ? '没有已关闭的 PR。'
+                      : '没有匹配的 PR。'}
+              {filterState !== 'all' && prs.length > 0 && (
                 <button className="sm ghost" style={{ marginLeft: 8 }} onClick={() => setFilterState('all')}>
                   查看全部 PR
                 </button>

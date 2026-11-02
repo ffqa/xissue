@@ -286,7 +286,7 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .issue-card .title { color: var(--text); font-weight: 600; font-size: 13px; line-height: 1.25; }
 .issue-card .title:hover { text-decoration: none; color: var(--accent); }
 .issue-card-summary {
-  font-size: 12px; color: var(--text-2); line-height: 1.3; word-break: break-word;
+  font-size: 12.5px; color: var(--text-2); line-height: 1.2; word-break: break-word;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 

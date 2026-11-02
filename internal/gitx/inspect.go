@@ -313,7 +313,19 @@ func DetectRepoRemote(ctx context.Context, repo *domain.Repo) bool {
 
 	if remoteCandidate != "" && remoteCandidate != repo.RemoteURL {
 		prov, ownerRepo := parseRemote(remoteCandidate)
-		if prov != "plain" || repo.Provider == domain.ProviderPlain {
+		if prov == "plain" {
+			// A local-only remote never yields platform PRs. Keeping a stale
+			// platform provider/owner here would fetch another repo's PRs under
+			// this repo's name.
+			if repo.Provider != domain.ProviderPlain {
+				repo.Provider = domain.ProviderPlain
+				changed = true
+			}
+			if repo.OwnerRepo != "" {
+				repo.OwnerRepo = ""
+				changed = true
+			}
+		} else {
 			if repo.RemoteURL != remoteCandidate {
 				repo.RemoteURL = remoteCandidate
 				changed = true
@@ -329,16 +341,26 @@ func DetectRepoRemote(ctx context.Context, repo *domain.Repo) bool {
 		}
 	} else if repo.RemoteURL != "" {
 		prov, ownerRepo := parseRemote(repo.RemoteURL)
-		if prov != string(repo.Provider) && prov != "plain" {
-			repo.Provider = domain.Provider(prov)
-			changed = true
-		}
-		if ownerRepo != repo.OwnerRepo && ownerRepo != "" {
-			repo.OwnerRepo = ownerRepo
-			changed = true
+		if prov == "plain" {
+			if repo.Provider != domain.ProviderPlain {
+				repo.Provider = domain.ProviderPlain
+				changed = true
+			}
+			if repo.OwnerRepo != "" {
+				repo.OwnerRepo = ""
+				changed = true
+			}
+		} else {
+			if repo.Provider != domain.Provider(prov) {
+				repo.Provider = domain.Provider(prov)
+				changed = true
+			}
+			if ownerRepo != repo.OwnerRepo && ownerRepo != "" {
+				repo.OwnerRepo = ownerRepo
+				changed = true
+			}
 		}
 	}
 
 	return changed
 }
-

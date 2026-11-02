@@ -50,7 +50,7 @@ func (r *Runner) ListProjectPRPage(ctx context.Context, projectID int64, state, 
 	next := map[int64]string{}
 	for _, repo := range repos {
 		p := provider.For(repo.Provider)
-		if !p.Caps().PRs {
+		if !repoCanListPRs(repo) {
 			continue
 		}
 		repo := repo

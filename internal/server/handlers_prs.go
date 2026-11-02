@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xpier/xissue/internal/domain"
+	"github.com/xpier/xissue/internal/gitx"
 	"github.com/xpier/xissue/internal/provider"
 	"github.com/xpier/xissue/internal/runner"
 )
@@ -28,24 +29,7 @@ func (s *Server) handleListProjectPRs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state := r.URL.Query().Get("state")
-	// A project imported before provider detection may still be marked plain.
-	// Refresh only when needed, bounded, so the PR panel can recover without
-	// waiting for the user to open project settings.
-	if proj, err := s.st.GetProject(r.Context(), id); err == nil {
-		needsDetect := false
-		for _, repo := range proj.Repos {
-			if repo.Provider == domain.ProviderPlain {
-				needsDetect = true
-				break
-			}
-		}
-		if needsDetect {
-			ctx, cancel := context.WithTimeout(r.Context(), 800*time.Millisecond)
-			s.refreshProjectRepos(ctx, proj)
-			cancel()
-			s.runner.InvalidateProjectPRCache(id)
-		}
-	}
+	s.repairReposBeforePRList(r.Context(), id)
 	prs, err := s.runner.ListProjectPRs(r.Context(), id, state)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
@@ -62,12 +46,37 @@ func (s *Server) handleListProjectPRPage(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	s.repairReposBeforePRList(r.Context(), id)
 	page, err := s.runner.ListProjectPRPage(r.Context(), id, r.URL.Query().Get("state"), r.URL.Query().Get("cursor"))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, page)
+}
+
+// repairReposBeforePRList refreshes repos that look like local directories or
+// plain remotes. Detection may upgrade them to their git origin, or downgrade a
+// stale platform provider that would otherwise fetch another repo's PRs.
+func (s *Server) repairReposBeforePRList(ctx context.Context, id int64) {
+	proj, err := s.st.GetProject(ctx, id)
+	if err != nil {
+		return
+	}
+	needsDetect := false
+	for _, repo := range proj.Repos {
+		if repo.Provider == domain.ProviderPlain || gitx.IsLocalDir(repo.RemoteURL) {
+			needsDetect = true
+			break
+		}
+	}
+	if !needsDetect {
+		return
+	}
+	dctx, cancel := context.WithTimeout(ctx, 800*time.Millisecond)
+	defer cancel()
+	s.refreshProjectRepos(dctx, proj)
+	s.runner.InvalidateProjectPRCache(id)
 }
 
 func (s *Server) handleMergeProjectPR(w http.ResponseWriter, r *http.Request) {

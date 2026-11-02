@@ -70,6 +70,21 @@ func lockFor(path string) *sync.Mutex {
 	return m.(*sync.Mutex)
 }
 
+var scpLikeRemote = regexp.MustCompile(`^[^@/\s]+@[^:/\s]+:`)
+
+// LooksRemoteURL reports whether remote is a fetchable git URL (`https://`,
+// `ssh://`, `git@host:path`, …) rather than a filesystem path.
+func LooksRemoteURL(remote string) bool {
+	r := strings.TrimSpace(remote)
+	if r == "" {
+		return false
+	}
+	if strings.Contains(r, "://") {
+		return true
+	}
+	return scpLikeRemote.MatchString(r)
+}
+
 // IsLocalDir reports whether remote is an existing local directory.
 func IsLocalDir(remote string) bool {
 	st, err := os.Stat(remote)

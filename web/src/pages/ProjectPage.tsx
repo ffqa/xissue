@@ -41,7 +41,7 @@ const PRIORITY_LABEL: Record<IssuePriority, string> = {
 };
 const emptyRepo: RepoInput = {
   name: '',
-  provider: 'github',
+  provider: 'plain',
   remoteUrl: '',
   ownerRepo: '',
   defaultBranch: 'main',

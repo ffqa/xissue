@@ -1086,7 +1086,7 @@ func (r *Runner) ListProjectPRs(ctx context.Context, projectID int64, state stri
 	var githubRepos []domain.Repo
 	for _, repo := range repos {
 		p := provider.For(repo.Provider)
-		if !p.Caps().PRs {
+		if !repoCanListPRs(repo) {
 			continue
 		}
 		if repo.Provider == domain.ProviderGitHub {

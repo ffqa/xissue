@@ -362,3 +362,61 @@ func (s *Store) DeleteProjectTestPlan(ctx context.Context, projectID, id int64) 
 	}
 	return nil
 }
+
+// ---------- Lookups by id (MCP / automation, no project in scope) ----------
+
+func (s *Store) GetProjectTodoByID(ctx context.Context, id int64) (*domain.ProjectTodo, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+projectTodoCols+` FROM project_todos WHERE id=?`, id)
+	t, err := scanProjectTodo(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (s *Store) UpdateProjectTodoByID(ctx context.Context, id int64, patch ProjectTodoPatch) (*domain.ProjectTodo, error) {
+	item, err := s.GetProjectTodoByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.UpdateProjectTodo(ctx, item.ProjectID, id, patch)
+}
+
+func (s *Store) DeleteProjectTodoByID(ctx context.Context, id int64) error {
+	item, err := s.GetProjectTodoByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.DeleteProjectTodo(ctx, item.ProjectID, id)
+}
+
+func (s *Store) GetProjectTestPlanByID(ctx context.Context, id int64) (*domain.ProjectTestPlan, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+projectTestPlanCols+` FROM project_test_plans WHERE id=?`, id)
+	p, err := scanProjectTestPlan(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+func (s *Store) UpdateProjectTestPlanByID(ctx context.Context, id int64, patch ProjectTestPlanPatch) (*domain.ProjectTestPlan, error) {
+	item, err := s.GetProjectTestPlanByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return s.UpdateProjectTestPlan(ctx, item.ProjectID, id, patch)
+}
+
+func (s *Store) DeleteProjectTestPlanByID(ctx context.Context, id int64) error {
+	item, err := s.GetProjectTestPlanByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	return s.DeleteProjectTestPlan(ctx, item.ProjectID, id)
+}

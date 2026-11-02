@@ -505,7 +505,7 @@
 - **测试计划编号**: `base_title` 保存去掉尾部 `xN` 的基础名；同类型第二次添加时把原条目改名为 `<base> x1`，新条目为 `<base> x2`，之后 x3…；搜索 `base_title`/`title` 均可命中。
 - **接口**: `GET/POST /api/projects/{id}/todos`、`PATCH/DELETE .../todos/{todoId}`；`test-plans` 同构。列表支持 `q`（标题/详情/来源 Key）与 `status=open|done`，未完成优先排序。
 - **UI**: 项目侧栏新增「☑️ TODO 列表」「🧪 测试计划」两个整页（`ProjectTaskList`），支持搜索、状态筛选、行内添加、勾选完成、删除；测试计划行标注 `xN` 与 BaseTitle。
-- **MCP**: 新增 `xissue_list_project_todos`、`xissue_add_todo`、`xissue_list_project_test_plans`、`xissue_add_test_plan`，供 Agent 把 spec 拆解结果与回归计划直接写入项目。
+- **MCP**: 新增 `xissue_list_project_todos`、`xissue_add_todo`、`xissue_add_todos`（批量）、`xissue_update_todo`、`xissue_delete_todo`，以及 `xissue_list_project_test_plans`、`xissue_add_test_plan`、`xissue_add_test_plans`（批量）、`xissue_update_test_plan`、`xissue_delete_test_plan`；Agent 可完整增删改查，无需人工维护。
 - **验证**: store 用例覆盖搜索/完成/重开/跨项目隔离/编号序列；API 实测同名计划三次得到 x1/x2/x3 且 `q=x2` 命中；浏览器实测添加、勾选删除线、搜索过滤；删除项目后两张表归零。
 
 ## 3. 核心架构与关键代码索引

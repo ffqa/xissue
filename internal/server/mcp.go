@@ -13,8 +13,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/knowledge"
 	"github.com/xpier/xissue/internal/runner"
+	"github.com/xpier/xissue/internal/store"
 )
 
 type mcpRequest struct {
@@ -308,6 +310,103 @@ func mcpToolDefinitions() []map[string]any {
 					"detail":        map[string]any{"type": "string", "description": "Optional acceptance notes"},
 					"sourceIssueId": map[string]any{"type": "number", "description": "Issue this item came from (optional)"},
 					"sourceKey":     map[string]any{"type": "string", "description": "Issue key snapshot, e.g. ffqa/h5#12 (optional)"},
+				},
+			},
+		},
+		{
+			"name":        "xissue_add_todos",
+			"description": "Bulk-create TODO checklist items for a project (e.g. decompose a spec in one call). Existing items are untouched.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"items"},
+				"properties": map[string]any{
+					"projectId": map[string]any{"type": "number", "description": "Project ID (default: first project)"},
+					"items": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type":     "object",
+							"required": []string{"title"},
+							"properties": map[string]any{
+								"title":         map[string]any{"type": "string"},
+								"detail":        map[string]any{"type": "string"},
+								"sourceIssueId": map[string]any{"type": "number"},
+								"sourceKey":     map[string]any{"type": "string"},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			"name":        "xissue_update_todo",
+			"description": "Update a TODO item by id: mark it done/open, rename it, or edit its detail.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"todoId"},
+				"properties": map[string]any{
+					"todoId": map[string]any{"type": "number", "description": "TODO id"},
+					"status": map[string]any{"type": "string", "enum": []string{"open", "done"}},
+					"title":  map[string]any{"type": "string"},
+					"detail": map[string]any{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "xissue_delete_todo",
+			"description": "Delete a TODO item by id.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"todoId"},
+				"properties": map[string]any{
+					"todoId": map[string]any{"type": "number", "description": "TODO id"},
+				},
+			},
+		},
+		{
+			"name":        "xissue_add_test_plans",
+			"description": "Bulk-create test plans for a project. Repeats of the same title are numbered x1, x2, … automatically.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"items"},
+				"properties": map[string]any{
+					"projectId": map[string]any{"type": "number", "description": "Project ID (default: first project)"},
+					"items": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type":     "object",
+							"required": []string{"title"},
+							"properties": map[string]any{
+								"title":         map[string]any{"type": "string"},
+								"detail":        map[string]any{"type": "string"},
+								"sourceIssueId": map[string]any{"type": "number"},
+								"sourceKey":     map[string]any{"type": "string"},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			"name":        "xissue_update_test_plan",
+			"description": "Update a test plan by id: mark it done/open or edit its detail.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"planId"},
+				"properties": map[string]any{
+					"planId": map[string]any{"type": "number", "description": "Test plan id"},
+					"status": map[string]any{"type": "string", "enum": []string{"open", "done"}},
+					"detail": map[string]any{"type": "string"},
+				},
+			},
+		},
+		{
+			"name":        "xissue_delete_test_plan",
+			"description": "Delete a test plan by id.",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"planId"},
+				"properties": map[string]any{
+					"planId": map[string]any{"type": "number", "description": "Test plan id"},
 				},
 			},
 		},
@@ -613,6 +712,145 @@ func (s *Server) callMCPTool(ctx context.Context, name string, args map[string]a
 		}
 		b, _ := json.MarshalIndent(item, "", "  ")
 		return string(b), false
+
+	case "xissue_add_todos", "xissue_add_test_plans":
+		pid := numArg("projectId")
+		if pid <= 0 {
+			if projs, _ := s.st.ListProjects(ctx); len(projs) > 0 {
+				pid = projs[0].ID
+			} else {
+				return "error: no project found in xIssue", true
+			}
+		}
+		rawItems, ok := args["items"].([]any)
+		if !ok || len(rawItems) == 0 {
+			return "error: items is required", true
+		}
+		created := make([]any, 0, len(rawItems))
+		createdIDs := make([]int64, 0, len(rawItems))
+		for i, raw := range rawItems {
+			m, ok := raw.(map[string]any)
+			if !ok {
+				return fmt.Sprintf("error: item %d is not an object", i), true
+			}
+			itemTitle := ""
+			if v, ok := m["title"].(string); ok {
+				itemTitle = strings.TrimSpace(v)
+			}
+			detail := ""
+			if v, ok := m["detail"].(string); ok {
+				detail = strings.TrimSpace(v)
+			}
+			sourceKey := ""
+			if v, ok := m["sourceKey"].(string); ok {
+				sourceKey = strings.TrimSpace(v)
+			}
+			var srcID *int64
+			if v, ok := m["sourceIssueId"].(float64); ok && int64(v) > 0 {
+				id := int64(v)
+				srcID = &id
+			}
+			if itemTitle == "" {
+				return fmt.Sprintf("error: item %d: title is required", i), true
+			}
+			var item any
+			var err error
+			if name == "xissue_add_todos" {
+				item, err = s.st.CreateProjectTodo(ctx, pid, itemTitle, detail, srcID, sourceKey)
+			} else {
+				item, err = s.st.CreateProjectTestPlan(ctx, pid, itemTitle, detail, srcID, sourceKey)
+			}
+			if err != nil {
+				return fmt.Sprintf("error: item %d (%s): %v (created %d before it)", i, itemTitle, err, len(created)), true
+			}
+			created = append(created, item)
+			switch v := item.(type) {
+			case *domain.ProjectTodo:
+				createdIDs = append(createdIDs, v.ID)
+			case *domain.ProjectTestPlan:
+				createdIDs = append(createdIDs, v.ID)
+			}
+		}
+		// Re-read so bulk test plans reflect renumbering done by later inserts.
+		created = created[:0]
+		for _, id := range createdIDs {
+			if name == "xissue_add_todos" {
+				item, err := s.st.GetProjectTodoByID(ctx, id)
+				if err != nil {
+					return "error: " + err.Error(), true
+				}
+				created = append(created, item)
+			} else {
+				item, err := s.st.GetProjectTestPlanByID(ctx, id)
+				if err != nil {
+					return "error: " + err.Error(), true
+				}
+				created = append(created, item)
+			}
+		}
+		b, _ := json.MarshalIndent(created, "", "  ")
+		return string(b), false
+
+	case "xissue_update_todo":
+		tid := numArg("todoId")
+		if tid <= 0 {
+			return "error: todoId is required", true
+		}
+		patch := store.ProjectTodoPatch{}
+		if v, ok := args["status"].(string); ok && strings.TrimSpace(v) != "" {
+			patch.Status = &v
+		}
+		if v, ok := args["title"].(string); ok {
+			patch.Title = &v
+		}
+		if v, ok := args["detail"].(string); ok {
+			patch.Detail = &v
+		}
+		item, err := s.st.UpdateProjectTodoByID(ctx, tid, patch)
+		if err != nil {
+			return "error: " + err.Error(), true
+		}
+		b, _ := json.MarshalIndent(item, "", "  ")
+		return string(b), false
+
+	case "xissue_delete_todo":
+		tid := numArg("todoId")
+		if tid <= 0 {
+			return "error: todoId is required", true
+		}
+		if err := s.st.DeleteProjectTodoByID(ctx, tid); err != nil {
+			return "error: " + err.Error(), true
+		}
+		return `{"ok": true}`, false
+
+	case "xissue_update_test_plan":
+		planID := numArg("planId")
+		if planID <= 0 {
+			return "error: planId is required", true
+		}
+		patch := store.ProjectTestPlanPatch{}
+		if v, ok := args["status"].(string); ok && strings.TrimSpace(v) != "" {
+			patch.Status = &v
+		}
+		if v, ok := args["detail"].(string); ok {
+			patch.Detail = &v
+		}
+		item, err := s.st.UpdateProjectTestPlanByID(ctx, planID, patch)
+		if err != nil {
+			return "error: " + err.Error(), true
+		}
+		b, _ := json.MarshalIndent(item, "", "  ")
+		return string(b), false
+
+	case "xissue_delete_test_plan":
+		planID := numArg("planId")
+		if planID <= 0 {
+			return "error: planId is required", true
+		}
+		if err := s.st.DeleteProjectTestPlanByID(ctx, planID); err != nil {
+			return "error: " + err.Error(), true
+		}
+		return `{"ok": true}`, false
 
 	case "xissue_get_run_changes":
 		rid := numArg("runId")

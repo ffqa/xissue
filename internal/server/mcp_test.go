@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/xpier/xissue/internal/domain"
 	"github.com/xpier/xissue/internal/store"
 )
 
@@ -65,7 +68,11 @@ func TestMCPRunToolDefinitions(t *testing.T) {
 			names[n] = true
 		}
 	}
-	for _, want := range []string{"xissue_get_run_changes", "xissue_send_message", "xissue_submit_run"} {
+	for _, want := range []string{
+		"xissue_get_run_changes", "xissue_send_message", "xissue_submit_run",
+		"xissue_list_project_todos", "xissue_add_todo", "xissue_add_todos", "xissue_update_todo", "xissue_delete_todo",
+		"xissue_list_project_test_plans", "xissue_add_test_plan", "xissue_add_test_plans", "xissue_update_test_plan", "xissue_delete_test_plan",
+	} {
 		if !names[want] {
 			t.Fatalf("missing MCP tool %q", want)
 		}
@@ -108,5 +115,88 @@ func TestMCPSubmitRunGuards(t *testing.T) {
 	text, isErr = srv.callMCPTool(ctx, "xissue_submit_run", map[string]any{"runId": float64(run.ID), "mode": "pr"})
 	if !isErr || !strings.Contains(text, "auto-develop") {
 		t.Fatalf("auto-PR submit via MCP = %q, err=%v", text, isErr)
+	}
+}
+
+func TestMCPProjectTaskTools(t *testing.T) {
+	srv, st, _ := newTestServer(t)
+	ctx := context.Background()
+	proj, err := st.CreateProject(ctx, "MCP tasks", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pid := float64(proj.ID)
+
+	text, isErr := srv.callMCPTool(ctx, "xissue_add_todos", map[string]any{
+		"projectId": pid,
+		"items": []any{
+			map[string]any{"title": "登录流程", "sourceKey": "SPEC-1"},
+			map[string]any{"title": "导出报表"},
+		},
+	})
+	if isErr {
+		t.Fatalf("add_todos: %s", text)
+	}
+	var todos []domain.ProjectTodo
+	if err := json.Unmarshal([]byte(text), &todos); err != nil || len(todos) != 2 {
+		t.Fatalf("add_todos result = %s (%v)", text, err)
+	}
+
+	text, isErr = srv.callMCPTool(ctx, "xissue_list_project_todos", map[string]any{"projectId": pid, "q": "登录"})
+	if isErr {
+		t.Fatalf("list todos: %s", text)
+	}
+	var found []domain.ProjectTodo
+	if err := json.Unmarshal([]byte(text), &found); err != nil || len(found) != 1 || found[0].Title != "登录流程" {
+		t.Fatalf("search result = %s (%v)", text, err)
+	}
+
+	text, isErr = srv.callMCPTool(ctx, "xissue_update_todo", map[string]any{"todoId": float64(todos[0].ID), "status": "done"})
+	if isErr {
+		t.Fatalf("update todo: %s", text)
+	}
+	var done domain.ProjectTodo
+	if err := json.Unmarshal([]byte(text), &done); err != nil || done.Status != "done" || done.CompletedAt == nil {
+		t.Fatalf("update todo result = %s", text)
+	}
+
+	text, isErr = srv.callMCPTool(ctx, "xissue_add_test_plans", map[string]any{
+		"projectId": pid,
+		"items": []any{
+			map[string]any{"title": "回归登录"},
+			map[string]any{"title": "回归登录"},
+		},
+	})
+	if isErr {
+		t.Fatalf("add_test_plans: %s", text)
+	}
+	var plans []domain.ProjectTestPlan
+	if err := json.Unmarshal([]byte(text), &plans); err != nil || len(plans) != 2 {
+		t.Fatalf("add_test_plans result = %s (%v)", text, err)
+	}
+	if plans[0].Title != "回归登录 x1" || plans[1].Title != "回归登录 x2" {
+		t.Fatalf("plan numbering = %q, %q", plans[0].Title, plans[1].Title)
+	}
+
+	text, isErr = srv.callMCPTool(ctx, "xissue_update_test_plan", map[string]any{"planId": float64(plans[0].ID), "status": "done"})
+	if isErr {
+		t.Fatalf("update plan: %s", text)
+	}
+	text, isErr = srv.callMCPTool(ctx, "xissue_list_project_test_plans", map[string]any{"projectId": pid, "status": "done", "q": "x1"})
+	if isErr {
+		t.Fatalf("list plans: %s", text)
+	}
+	var donePlans []domain.ProjectTestPlan
+	if err := json.Unmarshal([]byte(text), &donePlans); err != nil || len(donePlans) != 1 {
+		t.Fatalf("done plans = %s (%v)", text, err)
+	}
+
+	text, isErr = srv.callMCPTool(ctx, "xissue_delete_todo", map[string]any{"todoId": float64(todos[0].ID)})
+	if isErr || !strings.Contains(text, "\"ok\"") {
+		t.Fatalf("delete todo = %s", text)
+	}
+	text, isErr = srv.callMCPTool(ctx, "xissue_delete_test_plan", map[string]any{"planId": float64(plans[0].ID)})
+	if isErr || !strings.Contains(text, "\"ok\"") {
+		t.Fatalf("delete plan = %s", text)
 	}
 }

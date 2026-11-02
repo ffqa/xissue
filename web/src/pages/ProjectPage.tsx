@@ -653,6 +653,17 @@ export default function ProjectPage() {
       </Crumbs>
 
       {!view && (<>
+      <PluginSlot
+        name="project.header"
+        context={{ projectId: id, projectName: p?.name, runnerId: p?.runnerId }}
+        marginBottom={0}
+      />
+      <PluginSlot
+        name="project.toolbar"
+        inline
+        context={{ projectId: id, projectName: p?.name, runnerId: p?.runnerId }}
+      />
+
       {/* 仓库与分支监控双栏面板 */}
       <div
         style={{

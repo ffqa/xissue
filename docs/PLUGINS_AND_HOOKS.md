@@ -99,7 +99,7 @@ permissions:             # 仅声明与审计，不是沙箱
 - `events` 非空且只能使用上表事件名或 `all` / `*`；
 - `entrypoint` 必须位于插件目录内，禁止绝对路径、`..` 与符号链接逃逸；
 - `permissions` 仅允许 `repo:read`、`repo:write`、`network`、`notify`、`process`；
-- `ui.entry`（可选）必须是以 `ui/` 开头的相对路径，文件必须存在；`ui.slots` 只能使用 `project.page`、`project.header`、`issue.page`、`issue.actions`；
+- `ui.entry`（可选）必须是以 `ui/` 开头的相对路径，文件必须存在；`ui.slots` 只能使用 `project.page`、`project.header`、`project.toolbar`、`issue.page`、`issue.actions`、`issue.toolbar`；
 - 清单损坏、事件未知、UI 路径逃逸或 entrypoint 缺失时 fail-closed。
 
 JSON Schema 见仓库 [`schemas/plugin.schema.json`](../schemas/plugin.schema.json)。

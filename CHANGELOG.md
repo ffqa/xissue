@@ -4,6 +4,21 @@
 
 版本策略（0.x）：patch 用于兼容的修复/小功能，minor 用于破坏性变更（状态/API/数据结构），patch 号不要求连续填满。
 
+## [0.8.0] - 2026-11-02
+
+### Added
+
+- 项目级 **TODO 列表**与**测试计划**：独立于 Issue 持久保存（Issue 归档/删除不受影响），支持搜索（标题/详情/来源 Key）与未完成/已完成筛选；测试计划同类型重复时自动编号 `x1`、`x2`…，并保留来源 Issue 快照。
+- 项目侧栏新增「☑️ TODO 列表」「🧪 测试计划」两个整页，支持行内添加、勾选完成、删除。
+- MCP 新增 10 个任务工具：`xissue_list_project_todos`、`xissue_add_todo`、`xissue_add_todos`（批量）、`xissue_update_todo`、`xissue_delete_todo`，以及 `xissue_list_project_test_plans`、`xissue_add_test_plan`、`xissue_add_test_plans`（批量）、`xissue_update_test_plan`、`xissue_delete_test_plan`，Agent 可无需人工介入地维护。
+- 新增可选的本机 macOS 代码签名助手（`scripts/sign-macos.sh` / `make codesign-setup`），用于稳定 TCC 授权身份；不配置时构建静默跳过。
+
+### Fixed
+
+- 修复同一 PR 出现两条：按 PR URL 去重（列表、分页、前端跨页都有兜底）；本地-only 仓库不再参与 PR 查询，远端探测会把本地路径降级为 `plain` 并清空 owner，避免串用其它仓库的 PR。
+- 恢复整页化导航时丢失的 `project.header` / `project.toolbar` 插件插槽；`project.page`、`issue.actions`、`issue.toolbar`、`issue.page` 保持不变。
+- 添加仓库表单默认平台改为 `plain`，避免本地目录被误当成 GitHub 仓库。
+
 ## [0.7.0] - 2026-11-01
 
 ### Added

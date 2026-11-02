@@ -1,13 +1,13 @@
 # xIssue 项目交接文档 (Handoff Document)
 
-> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.7.0` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
+> 本文档用于记录 xIssue 在 `v0.2.10` 到 `0.8.0` 期间的核心功能演进、架构改造、故障排查与后续开发规划，供后续开发、排障与持续迭代参考。
 
 ---
 
 ## 1. 项目概况与当前状态
 
 - **项目名称**: xIssue (Personal AI Agent Issue & Multi-Repo Orchestrator)
-- **最新发布版本**: `0.7.0`
+- **最新发布版本**: `0.8.0`
 - **代码仓库**: `https://github.com/ffqa/xissue`
 - **Homebrew Tap**: `https://github.com/ffqa/homebrew-tap` (`Formula/xissue.rb`)
 - **本地服务监听**: `http://127.0.0.1:7789`
@@ -507,6 +507,14 @@
 - **UI**: 项目侧栏新增「☑️ TODO 列表」「🧪 测试计划」两个整页（`ProjectTaskList`），支持搜索、状态筛选、行内添加、勾选完成、删除；测试计划行标注 `xN` 与 BaseTitle。
 - **MCP**: 新增 `xissue_list_project_todos`、`xissue_add_todo`、`xissue_add_todos`（批量）、`xissue_update_todo`、`xissue_delete_todo`，以及 `xissue_list_project_test_plans`、`xissue_add_test_plan`、`xissue_add_test_plans`（批量）、`xissue_update_test_plan`、`xissue_delete_test_plan`；Agent 可完整增删改查，无需人工维护。
 - **验证**: store 用例覆盖搜索/完成/重开/跨项目隔离/编号序列；API 实测同名计划三次得到 x1/x2/x3 且 `q=x2` 命中；浏览器实测添加、勾选删除线、搜索过滤；删除项目后两张表归零。
+
+### 2.58 TODO/测试计划与插件插槽恢复（0.8.0）
+
+- **项目任务**: `project_todos` / `project_test_plans` 随项目存活，支持搜索与状态筛选；测试计划以 `base_title` 归并，重复添加自动编号 x1/x2…，并保留来源 Issue 快照。
+- **MCP**: 10 个工具覆盖查询、单条/批量创建、更新状态、删除；批量接口在同一序列内编号并在返回前重读，保证 xN 准确。
+- **插件插槽**: 恢复整页化导航时被移除的 `project.header`、`project.toolbar`；宿主页面只在看板视图挂载它们，`project.page` 仍在页面底部。插槽白名单共 6 个，文档已同步。
+- **PR 去重**: 列表/分页接口按 PR URL 去重；本地-only 仓库（包括 `git init` 后无远端）不参与 PR 查询，探测逻辑会把残留平台配置降级为 `plain`。
+- **验证**: store 用例（搜索/状态/跨项目隔离/编号）、MCP 用例（批量/更新/删除/编号）、PR 去重用例；浏览器实测三个项目插槽 iframe 均挂载。
 
 ## 3. 核心架构与关键代码索引
 

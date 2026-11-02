@@ -6,7 +6,7 @@ DATA_DIR := $(HOME)/.xissue
 LOG_FILE := $(DATA_DIR)/xissue.log
 
 .PHONY: help build all web web-test server deploy run dev stop restart status logs test clean \
-        install-service uninstall-service service-status service-restart brew-publish
+        install-service uninstall-service service-status service-restart brew-publish codesign-setup
 
 help: ## 显示此帮助菜单（默认）
 	@printf "\033[1;36mxIssue (xpier-issue) 构建与服务管理菜单\033[0m\n\n"
@@ -29,6 +29,7 @@ web-test: ## 运行前端纯逻辑单元测试 (Vitest)
 
 server: ## 仅编译 Go 后端二进制 (bin/xissue，使用已构建的前端产物)
 	go build -o $(BINARY) ./cmd/xissue
+	@./scripts/sign-macos.sh $(BINARY)
 
 deploy: build service-restart ## 一键编译前后端并重启后台常驻服务（开发改完代码最常用）
 	@printf "\033[1;32m✓ 已完成构建并重启服务: http://127.0.0.1:$(PORT)\033[0m\n"
@@ -77,6 +78,9 @@ test: ## 运行 Go 单元测试与前端 TypeScript 类型检查
 
 clean: ## 清理编译产物 (bin/ 与 internal/server/dist/)
 	rm -rf bin internal/server/dist
+
+codesign-setup: ## macOS 一次性创建本地代码签名证书（避免每次更新后重复弹出磁盘权限）
+	./scripts/setup-codesign-macos.sh
 
 brew-publish: ## 发布最新版本 Formula 到 ffqa/homebrew-tap
 	./scripts/brew-publish.sh

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { PluginSlot } from './PluginFrame';
 import { api, qk } from '../api';
 
 const SYSTEM_LINKS: { to: string; icon: string; label: string; match?: string }[] = [
@@ -126,6 +127,18 @@ export function Sidebar() {
                     <span className="label">{it.label}</span>
                   </Link>
                 ))}
+                {!collapsed && (() => {
+                  const proj = (projectsQ.data ?? []).find((p) => String(p.id) === activeProjectId);
+                  return (
+                    <div className="sidebar-plugins">
+                      <PluginSlot
+                        name="project.toolbar"
+                        inline
+                        context={{ projectId: Number(activeProjectId), projectName: proj?.name, runnerId: proj?.runnerId }}
+                      />
+                    </div>
+                  );
+                })()}
               </>
             )}
           </>

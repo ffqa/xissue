@@ -420,3 +420,28 @@ func (s *Store) DeleteProjectTestPlanByID(ctx context.Context, id int64) error {
 	}
 	return s.DeleteProjectTestPlan(ctx, item.ProjectID, id)
 }
+
+// ensureTestPlanForIssue records a regression plan for a completed issue, unless
+// the project already has a plan for that issue or one with the same base title.
+func (s *Store) ensureTestPlanForIssue(ctx context.Context, issue *domain.Issue) error {
+	if issue == nil {
+		return nil
+	}
+	base := normalizeTestPlanBase(issue.Title)
+	if base == "" {
+		base = issue.Key
+	}
+	var existing int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id FROM project_test_plans WHERE project_id=? AND (source_issue_id=? OR base_title=?) LIMIT 1`,
+		issue.ProjectID, issue.ID, base).Scan(&existing)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	srcID := issue.ID
+	_, err = s.CreateProjectTestPlan(ctx, issue.ProjectID, base, "", &srcID, issue.Key)
+	return err
+}

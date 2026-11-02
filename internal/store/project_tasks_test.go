@@ -5,6 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+
+	"github.com/xpier/xissue/internal/domain"
 )
 
 func TestProjectTodoLifecycleAndSearch(t *testing.T) {
@@ -123,3 +125,61 @@ func TestProjectTestPlanRepeatSuffix(t *testing.T) {
 }
 
 func ptrString(s string) *string { return &s }
+
+func TestIssueCompletionAutoAddsTestPlan(t *testing.T) {
+	ctx := context.Background()
+	st, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	proj, err := st.CreateProject(ctx, "Auto plan", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(ctx, proj.ID, "登录流程", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := domain.IssueDone
+	if _, err := st.UpdateIssue(ctx, issue.ID, IssuePatch{Status: &done}); err != nil {
+		t.Fatal(err)
+	}
+	plans, err := st.ListProjectTestPlans(ctx, proj.ID, "", "")
+	if err != nil || len(plans) != 1 {
+		t.Fatalf("auto plan = %+v, %v", plans, err)
+	}
+	if plans[0].Title != "登录流程" || plans[0].SourceIssueID == nil || *plans[0].SourceIssueID != issue.ID || plans[0].Status != "open" {
+		t.Fatalf("auto plan fields = %+v", plans[0])
+	}
+
+	// Re-completing and reopening/completing again must not duplicate the plan.
+	if _, err := st.UpdateIssue(ctx, issue.ID, IssuePatch{Status: &done}); err != nil {
+		t.Fatal(err)
+	}
+	open := domain.IssueTodo
+	if _, err := st.UpdateIssue(ctx, issue.ID, IssuePatch{Status: &open}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateIssue(ctx, issue.ID, IssuePatch{Status: &done}); err != nil {
+		t.Fatal(err)
+	}
+	if plans, _ = st.ListProjectTestPlans(ctx, proj.ID, "", ""); len(plans) != 1 {
+		t.Fatalf("duplicate auto plans = %+v", plans)
+	}
+
+	// A manually filed plan with the same base title also suppresses the auto one.
+	other, err := st.CreateLocalIssue(ctx, proj.ID, "导出报表", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateProjectTestPlan(ctx, proj.ID, "导出报表", "", nil, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateIssue(ctx, other.ID, IssuePatch{Status: &done}); err != nil {
+		t.Fatal(err)
+	}
+	if plans, _ = st.ListProjectTestPlans(ctx, proj.ID, "导出", ""); len(plans) != 1 {
+		t.Fatalf("auto plan should reuse the manual one: %+v", plans)
+	}
+}

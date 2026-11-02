@@ -1005,6 +1005,11 @@ func (s *Store) UpdateIssue(ctx context.Context, id int64, p IssuePatch) (*domai
 	if p.Labels != nil {
 		_ = s.AddIssueEvent(ctx, id, "labels", "system", "标签: "+strings.Join(*p.Labels, ", "))
 	}
+	// A finished issue should leave a regression test plan behind even when the
+	// agent never created one. Repeated completions stay idempotent.
+	if p.Status != nil && *p.Status == domain.IssueDone && old.Status != domain.IssueDone {
+		_ = s.ensureTestPlanForIssue(ctx, issue)
+	}
 	return issue, nil
 }
 

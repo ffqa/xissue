@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, qk } from '../api';
 import { fmtTime } from './common';
 import { toast } from '../toast';
@@ -11,6 +11,8 @@ export function PRPanel({ projectId }: { projectId: number }) {
   const qc = useQueryClient();
   const [filterState, setFilterState] = useState<PRFilter>('open');
   const [mineOnly, setMineOnly] = useState(false);
+  const [repoFilter, setRepoFilter] = useState<number>(0);
+  const [searchText, setSearchText] = useState('');
   const [visibleCount, setVisibleCount] = useState(100);
   const [mergeMethods, setMergeMethods] = useState<Record<number, 'squash' | 'merge' | 'rebase'>>({});
 
@@ -19,9 +21,19 @@ export function PRPanel({ projectId }: { projectId: number }) {
   // Merged/Closed never waits for another provider request.
   // ProjectPage owns the single 60s timer for this shared query.
   const prsQ = useProjectPRPages(projectId);
+  const projectQ = useQuery({ queryKey: qk.project(projectId), queryFn: () => api.project(projectId), staleTime: 60_000 });
+  const repos = projectQ.data?.repos ?? [];
   const prs: RemotePR[] = dedupePRs(prsQ.data?.pages.flatMap((page) => page.prs ?? []) ?? []);
   const mineKnown = prsQ.data?.pages.some((page) => page.mineKnown) ?? false;
-  const filteredPRs = sortPRs(filterPRs(prs, filterState).filter((pr) => !mineOnly || !mineKnown || pr.mine));
+  const needle = searchText.trim().toLowerCase();
+  const scopedPRs = prs.filter((pr) => {
+    if (repoFilter && pr.repoId !== repoFilter) return false;
+    if (!needle) return true;
+    return `${pr.title} ${pr.body} ${pr.author} ${pr.headBranch} ${pr.baseBranch} ${pr.url}`.toLowerCase().includes(needle);
+  });
+  const filteredPRs = sortPRs(
+    filterPRs(scopedPRs, filterState).filter((pr) => !mineOnly || !mineKnown || pr.mine),
+  );
   const visiblePRs = filteredPRs.slice(0, visibleCount);
 
   const pullMut = useMutation({
@@ -62,7 +74,7 @@ export function PRPanel({ projectId }: { projectId: number }) {
 
   useEffect(() => {
     setVisibleCount(100);
-  }, [filterState, mineOnly, projectId]);
+  }, [filterState, mineOnly, repoFilter, searchText, projectId]);
 
   const handleMerge = (pr: RemotePR) => {
     const method = mergeMethods[pr.number] || 'squash';
@@ -90,7 +102,7 @@ export function PRPanel({ projectId }: { projectId: number }) {
               { id: 'all', label: '全部', hint: 'All' },
             ] as const
           ).map((t) => {
-            const count = t.id === 'all' ? prs.length : prs.filter((pr) => pr.state === t.id).length;
+            const count = t.id === 'all' ? scopedPRs.length : scopedPRs.filter((pr) => pr.state === t.id).length;
             return (
               <button
                 key={t.id}
@@ -105,6 +117,28 @@ export function PRPanel({ projectId }: { projectId: number }) {
           <span className="small muted" style={{ marginLeft: 4 }}>共 {filteredPRs.length} 个 PR</span>
         </div>
         <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <select
+            className="sm"
+            style={{ width: 160 }}
+            value={repoFilter}
+            onChange={(e) => setRepoFilter(Number(e.target.value))}
+            title="按仓库筛选 PR"
+          >
+            <option value={0}>全部仓库 ({repos.length})</option>
+            {repos.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+          <input
+            className="sm"
+            style={{ width: 240 }}
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            placeholder="搜索标题 / 分支 / 作者…"
+            aria-label="搜索 PR"
+          />
           <label className="row small muted" style={{ gap: 5, cursor: 'pointer' }}>
             <input
               type="checkbox"
@@ -142,8 +176,10 @@ export function PRPanel({ projectId }: { projectId: number }) {
           )}
           {!prsQ.isLoading && !prsQ.isError && filteredPRs.length === 0 && (
             <div className="empty">
-              {prs.length === 0
-                ? '这个仓库还没有任何 Pull Request。'
+              {scopedPRs.length === 0
+                ? prs.length === 0
+                  ? '这个仓库还没有任何 Pull Request。'
+                  : '当前仓库/搜索条件下没有 PR。'
                 : filterState === 'open'
                   ? '没有待处理的 PR。'
                   : filterState === 'merged'
@@ -151,7 +187,7 @@ export function PRPanel({ projectId }: { projectId: number }) {
                     : filterState === 'closed'
                       ? '没有已关闭的 PR。'
                       : '没有匹配的 PR。'}
-              {filterState !== 'all' && prs.length > 0 && (
+              {filterState !== 'all' && scopedPRs.length > 0 && (
                 <button className="sm ghost" style={{ marginLeft: 8 }} onClick={() => setFilterState('all')}>
                   查看全部 PR
                 </button>

@@ -15,6 +15,7 @@ import { CommitsModal } from '../components/CommitsModal';
 import { DeleteProjectModal } from '../components/DeleteProjectModal';
 import { KnowledgeBaseModal } from '../components/KnowledgeBaseModal';
 import { ProjectReadmeModal } from '../components/ProjectReadmeModal';
+import { ProjectTaskList } from '../components/ProjectTaskList';
 import { getCommitWebUrl, getBranchWebUrl, getRepoWebUrl } from '../gitUrls';
 import { toast } from '../toast';
 import { copyText } from '../clipboard';
@@ -2455,6 +2456,9 @@ export default function ProjectPage() {
           )}
         </PageShell>
       )}
+
+      {view === 'todos' && <ProjectTaskList projectId={id} kind="todos" />}
+      {view === 'test-plans' && <ProjectTaskList projectId={id} kind="test-plans" />}
 
       {prModalOpen && <PRModal projectId={id} />}
       {branchCleanupOpen && (

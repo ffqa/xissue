@@ -285,6 +285,60 @@ func mcpToolDefinitions() []map[string]any {
 			},
 		},
 		{
+			"name":        "xissue_list_project_todos",
+			"description": "List a project's persistent TODO checklist (survives archived/deleted issues). Supports search and status filter.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"projectId": map[string]any{"type": "number", "description": "Project ID (default: first project)"},
+					"q":         map[string]any{"type": "string", "description": "Search title/detail/source key"},
+					"status":    map[string]any{"type": "string", "enum": []string{"open", "done"}, "description": "Filter by status (omitted = all)"},
+				},
+			},
+		},
+		{
+			"name":        "xissue_add_todo",
+			"description": "Add an item to a project's TODO checklist (e.g. one feature decomposed from a spec).",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"title"},
+				"properties": map[string]any{
+					"projectId":     map[string]any{"type": "number", "description": "Project ID (default: first project)"},
+					"title":         map[string]any{"type": "string", "description": "TODO title"},
+					"detail":        map[string]any{"type": "string", "description": "Optional acceptance notes"},
+					"sourceIssueId": map[string]any{"type": "number", "description": "Issue this item came from (optional)"},
+					"sourceKey":     map[string]any{"type": "string", "description": "Issue key snapshot, e.g. ffqa/h5#12 (optional)"},
+				},
+			},
+		},
+		{
+			"name":        "xissue_list_project_test_plans",
+			"description": "List a project's persistent test plans. Repeated plans of the same kind are numbered x1, x2, … by the server.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"projectId": map[string]any{"type": "number", "description": "Project ID (default: first project)"},
+					"q":         map[string]any{"type": "string", "description": "Search title/base title/detail/source key"},
+					"status":    map[string]any{"type": "string", "enum": []string{"open", "done"}, "description": "Filter by status (omitted = all)"},
+				},
+			},
+		},
+		{
+			"name":        "xissue_add_test_plan",
+			"description": "Add a test plan for a project. Adding the same kind again renames the earlier one to x1 and stores the new one as x2 (then x3…).",
+			"inputSchema": map[string]any{
+				"type":     "object",
+				"required": []string{"title"},
+				"properties": map[string]any{
+					"projectId":     map[string]any{"type": "number", "description": "Project ID (default: first project)"},
+					"title":         map[string]any{"type": "string", "description": "Test plan title, e.g. 回归登录"},
+					"detail":        map[string]any{"type": "string", "description": "Optional steps / expected result"},
+					"sourceIssueId": map[string]any{"type": "number", "description": "Issue this plan covers (optional)"},
+					"sourceKey":     map[string]any{"type": "string", "description": "Issue key snapshot (optional)"},
+				},
+			},
+		},
+		{
 			"name":        "xissue_get_run_changes",
 			"description": "Get a run's changed files grouped per repository, including each worktreePath and the unified patch so the caller can run verification commands and feed an independent reviewer.",
 			"inputSchema": map[string]any{
@@ -505,6 +559,59 @@ func (s *Server) callMCPTool(ctx context.Context, name string, args map[string]a
 			return "error: " + err.Error(), true
 		}
 		b, _ := json.MarshalIndent(results, "", "  ")
+		return string(b), false
+
+	case "xissue_list_project_todos", "xissue_list_project_test_plans":
+		pid := numArg("projectId")
+		if pid <= 0 {
+			if projs, _ := s.st.ListProjects(ctx); len(projs) > 0 {
+				pid = projs[0].ID
+			}
+		}
+		status := strArg("status")
+		if name == "xissue_list_project_todos" {
+			items, err := s.st.ListProjectTodos(ctx, pid, strArg("q"), status)
+			if err != nil {
+				return "error: " + err.Error(), true
+			}
+			b, _ := json.MarshalIndent(items, "", "  ")
+			return string(b), false
+		}
+		items, err := s.st.ListProjectTestPlans(ctx, pid, strArg("q"), status)
+		if err != nil {
+			return "error: " + err.Error(), true
+		}
+		b, _ := json.MarshalIndent(items, "", "  ")
+		return string(b), false
+
+	case "xissue_add_todo", "xissue_add_test_plan":
+		pid := numArg("projectId")
+		if pid <= 0 {
+			if projs, _ := s.st.ListProjects(ctx); len(projs) > 0 {
+				pid = projs[0].ID
+			} else {
+				return "error: no project found in xIssue", true
+			}
+		}
+		title := strArg("title")
+		if title == "" {
+			return "error: title is required", true
+		}
+		var srcID *int64
+		if v := numArg("sourceIssueId"); v > 0 {
+			srcID = &v
+		}
+		var item any
+		var err error
+		if name == "xissue_add_todo" {
+			item, err = s.st.CreateProjectTodo(ctx, pid, title, strArg("detail"), srcID, strArg("sourceKey"))
+		} else {
+			item, err = s.st.CreateProjectTestPlan(ctx, pid, title, strArg("detail"), srcID, strArg("sourceKey"))
+		}
+		if err != nil {
+			return "error: " + err.Error(), true
+		}
+		b, _ := json.MarshalIndent(item, "", "  ")
 		return string(b), false
 
 	case "xissue_get_run_changes":

@@ -499,6 +499,15 @@
 - **合入语义**: `merge_local` 前先 `rebase` 到最新目标分支，失败中止并清理临时分支；合入失败时 Run=`failed`、Issue 停留 `review`，不会变 Done 被归档。
 - **验证**: slug 生成/回填/唯一/迁移测试、版本 tag 解析测试、合入成功/冲突状态测试、用量报表字段；tsc/vitest/go test -race 全绿，浏览器逐路由核对面包屑、侧栏两态与看板高度。
 
+### 2.57 项目级 TODO 清单与测试计划（0.7.x）
+
+- **数据**: `project_todos`、`project_test_plans` 按 `project_id` 归属，删除 Issue（归档/删除）不影响条目；重启/删除项目才级联清理。状态只有 `open/done`，完成时间写 `completed_at`。
+- **测试计划编号**: `base_title` 保存去掉尾部 `xN` 的基础名；同类型第二次添加时把原条目改名为 `<base> x1`，新条目为 `<base> x2`，之后 x3…；搜索 `base_title`/`title` 均可命中。
+- **接口**: `GET/POST /api/projects/{id}/todos`、`PATCH/DELETE .../todos/{todoId}`；`test-plans` 同构。列表支持 `q`（标题/详情/来源 Key）与 `status=open|done`，未完成优先排序。
+- **UI**: 项目侧栏新增「☑️ TODO 列表」「🧪 测试计划」两个整页（`ProjectTaskList`），支持搜索、状态筛选、行内添加、勾选完成、删除；测试计划行标注 `xN` 与 BaseTitle。
+- **MCP**: 新增 `xissue_list_project_todos`、`xissue_add_todo`、`xissue_list_project_test_plans`、`xissue_add_test_plan`，供 Agent 把 spec 拆解结果与回归计划直接写入项目。
+- **验证**: store 用例覆盖搜索/完成/重开/跨项目隔离/编号序列；API 实测同名计划三次得到 x1/x2/x3 且 `q=x2` 命中；浏览器实测添加、勾选删除线、搜索过滤；删除项目后两张表归零。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

@@ -376,3 +376,36 @@ type DocSearchResult struct {
 	Snippet string `json:"snippet"` // Matched highlighted snippet with context
 	Score   int    `json:"score"`   // Relevance score
 }
+
+// ProjectTodo is a project-scoped checklist item. It deliberately outlives the
+// issue/spec it came from, so archived or deleted issues never lose the record
+// of what was implemented.
+type ProjectTodo struct {
+	ID            int64      `json:"id"`
+	ProjectID     int64      `json:"projectId"`
+	Title         string     `json:"title"`
+	Detail        string     `json:"detail"`
+	Status        string     `json:"status"` // open | done
+	SourceIssueID *int64     `json:"sourceIssueId,omitempty"`
+	SourceKey     string     `json:"sourceKey"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+	CompletedAt   *time.Time `json:"completedAt,omitempty"`
+}
+
+// ProjectTestPlan is a project-scoped test/regression plan. Repeated plans of the
+// same kind are numbered x1, x2, … via RepeatIndex while BaseTitle stays stable.
+type ProjectTestPlan struct {
+	ID            int64      `json:"id"`
+	ProjectID     int64      `json:"projectId"`
+	BaseTitle     string     `json:"baseTitle"`
+	Title         string     `json:"title"`
+	RepeatIndex   int        `json:"repeatIndex"`
+	Detail        string     `json:"detail"`
+	Status        string     `json:"status"` // open | done
+	SourceIssueID *int64     `json:"sourceIssueId,omitempty"`
+	SourceKey     string     `json:"sourceKey"`
+	CreatedAt     time.Time  `json:"createdAt"`
+	UpdatedAt     time.Time  `json:"updatedAt"`
+	CompletedAt   *time.Time `json:"completedAt,omitempty"`
+}

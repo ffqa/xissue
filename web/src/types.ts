@@ -748,3 +748,31 @@ export interface UsageReport {
   daily: UsageDay[];
   topRuns: Run[];
 }
+
+export interface ProjectTodo {
+  id: number;
+  projectId: number;
+  title: string;
+  detail: string;
+  status: 'open' | 'done';
+  sourceIssueId?: number;
+  sourceKey: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface ProjectTestPlan {
+  id: number;
+  projectId: number;
+  baseTitle: string;
+  title: string;
+  repeatIndex: number;
+  detail: string;
+  status: 'open' | 'done';
+  sourceIssueId?: number;
+  sourceKey: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}

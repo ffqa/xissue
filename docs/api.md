@@ -173,6 +173,14 @@ interface RunEvent {
 | GET | `/api/runners` | `{ runners: [{ id, name, version, online, connectedAt }] }`；远程 Runner 通过 `GET /api/runners/ws`（WebSocket，`xissue runner`）注册 |
 | GET | `/api/projects` | `Project[]` |
 | POST | `/api/projects` | `{ name, description }` → `Project` |
+| GET | `/api/projects/{id}/todos?q=&status=open\|done` | `ProjectTodo[]`；项目级 TODO 清单，Issue 归档/删除后仍保留；`q` 匹配标题/详情/来源 Key |
+| POST | `/api/projects/{id}/todos` | `{ title, detail?, sourceIssueId?, sourceKey? }` → `ProjectTodo`（默认 `open`） |
+| PATCH | `/api/projects/{id}/todos/{todoId}` | `{ title?, detail?, status? }`；状态切到 `done` 记录 `completedAt` |
+| DELETE | `/api/projects/{id}/todos/{todoId}` | 删除单条 |
+| GET | `/api/projects/{id}/test-plans?q=&status=open\|done` | `ProjectTestPlan[]`；同类型计划自动编号，返回 `baseTitle/title/repeatIndex` |
+| POST | `/api/projects/{id}/test-plans` | `{ title, detail?, sourceIssueId?, sourceKey? }`；同 `baseTitle` 再次添加时，已有那条改为 `<base> x1`，新条目为 `<base> x2`（之后 x3…） |
+| PATCH | `/api/projects/{id}/test-plans/{planId}` | `{ detail?, status? }` |
+| DELETE | `/api/projects/{id}/test-plans/{planId}` | 删除单条 |
 | GET / PATCH / DELETE | `/api/projects/{id}` | PATCH `{ name?, description?, pinned? }`；`pinned: true` 的项目显示在侧栏「全部项目」之下（列表按置顶优先排序） |
 | POST | `/api/projects/{id}/repos` | `{ name, provider, remoteUrl, ownerRepo, defaultBranch, testCommand }` → `Repo`；`name` 会去除首尾空白，必须是单个目录名（字母数字开头，可含空格、`.`、`-`、`_`，禁止 `/`、`\`、`..`、`.git`） |
 | DELETE | `/api/projects/{id}/repos/{repoId}` | 仓库仍被 Issue 引用时返回 409，避免 `repo_id` 被置空后执行范围丢失 |

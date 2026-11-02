@@ -1,4 +1,6 @@
 import type {
+  ProjectTodo,
+  ProjectTestPlan,
   AgentConfigInput,
   AppSettings,
   AgentInfo,
@@ -253,6 +255,36 @@ export const api = {
   savePluginConfig: (id: string, content: string) =>
     put<PluginConfigFile>(`/api/plugins/${encodeURIComponent(id)}/config`, { content }),
 
+  projectTodos: (id: number, q = '', status: '' | 'open' | 'done' = '') => {
+    const params = new URLSearchParams();
+    if (q.trim()) params.set('q', q.trim());
+    if (status) params.set('status', status);
+    const qs = params.toString();
+    return get<ProjectTodo[]>(`/api/projects/${id}/todos${qs ? `?${qs}` : ''}`);
+  },
+  createProjectTodo: (
+    id: number,
+    b: { title: string; detail?: string; sourceIssueId?: number; sourceKey?: string },
+  ) => post<ProjectTodo>(`/api/projects/${id}/todos`, b),
+  updateProjectTodo: (id: number, todoId: number, b: { title?: string; detail?: string; status?: 'open' | 'done' }) =>
+    patch<ProjectTodo>(`/api/projects/${id}/todos/${todoId}`, b),
+  deleteProjectTodo: (id: number, todoId: number) => del<void>(`/api/projects/${id}/todos/${todoId}`),
+
+  projectTestPlans: (id: number, q = '', status: '' | 'open' | 'done' = '') => {
+    const params = new URLSearchParams();
+    if (q.trim()) params.set('q', q.trim());
+    if (status) params.set('status', status);
+    const qs = params.toString();
+    return get<ProjectTestPlan[]>(`/api/projects/${id}/test-plans${qs ? `?${qs}` : ''}`);
+  },
+  createProjectTestPlan: (
+    id: number,
+    b: { title: string; detail?: string; sourceIssueId?: number; sourceKey?: string },
+  ) => post<ProjectTestPlan>(`/api/projects/${id}/test-plans`, b),
+  updateProjectTestPlan: (id: number, planId: number, b: { detail?: string; status?: 'open' | 'done' }) =>
+    patch<ProjectTestPlan>(`/api/projects/${id}/test-plans/${planId}`, b),
+  deleteProjectTestPlan: (id: number, planId: number) => del<void>(`/api/projects/${id}/test-plans/${planId}`),
+
   projectPRs: (id: number, state: 'open' | 'merged' | 'closed' | 'all' = 'open') =>
     get<RemotePR[]>(`/api/projects/${id}/prs?state=${state}`),
   projectPRPage: (id: number, state: 'open' | 'merged' | 'closed' | 'all', cursor = '') =>
@@ -407,6 +439,8 @@ export const qk = {
   pluginConfig: (id: string) => ['pluginConfig', id] as const,
   projectPRs: (projectId: number, state?: string) => ['projectPRs', projectId, state ?? 'open'] as const,
   projectPRPages: (projectId: number, state?: string) => ['projectPRPages', projectId, state ?? 'all'] as const,
+  projectTodos: (projectId: number, q: string, status: string) => ['projectTodos', projectId, q, status] as const,
+  projectTestPlans: (projectId: number, q: string, status: string) => ['projectTestPlans', projectId, q, status] as const,
   projectPullStatus: (projectId: number) => ['projectPullStatus', projectId] as const,
   projectDocs: (projectId: number) => ['projectDocs', projectId] as const,
   projectReadmes: (projectId: number) => ['projectReadmes', projectId] as const,

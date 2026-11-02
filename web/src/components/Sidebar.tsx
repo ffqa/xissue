@@ -22,6 +22,8 @@ export function isSystemRoute(pathname: string): boolean {
 
 const PROJECT_LINKS: { to: string; key: string; icon: string; label: string }[] = [
   { to: '', key: '', icon: '📋', label: '看板' },
+  { to: '/todos', key: 'todos', icon: '☑️', label: 'TODO 列表' },
+  { to: '/test-plans', key: 'test-plans', icon: '🧪', label: '测试计划' },
   { to: '/settings', key: 'settings', icon: '⚙️', label: '项目设置' },
   { to: '/edit', key: 'edit', icon: '✏️', label: '项目信息' },
   { to: '/repos', key: 'repos', icon: '📦', label: '添加仓库' },

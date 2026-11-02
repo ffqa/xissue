@@ -190,3 +190,35 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+
+CREATE TABLE IF NOT EXISTS project_todos (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    title           TEXT NOT NULL,
+    detail          TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'open',
+    source_issue_id INTEGER,
+    source_key      TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    completed_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_todos ON project_todos(project_id, status);
+
+CREATE TABLE IF NOT EXISTS project_test_plans (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id      INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    base_title      TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    repeat_index    INTEGER NOT NULL DEFAULT 0,
+    detail          TEXT NOT NULL DEFAULT '',
+    status          TEXT NOT NULL DEFAULT 'open',
+    source_issue_id INTEGER,
+    source_key      TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    completed_at    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_test_plans ON project_test_plans(project_id, status);

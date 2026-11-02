@@ -1033,7 +1033,8 @@ export default function ProjectPage() {
                         )}
                       </span>
                     </div>
-                    <div className="issue-card-title" title={`${it.key} · ${ISSUE_STATUS_LABEL[it.status]}`}>{it.title}</div>
+                    <div className="issue-card-title" title={`${it.title}
+${it.key} · ${ISSUE_STATUS_LABEL[it.status]}`}>{it.title}</div>
                     <div className="issue-card-summary">{summarizeIssue(it)}</div>
                     <div className="issue-card-footer">
                       <div className="issue-card-meta">

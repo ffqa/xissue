@@ -274,7 +274,7 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 }
 .issue-card {
   background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 7px 9px; display: flex; flex-direction: column; gap: 3px; color: inherit;
+  padding: 4px 8px; display: flex; flex-direction: column; gap: 1px; color: inherit;
   cursor: grab; user-select: none; transition: border-color .12s, transform .12s, box-shadow .12s;
   flex: none;
 }
@@ -283,10 +283,10 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .issue-card.dragging { opacity: .45; transform: scale(.98); }
 .issue-card.awaiting { border-color: var(--orange); box-shadow: 0 0 0 1px rgba(242, 153, 74, .35); }
 .issue-card-head { display: flex; align-items: center; gap: 6px; }
-.issue-card .title { color: var(--text); font-weight: 600; font-size: 13.5px; word-break: break-word; line-height: 1.4; }
+.issue-card .title { color: var(--text); font-weight: 600; font-size: 13px; line-height: 1.25; }
 .issue-card .title:hover { text-decoration: none; color: var(--accent); }
 .issue-card-summary {
-  font-size: 12px; color: var(--text-2); line-height: 1.35; word-break: break-word;
+  font-size: 12px; color: var(--text-2); line-height: 1.3; word-break: break-word;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 
@@ -635,16 +635,19 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .attachment-drop { border: 1px dashed var(--border); border-radius: 8px; padding: 10px; transition: border-color .12s, background .12s; }
 .attachment-drop.drag-over { border-color: var(--accent); background: var(--accent-bg); }
 
-.issue-card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--text-3); }
+.issue-card-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 10.5px; color: var(--text-3); }
 .issue-card-repo { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .issue-card-sync { font-size: 10px; opacity: .8; }
 .issue-card-link { flex: none; font-size: 11px; color: var(--text-3); cursor: pointer; padding: 1px 3px; border-radius: 4px; }
 .issue-card-link:hover { color: var(--accent); }
 .issue-card-link.local { cursor: default; }
-.issue-card-title { font-weight: 700; font-size: 13.5px; line-height: 1.4; word-break: break-word; color: var(--text); }
+.issue-card-title {
+  font-weight: 700; font-size: 13px; line-height: 1.25; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .issue-card-footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
 .issue-card-meta { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; min-width: 0; }
-.issue-card-meta .badge { font-size: 10px; height: 16px; padding: 0 5px; }
+.issue-card-meta .badge { font-size: 10px; height: 15px; padding: 0 5px; }
 .issue-card-status { font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .issue-card-time { font-size: 11px; color: var(--text-3); white-space: nowrap; }
 

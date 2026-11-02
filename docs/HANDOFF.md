@@ -523,6 +523,12 @@
 - **风险**: 打开后 Agent 的任意命令都会被批准，提示词注入的 Issue 也可能直接执行命令/联网；仅在受信项目上使用。
 - **验证**: `TestAutoApproveAllBypassesAlwaysAsk` 覆盖默认放行、关闭后 execute 重新询问、read 仍按 kinds 放行。
 
+### 2.60 本机自签名构建（0.8.3）
+
+- `make codesign-setup` 创建 `xIssue Codesign` 证书（独立 keychain，密码存 `~/.xissue/codesign.keychain-password`），信任一次后 `make build` 自动签名，`bin/xissue` 的 designated requirement 固定为 `identifier "dev.xissue" and certificate root = H"…"`，避免每次更新重建 cdhash 导致 TCC 重复弹窗。
+- 证书未就绪时签名静默跳过；发布产物仍为 CI 构建（ad-hoc），由用户自行编译/安装。
+- 签名后的可执行文件复制到 `~/.local/bin/xissue` 仍保持签名，服务重启后首次访问受保护目录需再授权一次，之后稳定。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

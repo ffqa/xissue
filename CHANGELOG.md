@@ -7,6 +7,13 @@
 - 处理完一个任务批次且没有排队的后续任务时，**立即发版**，不把已提交改动留在未发布状态。
 - 每个 tag 必须有对应 CHANGELOG 条目；发布流程见 `scripts/brew-publish.sh` 与 `.github/workflows/release.yml`。
 
+## [0.8.3] - 2026-11-02
+
+### Changed
+
+- 本机 macOS 构建默认使用自签名代码签名（独立 keychain `xissue-signing.keychain-db` + 自动加入钥匙串搜索列表），签名后 designated requirement 固定为 `identifier "dev.xissue" and certificate root = H"…"`，重建不再让 TCC 重新询问磁盘权限；未创建证书时构建静默跳过。发布产物不在 CI 签名（用户自行编译）。
+- `make codesign-setup` 一次性创建并信任该证书（仅一次系统授权）。
+
 ## [0.8.2] - 2026-11-02
 
 ### Changed

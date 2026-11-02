@@ -93,6 +93,7 @@ func (r *Runner) ListProjectPRPage(ctx context.Context, projectID int64, state, 
 	if len(all) == 0 && len(errs) > 0 {
 		return nil, errs[0]
 	}
+	all = dedupePRs(all)
 	sort.SliceStable(all, func(i, j int) bool {
 		ti, _ := time.Parse(time.RFC3339, all[i].CreatedAt)
 		tj, _ := time.Parse(time.RFC3339, all[j].CreatedAt)

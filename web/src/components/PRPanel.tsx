@@ -4,7 +4,7 @@ import { api, qk } from '../api';
 import { fmtTime } from './common';
 import { toast } from '../toast';
 import type { RemotePR } from '../types';
-import { filterPRs, sortPRs, type PRFilter } from '../logic/prs';
+import { dedupePRs, filterPRs, sortPRs, type PRFilter } from '../logic/prs';
 import { useProjectPRPages } from '../hooks/useProjectLists';
 
 export function PRPanel({ projectId }: { projectId: number }) {
@@ -19,7 +19,7 @@ export function PRPanel({ projectId }: { projectId: number }) {
   // Merged/Closed never waits for another provider request.
   // ProjectPage owns the single 60s timer for this shared query.
   const prsQ = useProjectPRPages(projectId);
-  const prs: RemotePR[] = prsQ.data?.pages.flatMap((page) => page.prs ?? []) ?? [];
+  const prs: RemotePR[] = dedupePRs(prsQ.data?.pages.flatMap((page) => page.prs ?? []) ?? []);
   const mineKnown = prsQ.data?.pages.some((page) => page.mineKnown) ?? false;
   const filteredPRs = sortPRs(filterPRs(prs, filterState).filter((pr) => !mineOnly || !mineKnown || pr.mine));
   const visiblePRs = filteredPRs.slice(0, visibleCount);
@@ -80,47 +80,51 @@ export function PRPanel({ projectId }: { projectId: number }) {
 
   return (
     <div className="col" style={{ gap: 10, minHeight: 0, height: '100%' }}>
-      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-        {(
-          [
-            { id: 'open', label: '待处理 (Open)' },
-            { id: 'merged', label: '已合并 (Merged)' },
-            { id: 'closed', label: '已关闭 (Closed)' },
-            { id: 'all', label: '全部 (All)' },
-          ] as const
-        ).map((t) => (
+      <div className="col" style={{ gap: 8 }}>
+        <div className="row" style={{ gap: 6 }}>
+          {(
+            [
+              { id: 'open', label: '待处理 (Open)' },
+              { id: 'merged', label: '已合并 (Merged)' },
+              { id: 'closed', label: '已关闭 (Closed)' },
+              { id: 'all', label: '全部 (All)' },
+            ] as const
+          ).map((t) => (
+            <button
+              key={t.id}
+              className={`sm ${filterState === t.id ? 'primary' : 'ghost'}`}
+              onClick={() => setFilterState(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+          <span className="small muted" style={{ marginLeft: 4 }}>共 {filteredPRs.length} 个 PR</span>
+        </div>
+        <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+          <label className="row small muted" style={{ gap: 5, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={mineOnly}
+              disabled={!mineKnown}
+              title={mineKnown ? '只显示当前 Provider 登录账号提交的 PR' : '正在识别当前账号，稍后可用'}
+              onChange={(e) => setMineOnly(e.target.checked)}
+            />
+            仅看我提交的
+          </label>
+          <span className="small dim">每 60 秒自动刷新</span>
+          <span className="grow" />
           <button
-            key={t.id}
-            className={`sm ${filterState === t.id ? 'primary' : 'ghost'}`}
-            onClick={() => setFilterState(t.id)}
+            className="primary sm"
+            disabled={pullMut.isPending}
+            onClick={() => pullMut.mutate()}
+            title="拉取远端仓库最新改动到本地工作区与镜像"
           >
-            {t.label}
+            {pullMut.isPending ? '正在拉取…' : '📥 拉取最新代码'}
           </button>
-        ))}
-        <span className="small muted">共 {filteredPRs.length} 个 PR</span>
-        <label className="row small muted" style={{ gap: 5, cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={mineOnly}
-            disabled={!mineKnown}
-            title={mineKnown ? '只显示当前 Provider 登录账号提交的 PR' : '正在识别当前账号，稍后可用'}
-            onChange={(e) => setMineOnly(e.target.checked)}
-          />
-          仅看我提交的
-        </label>
-        <span className="small dim">每 60 秒自动刷新</span>
-        <span className="grow" />
-        <button
-          className="primary sm"
-          disabled={pullMut.isPending}
-          onClick={() => pullMut.mutate()}
-          title="拉取远端仓库最新改动到本地工作区与镜像"
-        >
-          {pullMut.isPending ? '正在拉取…' : '📥 拉取最新代码'}
-        </button>
-        <button className="sm ghost" onClick={() => prsQ.refetch()} disabled={prsQ.isFetching}>
-          {prsQ.isFetching ? '刷新中…' : '↻ 刷新'}
-        </button>
+          <button className="sm ghost" onClick={() => prsQ.refetch()} disabled={prsQ.isFetching}>
+            {prsQ.isFetching ? '刷新中…' : '↻ 刷新'}
+          </button>
+        </div>
       </div>
 
       <div className="panel pr-panel">

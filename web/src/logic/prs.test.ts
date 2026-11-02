@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterPRs, sortPRs } from './prs';
+import { dedupePRs, filterPRs, sortPRs } from './prs';
 
 const prs = [
   { number: 1, state: 'open' },
@@ -28,5 +28,25 @@ describe('filterPRs', () => {
     expect(filterPRs(prs, 'open').map((p) => p.number)).toEqual([1]);
     expect(filterPRs(prs, 'merged').map((p) => p.number)).toEqual([2]);
     expect(filterPRs(prs, 'closed').map((p) => p.number)).toEqual([3]);
+  });
+});
+
+describe('dedupePRs', () => {
+  it('keeps one row when two repositories point at the same PR', () => {
+    const rows = dedupePRs([
+      { number: 7, url: 'https://github.com/acme/h5/pull/7', repoId: 1, repoName: 'h5' } as never,
+      { number: 7, url: 'https://github.com/acme/h5/pull/7/', repoId: 2, repoName: 'h5-v2' } as never,
+      { number: 8, url: 'https://github.com/acme/h5/pull/8', repoId: 1 } as never,
+    ]);
+    expect(rows.map((p: { number: number }) => p.number)).toEqual([7, 8]);
+  });
+
+  it('falls back to repoId#number when the provider has no URL', () => {
+    const rows = dedupePRs([
+      { number: 3, repoId: 9 } as never,
+      { number: 3, repoId: 9 } as never,
+      { number: 3, repoId: 10 } as never,
+    ]);
+    expect(rows).toHaveLength(2);
   });
 });

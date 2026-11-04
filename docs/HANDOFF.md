@@ -494,7 +494,7 @@
 - **导航两态**: 侧栏分「项目空间」与「系统设置」两态；项目空间 = `全部项目` + 置顶项目 + 当前项目菜单，系统设置由右上角 `⚙️` 进入，侧栏顶部「返回项目」回项目空间。侧栏可收缩，状态存 localStorage。
 - **整页化**: 项目内功能全部有独立路由（`/projects/:id/{settings,edit,repos,knowledge,readme,prs,commits,cherry-pick,branches,history}`），系统页 `/settings/:tab`、`/monitor`、`/usage`、`/plugins`、`/agents`、`/mcp`、`/schedules`、`/jobs`，Issue 终端 `/issues/:id/terminal?run=N`；仅保留确认框/选择器/短表单为弹窗。旧 `?commits=1`、`?prs=1` 深链自动跳转。
 - **项目元信息**: `projects.slug` 唯一标识（自动生成、老库回填、可编辑，冲突 400）与 `version`（主仓库镜像最新 semver tag，2 分钟缓存）显示在卡片、页头与所有项目页的面包屑；`projects.pinned` 决定侧栏展示，列表按置顶优先。
-- **上下文**: Issue 页根据 `projectId` 恢复侧栏项目菜单与「当前 Issue」，面包屑带项目 slug/version/description。
+- **上下文**: Issue 页根据 `projectId` 恢复侧栏项目菜单，「当前 Issue」独立成节（`KEY · 标题`，位于项目菜单之后），不再插入「当前项目」菜单顶部；面包屑带项目 slug/version/description。
 - **用量口径**: Agent `totalTokens` 含缓存读取；用量报表拆出 `cachedTokens`（= total − input − output），`总计 = 输入 + 缓存读取 + 输出`，KPI/日表/Top Runs 一致。
 - **合入语义**: `merge_local` 前先 `rebase` 到最新目标分支，失败中止并清理临时分支；合入失败时 Run=`failed`、Issue 停留 `review`，不会变 Done 被归档。
 - **验证**: slug 生成/回填/唯一/迁移测试、版本 tag 解析测试、合入成功/冲突状态测试、用量报表字段；tsc/vitest/go test -race 全绿，浏览器逐路由核对面包屑、侧栏两态与看板高度。
@@ -528,6 +528,12 @@
 - `xissue mcp list`（别名 `ls` / `tools`）直接打印编译进二进制的全部 MCP 工具：名称、描述、参数（类型、是否必填、枚举值），并给出 stdio/HTTP 调用示例；`--json` 输出原始 `tools/list` schema。命令不需要服务在运行。
 - `xissue mcp http` 仍用于查看共享 HTTP 端点；`xissue mcp --install` 行为不变。
 - 新增测试 `TestMCPToolDefinitionsAreComplete`（名称唯一、描述/schema 完整）与 `TestDescribeMCPArgs`（参数渲染、枚举、必填）。
+
+### 2.62 侧栏 Issue 激活态与面包屑单行（未发布）
+
+- **侧栏激活态**: `projectView` 在非项目路由下为 `null`，`/issues/:id` 不再误把「看板」标为激活；当前 Issue 从「当前项目」菜单顶部移到独立「当前 Issue」节，显示 `KEY · 标题` 并保持 active。
+- **面包屑**: 顶栏 crumbs 固定 `flex-wrap: nowrap` + `overflow: hidden`；非省略项 `flex: none`，项目名/描述使用 `.ellipsis` 按剩余宽度收缩，Issue key 与分隔符不会被换行或挤掉。
+- **验证**: 1440/1100/900/760/480 宽度浏览器实测 `#crumbs` 高度恒为 20px、`.topbar` 43px，超长内容按宽度省略/裁剪而不撑高顶栏；项目页/设置页仍正确高亮对应菜单项。
 
 ### 2.60 本机自签名构建（0.8.3）
 

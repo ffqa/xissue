@@ -528,7 +528,7 @@ export default function IssuePage() {
       <Crumbs>
         <Link to="/">项目</Link>
         <span>/</span>
-        {project ? <Link to={`/projects/${project.id}`}>{project.name}</Link> : <span>…</span>}
+        {project ? <Link to={`/projects/${project.id}`} className="ellipsis">{project.name}</Link> : <span>…</span>}
         {project?.slug && (
           <span className="badge mono" title="项目唯一标识">
             @{project.slug}

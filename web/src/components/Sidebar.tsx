@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { PluginSlot } from './PluginFrame';
 import { api, qk } from '../api';
+import { projectViewOf } from '../logic/nav';
 
 const SYSTEM_LINKS: { to: string; icon: string; label: string; match?: string }[] = [
   { to: '/settings/general', icon: '⚙️', label: '全局设置', match: '/settings' },
@@ -53,7 +54,7 @@ export function Sidebar() {
     enabled: issueId > 0,
   });
   const activeProjectId = projectMatch?.[1] ?? (issueQ.data ? String(issueQ.data.projectId) : undefined);
-  const projectView = projectMatch?.[2] ?? '';
+  const projectView = projectViewOf(pathname);
   const systemMode = isSystemRoute(pathname);
 
   useEffect(() => {
@@ -110,12 +111,6 @@ export function Sidebar() {
             {activeProjectId && (
               <>
                 <div className="sidebar-sec">当前项目</div>
-                {issueId > 0 && (
-                  <Link to={`/issues/${issueId}`} className="sidebar-item active" title="当前 Issue">
-                    <span className="icon">🐞</span>
-                    <span className="label">当前 Issue</span>
-                  </Link>
-                )}
                 {PROJECT_LINKS.map((it) => (
                   <Link
                     key={it.key || 'board'}
@@ -127,6 +122,21 @@ export function Sidebar() {
                     <span className="label">{it.label}</span>
                   </Link>
                 ))}
+                {issueId > 0 && (
+                  <>
+                    <div className="sidebar-sec">当前 Issue</div>
+                    <Link
+                      to={`/issues/${issueId}`}
+                      className="sidebar-item active"
+                      title={issueQ.data ? `${issueQ.data.key} · ${issueQ.data.title}` : '当前 Issue'}
+                    >
+                      <span className="icon">🐞</span>
+                      <span className="label">
+                        {issueQ.data ? `${issueQ.data.key} · ${issueQ.data.title}` : '当前 Issue'}
+                      </span>
+                    </Link>
+                  </>
+                )}
                 {!collapsed && (() => {
                   const proj = (projectsQ.data ?? []).find((p) => String(p.id) === activeProjectId);
                   return (

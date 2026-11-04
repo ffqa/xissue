@@ -90,7 +90,9 @@ h3 { font-size: 13px; }
   border-bottom: 1px solid var(--border); background: var(--bg-1);
 }
 .topbar .brand { font-weight: 700; color: var(--text); letter-spacing: .3px; }
-.topbar .crumbs { color: var(--text-2); display: flex; gap: 6px; align-items: center; min-width: 0; }
+.topbar .crumbs { color: var(--text-2); display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: nowrap; overflow: hidden; }
+.topbar .crumbs > * { min-width: 0; white-space: nowrap; flex: none; }
+.topbar .crumbs .ellipsis { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
 .topbar .crumbs a { color: var(--text-2); }
 .topbar .spacer { flex: 1; }
 .main { flex: 1; min-height: 0; overflow: auto; }

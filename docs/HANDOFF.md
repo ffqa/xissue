@@ -523,6 +523,12 @@
 - **风险**: 打开后 Agent 的任意命令都会被批准，提示词注入的 Issue 也可能直接执行命令/联网；仅在受信项目上使用。
 - **验证**: `TestAutoApproveAllBypassesAlwaysAsk` 覆盖默认放行、关闭后 execute 重新询问、read 仍按 kinds 放行。
 
+### 2.61 MCP 工具清单命令（0.8.6）
+
+- `xissue mcp list`（别名 `ls` / `tools`）直接打印编译进二进制的全部 MCP 工具：名称、描述、参数（类型、是否必填、枚举值），并给出 stdio/HTTP 调用示例；`--json` 输出原始 `tools/list` schema。命令不需要服务在运行。
+- `xissue mcp http` 仍用于查看共享 HTTP 端点；`xissue mcp --install` 行为不变。
+- 新增测试 `TestMCPToolDefinitionsAreComplete`（名称唯一、描述/schema 完整）与 `TestDescribeMCPArgs`（参数渲染、枚举、必填）。
+
 ### 2.60 本机自签名构建（0.8.3）
 
 - `make codesign-setup` 创建 `xIssue Codesign` 证书（独立 keychain，密码存 `~/.xissue/codesign.keychain-password`），信任一次后 `make build` 自动签名，`bin/xissue` 的 designated requirement 固定为 `identifier "dev.xissue" and certificate root = H"…"`，避免每次更新重建 cdhash 导致 TCC 重复弹窗。

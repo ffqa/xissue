@@ -40,6 +40,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "  service [cmd]        管理开机自启常驻服务 (install/uninstall/status/restart)\n")
 		fmt.Fprintf(os.Stderr, "  update [--check]     检查并升级 xIssue (支持 Homebrew / 独立二进制自更新)\n")
 		fmt.Fprintf(os.Stderr, "  mcp [--install]      运行或注册 MCP JSON-RPC 服务到本机 IDE / Agent\n")
+		fmt.Fprintf(os.Stderr, "  mcp list [--json]    列出全部 MCP 工具与参数（无需服务在运行）\n")
 		fmt.Fprintf(os.Stderr, "  plugin <cmd>         插件管理 (list/install/enable/disable/check)\n")
 		fmt.Fprintf(os.Stderr, "  runner               以远程执行节点连接 xIssue 服务 (--server/--token/--name)\n")
 		fmt.Fprintf(os.Stderr, "  version              打印当前版本并退出\n\n")
@@ -115,6 +116,16 @@ func main() {
 				} else {
 					fmt.Printf("Installed xIssue MCP (%s mcp) into: %s\n", exe, strings.Join(installed, ", "))
 				}
+				return
+			}
+			if sub == "list" || sub == "ls" || sub == "tools" {
+				asJSON := false
+				for _, arg := range flag.Args()[2:] {
+					if strings.EqualFold(strings.TrimSpace(arg), "--json") || strings.EqualFold(strings.TrimSpace(arg), "json") {
+						asJSON = true
+					}
+				}
+				printMCPToolList(server.MCPToolDefinitions(), asJSON)
 				return
 			}
 			if sub == "http" {

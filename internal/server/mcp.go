@@ -190,6 +190,11 @@ func (s *Server) ProcessMCPRequest(ctx context.Context, req mcpRequest) *mcpResp
 	}
 }
 
+// MCPToolDefinitions exposes the tool schemas so the CLI can print them.
+func MCPToolDefinitions() []map[string]any {
+	return mcpToolDefinitions()
+}
+
 func mcpToolDefinitions() []map[string]any {
 	return []map[string]any{
 		{

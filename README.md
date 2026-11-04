@@ -109,6 +109,7 @@ chmod +x ~/.local/bin/xissue
   - 支持直接拖拽卡片跨列流转：将卡片拖入 **⚡ 执行中 (Running)** 列即可自动唤醒默认 AI Agent 开始执行任务。
 - **全 IDE / CLI Agent 通用 MCP 接入 (`xissue mcp`)**：
   - 支持 `xissue mcp --install` 一键注入到 Claude Code、Cursor、Windsurf、OpenCode、Qoder CLI (`qoderclicn`) 等已检测到的客户端（可在 Web 界面或 `GET /api/mcp/status` 查看本机支持的目标）。
+  - `xissue mcp list` 列出全部 MCP 工具、说明和参数（`--json` 输出原始 schema，无需服务在运行）；`xissue mcp http` 显示可共享的 Streamable HTTP 地址。
   - 支持通过 MCP 直接创建任务并传 `autoRun=true` 立即调度后台 Agent。
 - **通用 ACP Agent 驱动 & 热会话复用（Warm ACP Session）**：
   - 通过 Agent Client Protocol (stdio JSON-RPC) 统一对接 `opencode`、`omp`、`codex` 等 Agent。

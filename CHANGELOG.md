@@ -7,6 +7,12 @@
 - 处理完一个任务批次且没有排队的后续任务时，**立即发版**，不把已提交改动留在未发布状态。
 - 每个 tag 必须有对应 CHANGELOG 条目；发布流程见 `scripts/brew-publish.sh` 与 `.github/workflows/release.yml`。
 
+## [0.8.6] - 2026-11-04
+
+### Added
+
+- `xissue mcp list`（别名 `ls` / `tools`）：列出全部 MCP 工具的名称、说明、参数（类型/必填/枚举）与 stdio/HTTP 调用示例，无需服务在运行；`--json` 输出原始工具 schema。`xissue mcp http`、`xissue mcp --install` 不变。
+
 ## [0.8.5] - 2026-11-02
 
 ### Fixed

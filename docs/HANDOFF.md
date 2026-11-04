@@ -529,7 +529,7 @@
 - `xissue mcp http` 仍用于查看共享 HTTP 端点；`xissue mcp --install` 行为不变。
 - 新增测试 `TestMCPToolDefinitionsAreComplete`（名称唯一、描述/schema 完整）与 `TestDescribeMCPArgs`（参数渲染、枚举、必填）。
 
-### 2.62 侧栏 Issue 激活态与面包屑单行（未发布）
+### 2.62 侧栏 Issue 激活态与面包屑单行（0.8.7）
 
 - **侧栏激活态**: `projectView` 在非项目路由下为 `null`，`/issues/:id` 不再误把「看板」标为激活；当前 Issue 从「当前项目」菜单顶部移到独立「当前 Issue」节，显示 `KEY · 标题` 并保持 active。
 - **面包屑**: 顶栏 crumbs 固定 `flex-wrap: nowrap` + `overflow: hidden`；非省略项 `flex: none`，项目名/描述使用 `.ellipsis` 按剩余宽度收缩，Issue key 与分隔符不会被换行或挤掉。

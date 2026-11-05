@@ -1,6 +1,7 @@
 import type {
   ProjectTodo,
   ProjectTestPlan,
+  ProjectWorkflow,
   AgentConfigInput,
   AppSettings,
   AgentInfo,
@@ -229,6 +230,7 @@ export const api = {
       automationRules?: AutomationRule[];
       pullBranches?: string[];
       runnerId?: string;
+      workflow?: ProjectWorkflow;
     },
   ) => patch<Project>(`/api/projects/${id}`, b),
   deleteProject: (id: number, b?: { name: string }) =>

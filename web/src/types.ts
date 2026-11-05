@@ -45,6 +45,15 @@ export interface Repo {
 
 export type DevMode = 'single_main' | 'main_dev';
 
+export interface ProjectWorkflow {
+  ddd: boolean;
+  tdd: boolean;
+  ubMode: boolean;
+  ste: boolean;
+  testLoop: boolean;
+  maxIterations: number;
+}
+
 export interface Project {
   id: number;
   name: string;
@@ -64,6 +73,7 @@ export interface Project {
   automationRules: AutomationRule[];
   pullBranches: string[];
   runnerId?: string;
+  workflow?: ProjectWorkflow;
   repos: Repo[];
   createdAt: string;
   updatedAt: string;

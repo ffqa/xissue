@@ -541,6 +541,14 @@
 - 证书未就绪时签名静默跳过；发布产物仍为 CI 构建（ad-hoc），由用户自行编译/安装。
 - 签名后的可执行文件复制到 `~/.local/bin/xissue` 仍保持签名，服务重启后首次访问受保护目录需再授权一次，之后稳定。
 
+### 2.63 项目工程工作流（0.8.8）
+
+- **配置**: `projects.workflow` JSON（`ddd/tdd/ubMode/ste/testLoop/maxIterations`），默认全关；`maxIterations` 归一化 0–5，开启测试循环时默认 2。
+- **注入**: `buildWorkspaceAGENTS` 在工作流开启时追加 `## Engineering Workflow (project setting)` 段（DDD/TDD/ub-mode/STE/Test loop），并声明仓库自带 AGENTS/README/skills 优先；关闭时不写任何内容。
+- **UI**: 项目设置「工作流与分支模式」新增 5 个开关 + 重试次数，保存走 `PATCH /api/projects/{id}` 的 `workflow` 字段。
+- **附带修复**: 设置页现在在路由打开时用项目数据初始化全部表单字段（此前依赖已删除的头部按钮，默认值可能覆盖项目配置）。
+- **验证**: store 归一化/持久化测试、AGENTS 注入测试（开启/关闭）、浏览器实测开关保存后重载保持；`go test -race`、tsc、vitest 全绿。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

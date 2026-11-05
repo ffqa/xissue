@@ -118,10 +118,50 @@ func buildWorkspaceAGENTS(proj *domain.Project, issue *domain.Issue) string {
 	if strings.TrimSpace(issue.Body) != "" {
 		b.WriteString(issue.Body + "\n\n")
 	}
+	writeWorkflowGuidelines(&b, proj.Workflow)
 	b.WriteString("## Guidelines & Safety Rules\n")
 	b.WriteString("- Make changes directly inside the repository subdirectories above.\n")
 	b.WriteString("- Do NOT run `git push`; xIssue handles committing, pushing, and opening PRs after human review.\n")
 	b.WriteString("- Do NOT run `pkill xissue`, `killall xissue`, `make stop`, `make restart`, `make deploy`, or `install-service.sh`, and do NOT bind to port 7789 — xIssue itself is supervising your process on port 7789.\n")
 	b.WriteString("- Run the configured test command(s) before finishing and summarize your changes clearly.\n")
 	return b.String()
+}
+
+// writeWorkflowGuidelines appends the opt-in engineering workflow to AGENTS.md.
+// It is intentionally compact: repo-local instructions always win, and the
+// section only appears when the project enabled at least one switch.
+func writeWorkflowGuidelines(b *strings.Builder, w domain.ProjectWorkflow) {
+	if !w.Enabled() {
+		return
+	}
+	b.WriteString("\n## Engineering Workflow (project setting)\n\n")
+	b.WriteString("Repo-local AGENTS.md, README and skills take precedence over this section.\n")
+	if w.DDD {
+		b.WriteString("\n### Domain-Driven Design\n")
+		b.WriteString("- Before changing code: state the bounded context, the domain terms you will use (ubiquitous language), and the acceptance checks; keep code names aligned with that glossary.\n")
+		b.WriteString("- Validate data where it enters, keep business rules in pure functions, and make illegal states unrepresentable.\n")
+	}
+	if w.TDD {
+		b.WriteString("\n### TDD\n")
+		b.WriteString("- Write or change a failing test first; run it and confirm it fails for the expected reason.\n")
+		b.WriteString("- Then make the smallest change that passes; test observable behavior, not private implementation.\n")
+	}
+	if w.UBMode {
+		b.WriteString("\n### ub-mode (unclebob/ub-mode)\n")
+		b.WriteString("- First make it work: smallest edit that solves the problem, one decision in one place, get the data shape right, subtract complexity before adding.\n")
+		b.WriteString("- Then make it right: reproduce and fix root causes, work in small verifiable units, fix CRAP/duplication/dead code, pin behavior before refactoring.\n")
+		b.WriteString("- Keep a short log of actions and reasons, and prefer small ordered commits. If the project already provides crapper/dryer/mutator, use them; do not install new tooling.\n")
+	}
+	if w.STE {
+		b.WriteString("\n### STE summary\n")
+		b.WriteString("- Write the final summary and PR description in Simplified Technical English: short sentences, active voice, one idea per sentence, no marketing adjectives. State what changed, why, and how it was verified.\n")
+	}
+	if w.TestLoop {
+		iterations := w.MaxIterations
+		if iterations <= 0 {
+			iterations = 2
+		}
+		b.WriteString("\n### Test loop\n")
+		fmt.Fprintf(b, "- Run the repository test command before finishing. On failure, fix and run again, at most %d retries. If it still fails, stop and report the remaining failure with the exact command and output.\n", iterations)
+	}
 }

@@ -33,6 +33,35 @@ const (
 	DevModeMainDev    DevMode = "main_dev"    // main 和 dev 模式（默认提 PR 到 dev，可提 PR 到 main）
 )
 
+// ProjectWorkflow controls the engineering workflow injected into each run's
+// AGENTS.md. All switches default to off.
+type ProjectWorkflow struct {
+	DDD           bool `json:"ddd" yaml:"ddd"`                     // domain model + ubiquitous language + acceptance criteria first
+	TDD           bool `json:"tdd" yaml:"tdd"`                     // failing test before the change
+	UBMode        bool `json:"ubMode" yaml:"ubMode"`               // unclebob/ub-mode discipline
+	STE           bool `json:"ste" yaml:"ste"`                     // ASD-STE100 style summary
+	TestLoop      bool `json:"testLoop" yaml:"testLoop"`           // run tests, fix, retry
+	MaxIterations int  `json:"maxIterations" yaml:"maxIterations"` // test-loop retries, default 2
+}
+
+// Enabled reports whether any workflow rule is on.
+func (w ProjectWorkflow) Enabled() bool {
+	return w.DDD || w.TDD || w.UBMode || w.STE || w.TestLoop
+}
+
+// Normalize clamps the retry budget and gives the loop a default.
+func (w *ProjectWorkflow) Normalize() {
+	if w.MaxIterations < 0 {
+		w.MaxIterations = 0
+	}
+	if w.MaxIterations > 5 {
+		w.MaxIterations = 5
+	}
+	if w.TestLoop && w.MaxIterations == 0 {
+		w.MaxIterations = 2
+	}
+}
+
 type Project struct {
 	ID                    int64            `json:"id"`
 	Name                  string           `json:"name"`
@@ -52,6 +81,7 @@ type Project struct {
 	AutomationRules       []AutomationRule `json:"automationRules"`
 	PullBranches          []string         `json:"pullBranches"` // 手动/自动拉取时只更新这些分支，空=全部
 	RunnerID              string           `json:"runnerId"`     // empty = local built-in runner; otherwise a connected remote runner
+	Workflow              ProjectWorkflow  `json:"workflow"`
 	Repos                 []Repo           `json:"repos"`
 	CreatedAt             time.Time        `json:"createdAt"`
 	UpdatedAt             time.Time        `json:"updatedAt"`

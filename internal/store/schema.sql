@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS projects (
     auto_develop_authors TEXT NOT NULL DEFAULT '[]',
     auto_develop_daily_limit INTEGER NOT NULL DEFAULT 5,
     local_seq          INTEGER NOT NULL DEFAULT 0,
+    workflow           TEXT NOT NULL DEFAULT '{}',
     created_at         TEXT NOT NULL,
     updated_at         TEXT NOT NULL
 );

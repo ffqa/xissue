@@ -7,6 +7,16 @@
 - 处理完一个任务批次且没有排队的后续任务时，**立即发版**，不把已提交改动留在未发布状态。
 - 每个 tag 必须有对应 CHANGELOG 条目；发布流程见 `scripts/brew-publish.sh` 与 `.github/workflows/release.yml`。
 
+## [0.8.8] - 2026-11-05
+
+### Added
+
+- 项目级**工程工作流**（默认关闭，项目设置里按需开启）：DDD（bounded context / 术语表 / 验收点先写）、TDD（先写失败测试）、ub-mode（unclebob/ub-mode：小步、根因、可验证单元、CRAP/重复/死代码）、STE 总结（Run 总结与 PR 描述用简化技术英语）、测试循环（结束前跑测试命令，失败按上限重试，默认 2 次）。开启后会写入每次 Run 工作区的 `AGENTS.md`，并声明仓库自带 AGENTS/README/skills 优先。
+
+### Fixed
+
+- 项目设置页改为路由后一直没有从项目数据初始化表单（旧实现依赖已删除的头部按钮）；现在打开 `/projects/:id/settings` 会加载当前 devMode、分支、自动化与工作流配置，避免误把默认值保存回项目。
+
 ## [0.8.7] - 2026-11-04
 
 ### Fixed

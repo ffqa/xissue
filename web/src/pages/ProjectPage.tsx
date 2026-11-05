@@ -27,6 +27,7 @@ import {
   type Issue,
   type IssuePriority,
   type IssueStatus,
+  type ProjectWorkflow,
   ISSUE_PRIORITIES,
   type Provider,
   type RepoInput,
@@ -218,6 +219,15 @@ export default function ProjectPage() {
   const [cfgAutoDevelopDailyLimit, setCfgAutoDevelopDailyLimit] = useState(5);
   const [cfgAutomationRules, setCfgAutomationRules] = useState<AutomationRule[]>([]);
   const [cfgPullBranches, setCfgPullBranches] = useState('');
+  const [cfgWorkflow, setCfgWorkflow] = useState<ProjectWorkflow>({
+    ddd: false,
+    tdd: false,
+    ubMode: false,
+    ste: false,
+    testLoop: false,
+    maxIterations: 2,
+  });
+  const setWorkflow = (patch: Partial<ProjectWorkflow>) => setCfgWorkflow((w) => ({ ...w, ...patch }));
 
   // 规则配置表单状态
   const [newRuleOpen, setNewRuleOpen] = useState(false);
@@ -254,6 +264,7 @@ export default function ProjectPage() {
       automationRules?: AutomationRule[];
       pullBranches?: string[];
       runnerId?: string;
+      workflow?: ProjectWorkflow;
     }) => api.updateProject(id, b),
     onSuccess: (updated) => {
       qc.setQueryData(qk.project(id), updated);
@@ -527,6 +538,34 @@ export default function ProjectPage() {
   });
 
   const p = project.data;
+
+  // Hydrate settings from the project whenever the settings route opens. The
+  // old header button did this before the page became a route.
+  useEffect(() => {
+    if (view !== 'settings' || !p) return;
+    setCfgDevMode(p.devMode || 'single_main');
+    setCfgTargetBranch(p.targetBranch || (p.devMode === 'main_dev' ? 'dev' : 'main'));
+    setCfgRunnerID(p.runnerId || '');
+    setCfgAutoPR(p.autoPrOnConfirm ?? true);
+    setCfgAutoDevelop(p.autoDevelop ?? false);
+    setCfgAutoDevelopAgent(p.autoDevelopAgent || '');
+    setCfgAutoDevelopLabels((Array.isArray(p.autoDevelopLabels) ? p.autoDevelopLabels : []).join(', '));
+    setCfgAutoDevelopText(p.autoDevelopText ?? false);
+    setCfgAutoDevelopAuthors((p.autoDevelopAuthors ?? []).join(', '));
+    setCfgAutoDevelopDailyLimit(p.autoDevelopDailyLimit || 5);
+    setCfgAutomationRules(p.automationRules ?? []);
+    setCfgPullBranches((p.pullBranches ?? []).join(', '));
+    setCfgWorkflow({
+      ddd: false,
+      tdd: false,
+      ubMode: false,
+      ste: false,
+      testLoop: false,
+      maxIterations: 2,
+      ...(p.workflow ?? {}),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, p?.id]);
 
   // Deep-linked /projects/:id/edit must show the project's current values.
   useEffect(() => {
@@ -1535,6 +1574,7 @@ ${it.key} · ${ISSUE_STATUS_LABEL[it.status]}`}>{it.title}</div>
                     automationRules: cfgAutomationRules,
                     pullBranches: cfgPullBranches.split(',').map((s) => s.trim()).filter(Boolean),
                     runnerId: cfgRunnerID,
+                    workflow: cfgWorkflow,
                   })
                 }
               >
@@ -1740,6 +1780,54 @@ ${it.key} · ${ISSUE_STATUS_LABEL[it.status]}`}>{it.title}</div>
                   💡 只拉取这里列出的分支，避免把已合并/废弃的远端分支重新抓回本地；留空保持原有全量拉取。
                 </span>
               </label>
+
+              <div
+                style={{
+                  padding: '12px 14px',
+                  borderRadius: 8,
+                  border: `1px solid ${cfgWorkflow.ddd || cfgWorkflow.tdd || cfgWorkflow.ubMode || cfgWorkflow.ste || cfgWorkflow.testLoop ? 'var(--accent)' : 'var(--border)'}`,
+                  background: 'var(--bg-2)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                }}
+              >
+                <b style={{ fontSize: 13 }}>🧭 工程工作流（可选，默认关闭）</b>
+                <span className="small dim">
+                  开启后会写入运行工作区的 AGENTS.md；仓库自带的 AGENTS/README/skills 优先于这里。
+                </span>
+                {(
+                  [
+                    { key: 'ddd', label: 'DDD：先写 bounded context / 术语表 / 验收点，再改代码' },
+                    { key: 'tdd', label: 'TDD：先写失败测试并确认失败，再做最小实现' },
+                    { key: 'ubMode', label: 'ub-mode（unclebob/ub-mode）：小步、根因、可验证单元、CRAP/重复/死代码' },
+                    { key: 'ste', label: 'STE 总结：短句、主动语态、一句一义，用于 Run 总结与 PR 描述' },
+                    { key: 'testLoop', label: '测试循环：结束前跑测试命令，失败自动重试（上限可设）' },
+                  ] as const
+                ).map((item) => (
+                  <label key={item.key} className="row" style={{ gap: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={cfgWorkflow[item.key]}
+                      onChange={(e) => setWorkflow({ [item.key]: e.target.checked } as Partial<ProjectWorkflow>)}
+                    />
+                    <span style={{ fontSize: 13 }}>{item.label}</span>
+                  </label>
+                ))}
+                {cfgWorkflow.testLoop && (
+                  <label className="field" style={{ marginTop: 2 }}>
+                    测试失败最多重试次数
+                    <input
+                      type="number"
+                      min={0}
+                      max={5}
+                      value={cfgWorkflow.maxIterations}
+                      onChange={(e) => setWorkflow({ maxIterations: Number(e.target.value) || 0 })}
+                      style={{ maxWidth: 120 }}
+                    />
+                  </label>
+                )}
+              </div>
 
               <label className="row" style={{ gap: 8, cursor: 'pointer', marginTop: 4 }}>
                 <input

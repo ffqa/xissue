@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- `make deploy` 部署了个寂寞：本机同时装了 Homebrew 版时，`service restart` 里的路径解析无条件优先 brew 软链接（`/usr/local/bin/xissue`），本地构建的 `bin/xissue` 既不会同步到 `~/.local/bin`，plist 指向的二进制也不会被校验，服务重启后仍跑旧代码。现在仅当 brew 软链接与当前可执行文件是同一文件时才判定为 Homebrew 安装；restart 会对比服务单元里配置的二进制与解析结果，不一致时自动重写服务配置。启动日志与 `xissue service status` 现在显示实际运行的二进制路径与版本。
 - 管理 Agent 时删除的内置 Agent（codex/omp/opencode）刷新后又出现：配置加载从 `Default()` 的 Agent 表开始反序列化，YAML 中缺少的条目会被默认值重新补回。现在加载前清空 Agent 表，只有配置文件完全没有 `agents` 键时才写入默认 Agent；删除后的 Agent 在重启/重载后保持删除。
 - `feat:` 前缀的 Issue 不会被判定为可开发：分类器关键词只有 `feature`，遗漏了常见约定式提交前缀 `feat`，导致自动预开发静默跳过。已加入 `feat`（按单词边界匹配，不会命中 `defeat`），并补测试。
 

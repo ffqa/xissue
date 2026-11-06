@@ -139,13 +139,16 @@ func resolveStableBrewBinary(rawExe, realExe string) (string, bool) {
 		}
 	}
 
-	// 3. 尝试通过 brew --prefix 查询标准软链接
+	// 3. 尝试通过 brew --prefix 查询标准软链接。仅当该软链接与当前可执行文件
+	//    指向同一个文件时才采用——否则本机同时存在 Homebrew 安装与本地构建
+	//    （如 ./bin/xissue）时，本地二进制会被误判为 Homebrew 安装，
+	//    导致 make deploy 后服务仍运行旧二进制。
 	if _, err := exec.LookPath("brew"); err == nil {
 		if out, err := exec.Command("brew", "--prefix").Output(); err == nil {
 			prefix := strings.TrimSpace(string(out))
 			if prefix != "" {
 				stable := filepath.Join(prefix, "bin", "xissue")
-				if _, err := os.Stat(stable); err == nil {
+				if sameExecutableFile(stable, realExe) {
 					return stable, true
 				}
 			}
@@ -153,6 +156,87 @@ func resolveStableBrewBinary(rawExe, realExe string) (string, bool) {
 	}
 
 	return "", false
+}
+
+// sameExecutableFile 判断两个路径是否指向同一个文件（跟随符号链接，
+// 通过 os.SameFile 比较设备号与 inode）。
+func sameExecutableFile(a, b string) bool {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	fb, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(fa, fb)
+}
+
+// installedServiceBinary 返回已安装服务单元（launchd plist / systemd unit）
+// 中配置的二进制路径；未安装时返回空字符串。
+func installedServiceBinary() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	var path string
+	switch runtime.GOOS {
+	case "darwin":
+		path = filepath.Join(home, "Library", "LaunchAgents", serviceLabel+".plist")
+	case "linux":
+		path = filepath.Join(home, ".config", "systemd", "user", "xissue.service")
+	default:
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	if runtime.GOOS == "linux" {
+		return parseSystemdExecStart(string(data))
+	}
+	return parsePlistProgram(string(data))
+}
+
+func parsePlistProgram(content string) string {
+	idx := strings.Index(content, "<key>ProgramArguments</key>")
+	if idx == -1 {
+		return ""
+	}
+	rest := content[idx:]
+	start := strings.Index(rest, "<string>")
+	end := strings.Index(rest, "</string>")
+	if start == -1 || end == -1 || end <= start {
+		return ""
+	}
+	return rest[start+len("<string>") : end]
+}
+
+func parseSystemdExecStart(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "ExecStart=") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "ExecStart="))
+		}
+	}
+	return ""
+}
+
+// binaryVersion 返回指定二进制的版本输出（如 "xissue v0.8.9"），无法执行时返回占位文本。
+func binaryVersion(bin string) string {
+	out, err := exec.Command(bin, "version").CombinedOutput()
+	if err != nil {
+		return "未知版本"
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// printServiceBinaryInfo 在服务重启成功后打印实际运行的二进制路径与版本，
+// 避免“部署了但没生效”这种静默错误。
+func printServiceBinaryInfo(bin string) {
+	if bin == "" {
+		return
+	}
+	fmt.Printf("  • 运行二进制: %s (%s)\n", bin, binaryVersion(bin))
 }
 
 // checkAndMigrateCellarService 检查现有服务配置，若发现写死了特定版本 Cellar 路径，自动无缝迁移至稳定软链接。
@@ -461,6 +545,9 @@ func statusService() {
 				fmt.Printf("\n⚠️ 警告: 检测到当前常驻服务配置指向特定版本的 Cellar 物理路径（升级后将无法自动生效）。\n   运行 'xissue service restart' 即可自动迁移为版本无关的稳定软链接。\n")
 			}
 		}
+		if bin := installedServiceBinary(); bin != "" {
+			fmt.Printf("常驻服务二进制: %s\n版本: %s\n", bin, binaryVersion(bin))
+		}
 		// 检查端口
 		checkPort(7789)
 		return
@@ -471,6 +558,9 @@ func statusService() {
 		fmt.Println(string(out))
 		if strings.Contains(string(out), "/Cellar/xissue/") {
 			fmt.Printf("\n⚠️ 警告: 检测到当前 systemd 配置指向特定版本的 Cellar 物理路径。\n   运行 'xissue service restart' 即可自动迁移为稳定软链接。\n")
+		}
+		if bin := installedServiceBinary(); bin != "" {
+			fmt.Printf("常驻服务二进制: %s\n版本: %s\n", bin, binaryVersion(bin))
 		}
 		checkPort(7789)
 		return
@@ -485,9 +575,18 @@ func restartService() {
 		return
 	}
 
-	// 如果本地编译了新二进制，先自动同步到 ~/.local/bin/xissue
-	if persistentBin, err := getPersistentBinary(); err == nil {
-		_ = persistentBin
+	// 如果本地编译了新二进制，先自动同步到持久化路径（如 ~/.local/bin/xissue）
+	persistentBin, _ := getPersistentBinary()
+
+	// 服务单元里配置的二进制若与本次解析结果不一致（例如 plist 仍指向
+	// Homebrew 软链接而当前是本地构建），仅 kickstart 不会切换二进制，
+	// 必须重写服务配置后再启动。
+	if persistentBin != "" {
+		if configured := installedServiceBinary(); configured != "" && configured != persistentBin {
+			fmt.Printf("💡 常驻服务配置的二进制为 %s，与当前解析结果 %s 不一致，正在重新安装服务...\n", configured, persistentBin)
+			installService()
+			return
+		}
 	}
 
 	if runtime.GOOS == "darwin" {
@@ -501,6 +600,7 @@ func restartService() {
 		if err := kickstart(); err == nil {
 			if waitForListenerRestart(7789, before, 5*time.Second) {
 				fmt.Printf("✓ 已重启服务: %s\n", serviceLabel)
+				printServiceBinaryInfo(persistentBin)
 				return
 			}
 			fmt.Println("⚠️ launchd 已响应，但端口仍由旧进程占用，正在停止旧进程后重试...")
@@ -514,6 +614,7 @@ func restartService() {
 		if err := kickstart(); err == nil {
 			if waitForListenerRestart(7789, before, 5*time.Second) {
 				fmt.Printf("✓ 已重启服务: %s\n", serviceLabel)
+				printServiceBinaryInfo(persistentBin)
 				return
 			}
 		}
@@ -531,6 +632,7 @@ func restartService() {
 			return
 		}
 		fmt.Println("✓ 已重启 systemd 服务: xissue.service")
+		printServiceBinaryInfo(persistentBin)
 		return
 	}
 

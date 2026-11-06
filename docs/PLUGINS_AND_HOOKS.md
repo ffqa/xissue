@@ -135,10 +135,17 @@ xissue plugin enable my-plugin
 ### 3. 执行模型与安全边界
 
 - 插件以当前用户权限运行，manifest 的 `permissions` **不会**限制文件、网络或子进程访问；只安装你信任的代码。
-- 每次调用 15 秒超时；Unix 下以独立进程组启动，超时后整组 SIGKILL。
+- **超时固定为每次调用 15 秒**，不可按插件配置（manifest 中的 `timeout` 键会被忽略）；Unix 下以独立进程组启动，超时后整组 SIGKILL。
 - Python entrypoint 使用 `python3`，JavaScript 使用 `node`，其他 entrypoint 直接执行。
-- 插件目录即工作目录；状态文件应写入插件目录或显式配置的路径。
+- **工作目录 = 插件自己的目录**（`~/.xissue/plugins/<name>/`）。
+- **环境变量继承自 xIssue 进程**，不是你的交互式 shell：通过 launchd 常驻运行时，`PATH` 是 launchd 的默认值（通常仅 `/usr/bin:/bin:/usr/sbin:/sbin`），`python3` / `node` / `jq` 等若不在该 PATH 中会找不到——entrypoint 请使用绝对路径，或确认 `python3`/`node` 对 launchd 可见。
+- **可以在插件目录旁写状态/日志文件**（cwd 即插件目录），但注意：`.disabled` 标记与 `config.json` 由 xIssue 管理，不要自行改写；xIssue 不做日志轮转，自建日志请自行控制大小；卸载/重装即整个目录被替换，勿存放不可丢失的数据。
+- **stderr 不是受支持的报告通道**：脚本非零退出时 stderr 仅被附加到内部错误对象——Layer 2 Hook 的错误会写入监控日志，但 Layer 3 插件的错误当前会被静默丢弃（见 issue #13）。插件报告“非致命问题”的正确方式是输出 `{"actions":[{"type":"notify","message":"..."}]}`，或写入插件目录下自己的日志文件。
 - Layer 2 项目 Hook 仍仅对本地目录仓库执行；远程镜像与 run worktree 中的脚本不会被执行。
+
+#### `plugin.yaml` 支持的完整键集
+
+`apiVersion`、`name`、`version`、`description`、`author`、`entrypoint`、`events`、`permissions`、`enabled`、`ui`（`entry`/`title`/`slots`）。**除此之外的键（如 `timeout`、`env`）不受支持**，会被静默忽略；按插件的环境变量/配置请放入 `config.json`，由插件脚本自行读取（见第四节「Web 全局管理与 `config.json`」）。
 
 ### 3.5 插件 UI（同源 iframe + 插槽）
 
@@ -203,13 +210,16 @@ xIssue 通过标准输入（`stdin`）将上下文信息以 JSON 格式传递给
   },
   "branch": "main",
   "tipSha": "34639b4f9812e...",
+  "previousSha": "9f1c2d3a4b5c6...",
   "commits": [
     {
       "sha": "34639b4f9812e...",
       "shortSha": "34639b4",
       "subject": "feat: add user login",
       "author": "alice",
-      "date": "2026-10-20 20:15:00 +0800"
+      "authorEmail": "alice@example.com",
+      "date": "2026-10-20 20:15:00 +0800",
+      "parents": ["9f1c2d3a4b5c6..."]
     }
   ],
   "notification": {
@@ -222,9 +232,15 @@ xIssue 通过标准输入（`stdin`）将上下文信息以 JSON 格式传递给
 }
 ```
 
+#### `branch_push` 字段说明
+
+- `tipSha`：本次轮询检测到的分支最新提交；
+- `previousSha`：watcher 在本次轮询前记录的上一 tip（即 `git rev-list previousSha..tipSha` 的左端点）。插件可直接据此计算推送范围，**无需打开本地镜像**；首次监听或 force-push 后 `previousSha` 可能不是 `tipSha` 的祖先，做 `rev-list` 时请自行容错；
+- `commits[]`：`previousSha..tipSha` 范围内的新提交（上限 10 条，范围为空时回退为 `[tip]`），每条含 `sha` / `shortSha` / `subject` / `author`（名字）/ `authorEmail` / `date` / `parents`（父提交 SHA 数组，根提交为空）。判断“是不是我本人提交”请用 `authorEmail` 而非 `author`——重名作者靠邮箱区分。
+
 ### 2. 输出指令动作 (`stdout` JSON Actions)
 
-如果 Hook/插件需要让 xIssue 协助执行系统动作，只需在退出前向 `stdout` 输出如下 JSON（若仅执行外部逻辑，可直接输出空内容）：
+`stdout` 的全部内容**必须是一个完整的 `{"actions":[...]}` JSON 文档**：xIssue 会对整个 stdout 做一次 `json.Unmarshal`，解析失败（包括混入日志行、banner、多段 JSON）一律按 no-op 处理、不产生任何动作，也不会报错。空 stdout 同样是 no-op。调试输出请写 `stderr` 或插件目录下的日志文件，**不要写进 stdout**。
 
 ```json
 {
@@ -389,7 +405,7 @@ urllib.request.urlopen(bark_url)
 4. **独立进程空间**：插件以独立子进程运行，崩溃或异常退出不会影响 xIssue 自身稳定性；
 5. **权限声明不是沙箱**：`permissions` 仅用于审计与 UI 展示。插件以当前用户身份运行，可读写文件、访问网络、启动子进程；请只安装可信代码；
 6. **生命周期动作白名单**：`issue_created` / `issue_status_changed` 可 `add_labels`；`run_finished` 可 `add_labels` / `create_issue`；`pr_created` 可 `add_labels` / `trigger_run`；`run_started` 与 `notification_dispatch` 仅 `notify`；`pr_merged` 忽略 `merge_pr`；
-7. **日志审计**：Hook/Plugin 非零退出时，其 `stderr` 会随错误写入监控日志；目前不会逐行实时转发插件输出。
+7. **日志审计**：Layer 2 Hook 非零退出时，其 `stderr` 会随错误写入监控日志；Layer 3 插件的失败当前不记录（见 issue #13）。两者均不会逐行实时转发输出。
 
 ---
 

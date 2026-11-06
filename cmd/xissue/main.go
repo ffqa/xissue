@@ -180,7 +180,14 @@ func main() {
 		_ = httpSrv.Shutdown(ctx)
 	}()
 
-	log.Printf("xIssue v%s listening on http://%s (data: %s)", server.Version, cfg.Listen, cfg.DataDir)
+	binPath, _ := os.Executable()
+	if real, err := filepath.EvalSymlinks(binPath); err == nil && real != binPath {
+		binPath += " -> " + real
+	}
+	if binPath == "" {
+		binPath = "unknown"
+	}
+	log.Printf("xIssue v%s listening on http://%s (bin: %s, data: %s)", server.Version, cfg.Listen, binPath, cfg.DataDir)
 	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}

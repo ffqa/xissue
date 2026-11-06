@@ -1695,16 +1695,20 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 
 		// Layer 2: Project Hooks (安全门控: 仅受信任人员允许触发本地外部脚本执行，防止恶意外部评论 RCE)
 		if isTrustedAuthor(comment.Author, prDetail.Author, rules) {
-			if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
-				actions = append(actions, hookActions...)
+			hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload)
+			actions = append(actions, hookActions...)
+			if herr != nil {
+				r.LogMonitor("WARN", "automation", fmt.Sprintf("Layer 2 Hook 执行失败 (%s): %v", payload.Event, herr))
 			}
 		} else {
 			r.LogMonitor("WARN", "automation", fmt.Sprintf("评论作者 @%s 非信任人员，根据安全规则阻断 Layer 2 本地 Hooks 执行", comment.Author))
 		}
 
 		// Layer 3: Plugins
-		if plugActions, perr := r.automation.ExecutePlugins(ctx, payload); perr == nil {
-			actions = append(actions, plugActions...)
+		plugActions, perr := r.automation.ExecutePlugins(ctx, payload)
+		actions = append(actions, plugActions...)
+		if perr != nil {
+			r.LogMonitor("WARN", "automation", fmt.Sprintf("插件执行失败 (%s): %v", payload.Event, perr))
 		}
 
 		if len(actions) > 0 {
@@ -1750,16 +1754,20 @@ func (r *Runner) processPRAutomation(ctx context.Context, issue *domain.Issue, r
 
 		// Layer 2: Hooks (安全门控)
 		if isTrustedAuthor(review.Author, prDetail.Author, rules) {
-			if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
-				actions = append(actions, hookActions...)
+			hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload)
+			actions = append(actions, hookActions...)
+			if herr != nil {
+				r.LogMonitor("WARN", "automation", fmt.Sprintf("Layer 2 Hook 执行失败 (%s): %v", payload.Event, herr))
 			}
 		} else {
 			r.LogMonitor("WARN", "automation", fmt.Sprintf("Review 作者 @%s 非信任人员，根据安全规则阻断 Layer 2 本地 Hooks 执行", review.Author))
 		}
 
 		// Layer 3: Plugins
-		if plugActions, perr := r.automation.ExecutePlugins(ctx, payload); perr == nil {
-			actions = append(actions, plugActions...)
+		plugActions, perr := r.automation.ExecutePlugins(ctx, payload)
+		actions = append(actions, plugActions...)
+		if perr != nil {
+			r.LogMonitor("WARN", "automation", fmt.Sprintf("插件执行失败 (%s): %v", payload.Event, perr))
 		}
 
 		if len(actions) > 0 {
@@ -2109,9 +2117,9 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 
 	// Layer 2: Project Hooks (on-branch-push), gated to local working copies.
 	if shouldRunProjectHooks(repo, workdir, tip.Author, rules) {
-		if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
-			actions = append(actions, hookActions...)
-		} else {
+		hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload)
+		actions = append(actions, hookActions...)
+		if herr != nil {
 			r.LogMonitor("WARN", "automation", fmt.Sprintf("Layer 2 Hook 执行失败: %v", herr))
 		}
 	} else if workdir != "" {
@@ -2119,8 +2127,10 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 	}
 
 	// Layer 3: Plugins
-	if plugActions, perr := r.automation.ExecutePlugins(ctx, payload); perr == nil {
-		actions = append(actions, plugActions...)
+	plugActions, perr := r.automation.ExecutePlugins(ctx, payload)
+	actions = append(actions, plugActions...)
+	if perr != nil {
+		r.LogMonitor("WARN", "automation", fmt.Sprintf("插件执行失败 (%s): %v", payload.Event, perr))
 	}
 
 	if len(actions) == 0 {
@@ -2236,13 +2246,17 @@ func (r *Runner) processPRMergedAutomation(ctx context.Context, issue *domain.Is
 
 	// Layer 2: Hooks (on-pr-merged)
 	var actions []domain.RuleAction
-	if hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload); herr == nil {
-		actions = append(actions, hookActions...)
+	hookActions, herr := r.automation.ExecuteProjectHooks(ctx, workdir, payload)
+	actions = append(actions, hookActions...)
+	if herr != nil {
+		r.LogMonitor("WARN", "automation", fmt.Sprintf("Layer 2 Hook 执行失败 (%s): %v", payload.Event, herr))
 	}
 
 	// Layer 3: Plugins
-	if plugActions, perr := r.automation.ExecutePlugins(ctx, payload); perr == nil {
-		actions = append(actions, plugActions...)
+	plugActions, perr := r.automation.ExecutePlugins(ctx, payload)
+	actions = append(actions, plugActions...)
+	if perr != nil {
+		r.LogMonitor("WARN", "automation", fmt.Sprintf("插件执行失败 (%s): %v", payload.Event, perr))
 	}
 
 	// The PR is already merged; never run merge_pr again from this event.

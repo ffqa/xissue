@@ -12,10 +12,14 @@
 ### Added
 
 - `branch_push` 的 Hook/插件 stdin 载荷新增 `previousSha`（watcher 本轮轮询前记录的上一 tip），每条 commit 新增 `authorEmail` 与 `parents[]`：插件可直接用 `git rev-list previousSha..tipSha` 计算推送范围、用邮箱区分重名作者，不再需要打开本地镜像跑 `git log`。
+- `plugin.yaml` 新增可选 `timeout` 字段（Go duration，如 `30s`），默认 15s、最大 5m，用于 blob:none 部分克隆下需要网络取数的慢插件。
 
 ### Fixed
 
-- 插件契约文档补齐：`stdout` 必须是单一 `{"actions":[...]}` 文档（其余一律 no-op）、stderr 不支持作为报告通道（插件失败当前不记录，见 issue #13，非致命问题请用 `notify` action）、15 秒超时不可按插件配置、`plugin.yaml` 完整键集（`timeout`/`env` 不支持）、工作目录与 launchd 下 PATH、插件目录写文件的注意事项。
+- 插件契约文档补齐：`stdout` 必须是单一 `{"actions":[...]}` 文档（其余一律 no-op）、stderr 不支持作为报告通道、`plugin.yaml` 完整键集、工作目录与 launchd 下 PATH、插件目录写文件的注意事项。
+- 插件超时、崩溃或输出非 JSON 时不再静默丢弃：`ExecutePlugins` 聚合所有失败并返回，各调用点向 `monitor.log` 写入 `WARN`，包含插件 id、失败原因（timeout / 非零退出 / 非 JSON 输出）与 stderr 末尾约 500 字符；单个插件失败不影响其他插件执行。
+- 插件超时时仍会解析被杀前已打印的完整 JSON 动作（多数插件先输出结果再退出清理）。
+- Layer 2 Hook 同样的静默失败路径也统一改为 WARN 记录。
 
 ## [0.8.9] - 2026-11-06
 

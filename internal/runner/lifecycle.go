@@ -139,15 +139,15 @@ func (r *Runner) dispatchLifecycle(ctx context.Context, payload automation.PREve
 	}
 	var actions []domain.RuleAction
 	if workdir != "" {
-		if acts, err := r.automation.ExecuteProjectHooks(ctx, workdir, payload); err == nil {
-			actions = append(actions, acts...)
-		} else {
+		acts, err := r.automation.ExecuteProjectHooks(ctx, workdir, payload)
+		actions = append(actions, acts...)
+		if err != nil {
 			r.LogMonitor("WARN", "automation", fmt.Sprintf("Layer 2 Hook 执行失败 (%s): %v", payload.Event, err))
 		}
 	}
-	if acts, err := r.automation.ExecutePlugins(ctx, payload); err == nil {
-		actions = append(actions, acts...)
-	} else {
+	acts, err := r.automation.ExecutePlugins(ctx, payload)
+	actions = append(actions, acts...)
+	if err != nil {
 		r.LogMonitor("WARN", "automation", fmt.Sprintf("插件执行失败 (%s): %v", payload.Event, err))
 	}
 	if len(actions) > 0 {

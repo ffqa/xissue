@@ -77,6 +77,11 @@
       "type": "boolean",
       "default": true
     },
+    "timeout": {
+      "type": "string",
+      "pattern": "^[0-9]+(\\.[0-9]+)?(ns|us|ms|s|m|h)$",
+      "description": "Per-run timeout as a Go duration (e.g. \"30s\"). Default 15s, max 5m."
+    },
     "ui": {
       "type": "object",
       "additionalProperties": false,

@@ -84,6 +84,7 @@ version: 1.0.0
 description: 一句话说明
 author: your-name
 entrypoint: run.py       # 相对路径，不允许绝对路径或 .. 逃逸
+timeout: 30s             # 可选：单次执行超时，默认 15s，最大 5m
 events:
   - issue_created
   - run_finished
@@ -135,7 +136,7 @@ xissue plugin enable my-plugin
 ### 3. 执行模型与安全边界
 
 - 插件以当前用户权限运行，manifest 的 `permissions` **不会**限制文件、网络或子进程访问；只安装你信任的代码。
-- **超时固定为每次调用 15 秒**，不可按插件配置（manifest 中的 `timeout` 键会被忽略）；Unix 下以独立进程组启动，超时后整组 SIGKILL。
+- 每次调用默认 15 秒超时，可在 `plugin.yaml` 中用 `timeout: 30s` 覆盖（最大 5m）；Unix 下以独立进程组启动，超时后整组 SIGKILL。
 - Python entrypoint 使用 `python3`，JavaScript 使用 `node`，其他 entrypoint 直接执行。
 - **工作目录 = 插件自己的目录**（`~/.xissue/plugins/<name>/`）。
 - **环境变量继承自 xIssue 进程**，不是你的交互式 shell：通过 launchd 常驻运行时，`PATH` 是 launchd 的默认值（通常仅 `/usr/bin:/bin:/usr/sbin:/sbin`），`python3` / `node` / `jq` 等若不在该 PATH 中会找不到——entrypoint 请使用绝对路径，或确认 `python3`/`node` 对 launchd 可见。
@@ -396,7 +397,7 @@ urllib.request.urlopen(bark_url)
 
 ## 🛡️ 六、执行安全与沙箱保护机制
 
-1. **执行超时熔断**：每个 Hook 或插件进程拥有 **15 秒执行超时保护**；Unix 下命令以独立进程组启动，超时后整组 SIGKILL，孙进程不会残留（Windows 仅终止直接子进程）；
+1. **执行超时熔断**：每个 Hook 或插件进程默认拥有 **15 秒执行超时保护**（插件可在 manifest 中以 `timeout` 覆盖，最大 5m）；Unix 下命令以独立进程组启动，超时后整组 SIGKILL，孙进程不会残留（Windows 仅终止直接子进程）；
 2. **安全信任边界**：
    - 项目级 Layer 2 Hook 仅从**本地目录添加的仓库**执行；远程镜像仓库、run worktree 中的 `.xissue/hooks` 不会被执行；
    - `pr_comment` / `pr_review` 只有评论作者等于 PR 作者或被任意自动化规则显式点名的作者才会触发 Hook；
@@ -405,7 +406,7 @@ urllib.request.urlopen(bark_url)
 4. **独立进程空间**：插件以独立子进程运行，崩溃或异常退出不会影响 xIssue 自身稳定性；
 5. **权限声明不是沙箱**：`permissions` 仅用于审计与 UI 展示。插件以当前用户身份运行，可读写文件、访问网络、启动子进程；请只安装可信代码；
 6. **生命周期动作白名单**：`issue_created` / `issue_status_changed` 可 `add_labels`；`run_finished` 可 `add_labels` / `create_issue`；`pr_created` 可 `add_labels` / `trigger_run`；`run_started` 与 `notification_dispatch` 仅 `notify`；`pr_merged` 忽略 `merge_pr`；
-7. **日志审计**：Layer 2 Hook 非零退出时，其 `stderr` 会随错误写入监控日志；Layer 3 插件的失败当前不记录（见 issue #13）。两者均不会逐行实时转发输出。
+7. **日志审计**：Hook/Plugin 超时、非零退出或输出非 JSON 时，插件 id、失败原因与 `stderr` 末尾约 500 字符会以 WARN 写入监控日志；单个插件失败不影响其他插件执行，超时已打印的 JSON 动作仍会被解析执行；目前不会逐行实时转发插件输出。
 
 ---
 

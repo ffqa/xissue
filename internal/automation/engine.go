@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -50,6 +51,52 @@ type PREventContext struct {
 // HookResult is parsed from Hook script or Plugin stdout.
 type HookResult struct {
 	Actions []domain.RuleAction `json:"actions"`
+}
+
+const (
+	// defaultScriptTimeout bounds a single hook/plugin run.
+	defaultScriptTimeout = 15 * time.Second
+	// maxPluginTimeout caps the per-plugin timeout knob in plugin.yaml.
+	maxPluginTimeout = 5 * time.Minute
+)
+
+// ScriptError describes a failed hook/plugin run. Stderr holds the tail of the
+// script's stderr so the failure can be diagnosed from monitor.log alone.
+type ScriptError struct {
+	Script string
+	Reason string
+	Stderr string
+}
+
+func (e *ScriptError) Error() string {
+	if e.Stderr != "" {
+		return fmt.Sprintf("%s: %s | stderr: %s", e.Script, e.Reason, e.Stderr)
+	}
+	return fmt.Sprintf("%s: %s", e.Script, e.Reason)
+}
+
+// stderrTail keeps the last ~500 chars of a script's stderr for log output.
+func stderrTail(s string) string {
+	const max = 500
+	s = strings.TrimSpace(s)
+	if len(s) > max {
+		s = s[len(s)-max:]
+	}
+	return s
+}
+
+// parseHookActions best-effort decodes the JSON action document a script may
+// have already printed before it timed out.
+func parseHookActions(out string) []domain.RuleAction {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return nil
+	}
+	var res HookResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		return nil
+	}
+	return res.Actions
 }
 
 // Engine dispatches events across Layer 1 (Rules), Layer 2 (Hooks), and Layer 3 (Plugins).
@@ -212,13 +259,17 @@ func (e *Engine) ExecuteProjectHooks(ctx context.Context, workdir string, payloa
 		return nil, nil
 	}
 
-	return e.runScriptWithPayload(ctx, scriptPath, payload)
+	return e.runScriptWithPayload(ctx, scriptPath, payload, defaultScriptTimeout)
 }
 
 // ExecutePlugins (Layer 3) runs enabled ecosystem plugins matching the event.
+// A failing plugin never blocks the others: its actions are still collected
+// (a timed-out plugin may have printed a complete result first) and every
+// failure is aggregated into the returned error for callers to log.
 func (e *Engine) ExecutePlugins(ctx context.Context, payload PREventContext) ([]domain.RuleAction, error) {
 	plugins := e.ListPlugins()
 	var actions []domain.RuleAction
+	var failures []string
 
 	for _, p := range plugins {
 		if !p.Enabled || p.Error != "" {
@@ -235,24 +286,32 @@ func (e *Engine) ExecutePlugins(ctx context.Context, payload PREventContext) ([]
 		if err != nil {
 			continue
 		}
-		if info, err := os.Stat(entryPath); err == nil && !info.IsDir() {
-			acts, err := e.runScriptWithPayload(ctx, entryPath, payload)
-			if err == nil {
-				actions = append(actions, acts...)
-			}
+		if info, err := os.Stat(entryPath); err != nil || info.IsDir() {
+			continue
 		}
+		acts, err := e.runScriptWithPayload(ctx, entryPath, payload, manifest.TimeoutDuration())
+		actions = append(actions, acts...)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("plugin %s: %s", p.ID, err))
+		}
+	}
+	if len(failures) > 0 {
+		return actions, errors.New(strings.Join(failures, "; "))
 	}
 	return actions, nil
 }
 
-func (e *Engine) runScriptWithPayload(ctx context.Context, scriptPath string, payload PREventContext) ([]domain.RuleAction, error) {
+func (e *Engine) runScriptWithPayload(ctx context.Context, scriptPath string, payload PREventContext, timeout time.Duration) ([]domain.RuleAction, error) {
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
+	if timeout <= 0 {
+		timeout = defaultScriptTimeout
+	}
 
-	// Timeout protection: max 15 seconds per hook
-	tctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	// Timeout protection: bounded per hook/plugin run
+	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	var cmd *exec.Cmd
@@ -282,8 +341,20 @@ func (e *Engine) runScriptWithPayload(ctx context.Context, scriptPath string, pa
 	// Bound Wait even if a grandchild inherited the stdout/stderr pipes.
 	cmd.WaitDelay = 2 * time.Second
 
+	script := filepath.Base(scriptPath)
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("hook %s failed: %v (%s)", filepath.Base(scriptPath), err, strings.TrimSpace(stderr.String()))
+		serr := &ScriptError{Script: script, Reason: err.Error(), Stderr: stderrTail(stderr.String())}
+		switch {
+		case ctx.Err() != nil:
+			// The caller's context ended the run (shutdown or an outer deadline).
+			serr.Reason = "context canceled"
+		case errors.Is(tctx.Err(), context.DeadlineExceeded):
+			serr.Reason = fmt.Sprintf("timeout after %s", timeout)
+			// Most plugins print one complete JSON document and then linger;
+			// salvage whatever was already written before the kill.
+			return parseHookActions(stdout.String()), serr
+		}
+		return nil, serr
 	}
 
 	out := strings.TrimSpace(stdout.String())
@@ -293,8 +364,7 @@ func (e *Engine) runScriptWithPayload(ctx context.Context, scriptPath string, pa
 
 	var res HookResult
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		// Output wasn't JSON actions, treat as no-op
-		return nil, nil
+		return nil, &ScriptError{Script: script, Reason: fmt.Sprintf("non-JSON output: %v", err), Stderr: stderrTail(stderr.String())}
 	}
 	return res.Actions, nil
 }

@@ -362,6 +362,10 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	cfg.ConfigVersion = 0
+	// Start from an empty agent map: yaml.Unmarshal merges into an existing
+	// map, so keeping Default()'s agents would resurrect any agent the user
+	// deleted. Seed defaults below only when the config has no agents key.
+	cfg.Agents = nil
 	if err := yaml.Unmarshal(b, cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
@@ -381,7 +385,7 @@ func Load(path string) (*Config, error) {
 		cfg.DataDir = DefaultDataDir()
 	}
 	if cfg.Agents == nil {
-		cfg.Agents = map[string]AgentConfig{}
+		cfg.Agents = Default().Agents
 	}
 	if cfg.Runner.MaxConcurrent <= 0 {
 		cfg.Runner.MaxConcurrent = 1

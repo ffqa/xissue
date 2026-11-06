@@ -7,6 +7,13 @@
 - 处理完一个任务批次且没有排队的后续任务时，**立即发版**，不把已提交改动留在未发布状态。
 - 每个 tag 必须有对应 CHANGELOG 条目；发布流程见 `scripts/brew-publish.sh` 与 `.github/workflows/release.yml`。
 
+## [0.8.9] - 2026-11-06
+
+### Fixed
+
+- 管理 Agent 时删除的内置 Agent（codex/omp/opencode）刷新后又出现：配置加载从 `Default()` 的 Agent 表开始反序列化，YAML 中缺少的条目会被默认值重新补回。现在加载前清空 Agent 表，只有配置文件完全没有 `agents` 键时才写入默认 Agent；删除后的 Agent 在重启/重载后保持删除。
+- `feat:` 前缀的 Issue 不会被判定为可开发：分类器关键词只有 `feature`，遗漏了常见约定式提交前缀 `feat`，导致自动预开发静默跳过。已加入 `feat`（按单词边界匹配，不会命中 `defeat`），并补测试。
+
 ## [0.8.8] - 2026-11-05
 
 ### Added

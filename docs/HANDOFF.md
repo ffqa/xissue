@@ -549,6 +549,11 @@
 - **附带修复**: 设置页现在在路由打开时用项目数据初始化全部表单字段（此前依赖已删除的头部按钮，默认值可能覆盖项目配置）。
 - **验证**: store 归一化/持久化测试、AGENTS 注入测试（开启/关闭）、浏览器实测开关保存后重载保持；`go test -race`、tsc、vitest 全绿。
 
+### 2.64 Agent 删除持久化与 `feat:` 分类（0.8.9）
+
+- **Agent 删除**: `config.Load` 之前直接在 `Default()` 的 Agent 表上 `yaml.Unmarshal`，YAML 里缺失的默认 Agent 会保留；已改为先置空，只有完全没有 `agents` 键的旧配置才 seed 默认值。回归测试覆盖删除后重新 Load、旧配置 seed。
+- **`feat:` 分类**: `featureKeywords` 增加 `feat`（词边界匹配），约定式提交标题可被自动预开发识别。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

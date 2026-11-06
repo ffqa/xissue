@@ -348,3 +348,36 @@ func TestLegacyConfigRemovesFetchFromAutoAllow(t *testing.T) {
 		t.Fatalf("explicit fetch setting was overwritten: %+v", cfg.Permissions.AutoAllowKinds)
 	}
 }
+
+func TestDeletedDefaultAgentStaysDeleted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Agent("codex"); !ok {
+		t.Fatal("fresh config should seed default agents")
+	}
+	if err := cfg.DeleteAgent("codex"); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := again.Agent("codex"); ok {
+		t.Fatal("deleted default agent was resurrected on load")
+	}
+
+	// Configs written before agents existed still get the defaults.
+	if err := os.WriteFile(path, []byte("listen: 127.0.0.1:7789\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := legacy.Agent("codex"); !ok {
+		t.Fatal("config without an agents key should seed default agents")
+	}
+}

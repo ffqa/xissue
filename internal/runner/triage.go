@@ -40,7 +40,7 @@ var bugKeywords = []string{
 	"报错", "崩溃", "异常", "失败", "无法", "不工作", "不生效", "错误", "修复",
 }
 var featureKeywords = []string{
-	"feature", "enhancement", "support", "add support", "improve",
+	"feat", "feature", "enhancement", "support", "add support", "improve",
 	"should be able to", "should also be able to", "would be nice", "would be great",
 	"please add", "can we add",
 	"需求", "功能", "支持", "增加", "新增", "希望", "优化", "改进",

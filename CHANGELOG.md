@@ -20,12 +20,12 @@
 - 插件超时、崩溃或输出非 JSON 时不再静默丢弃：`ExecutePlugins` 聚合所有失败并返回，各调用点向 `monitor.log` 写入 `WARN`，包含插件 id、失败原因（timeout / 非零退出 / 非 JSON 输出）与 stderr 末尾约 500 字符；单个插件失败不影响其他插件执行。
 - 插件超时时仍会解析被杀前已打印的完整 JSON 动作（多数插件先输出结果再退出清理）。
 - Layer 2 Hook 同样的静默失败路径也统一改为 WARN 记录。
+- `make deploy` 部署了个寂寞：本机同时装了 Homebrew 版时，`service restart` 里的路径解析无条件优先 brew 软链接（`/usr/local/bin/xissue`），本地构建的 `bin/xissue` 既不会同步到 `~/.local/bin`，plist 指向的二进制也不会被校验，服务重启后仍跑旧代码。现在仅当 brew 软链接与当前可执行文件是同一文件时才判定为 Homebrew 安装；restart 会对比服务单元里配置的二进制与解析结果，不一致时自动重写服务配置。启动日志与 `xissue service status` 现在显示实际运行的二进制路径与版本。
 
 ## [0.8.9] - 2026-11-06
 
 ### Fixed
 
-- `make deploy` 部署了个寂寞：本机同时装了 Homebrew 版时，`service restart` 里的路径解析无条件优先 brew 软链接（`/usr/local/bin/xissue`），本地构建的 `bin/xissue` 既不会同步到 `~/.local/bin`，plist 指向的二进制也不会被校验，服务重启后仍跑旧代码。现在仅当 brew 软链接与当前可执行文件是同一文件时才判定为 Homebrew 安装；restart 会对比服务单元里配置的二进制与解析结果，不一致时自动重写服务配置。启动日志与 `xissue service status` 现在显示实际运行的二进制路径与版本。
 - 管理 Agent 时删除的内置 Agent（codex/omp/opencode）刷新后又出现：配置加载从 `Default()` 的 Agent 表开始反序列化，YAML 中缺少的条目会被默认值重新补回。现在加载前清空 Agent 表，只有配置文件完全没有 `agents` 键时才写入默认 Agent；删除后的 Agent 在重启/重载后保持删除。
 - `feat:` 前缀的 Issue 不会被判定为可开发：分类器关键词只有 `feature`，遗漏了常见约定式提交前缀 `feat`，导致自动预开发静默跳过。已加入 `feat`（按单词边界匹配，不会命中 `defeat`），并补测试。
 

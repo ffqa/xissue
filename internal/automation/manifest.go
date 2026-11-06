@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -77,7 +78,16 @@ type PluginManifest struct {
 	Events      []string  `yaml:"events" json:"events"`
 	Permissions []string  `yaml:"permissions" json:"permissions"`
 	Enabled     *bool     `yaml:"enabled" json:"enabled"`
+	Timeout     string    `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	UI          *PluginUI `yaml:"ui,omitempty" json:"ui,omitempty"`
+}
+
+// TimeoutDuration returns the configured run timeout or the 15s default.
+func (m *PluginManifest) TimeoutDuration() time.Duration {
+	if d, err := time.ParseDuration(m.Timeout); err == nil && d > 0 {
+		return d
+	}
+	return defaultScriptTimeout
 }
 
 // Supported host slots for sandboxed plugin UI. The frontend renders the same
@@ -195,6 +205,15 @@ func ValidatePluginManifest(dir string, m *PluginManifest) error {
 	}
 	if len(m.Permissions) == 0 {
 		m.Permissions = []string{}
+	}
+	if m.Timeout != "" {
+		d, err := time.ParseDuration(m.Timeout)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("invalid timeout %q (use a Go duration like \"30s\")", m.Timeout)
+		}
+		if d > maxPluginTimeout {
+			return fmt.Errorf("timeout %q exceeds max %s", m.Timeout, maxPluginTimeout)
+		}
 	}
 	if err := validatePluginUI(dir, m); err != nil {
 		return err

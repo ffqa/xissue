@@ -59,6 +59,8 @@ func TestLoadPluginManifestRejectsInvalidContracts(t *testing.T) {
 		{"bad-name", "apiVersion: 1\nname: Bad/Name\nevents: [issue_created]\nentrypoint: run\n", "invalid plugin name"},
 		{"escape", "apiVersion: 1\nname: p\nevents: [issue_created]\nentrypoint: ../run\n", "invalid entrypoint"},
 		{"unknown-permission", "apiVersion: 1\nname: p\nevents: [issue_created]\nentrypoint: run\npermissions: [root]\n", "unknown permission"},
+		{"bad-timeout", "apiVersion: 1\nname: p\nevents: [issue_created]\nentrypoint: run\ntimeout: banana\n", "invalid timeout"},
+		{"huge-timeout", "apiVersion: 1\nname: p\nevents: [issue_created]\nentrypoint: run\ntimeout: 10m\n", "exceeds max"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

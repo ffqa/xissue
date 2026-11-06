@@ -7,6 +7,18 @@
 - 处理完一个任务批次且没有排队的后续任务时，**立即发版**，不把已提交改动留在未发布状态。
 - 每个 tag 必须有对应 CHANGELOG 条目；发布流程见 `scripts/brew-publish.sh` 与 `.github/workflows/release.yml`。
 
+## [Unreleased]
+
+### Fixed
+
+- 插件超时、崩溃或输出非 JSON 时不再静默丢弃：`ExecutePlugins` 聚合所有失败并返回，各调用点向 `monitor.log` 写入 `WARN`，包含插件 id、失败原因（timeout / 非零退出 / 非 JSON 输出）与 stderr 末尾约 500 字符；单个插件失败不影响其他插件执行。
+- 插件超时时仍会解析被杀前已打印的完整 JSON 动作（多数插件先输出结果再退出清理）。
+- Layer 2 Hook 同样的静默失败路径也统一改为 WARN 记录。
+
+### Added
+
+- `plugin.yaml` 新增可选 `timeout` 字段（Go duration，如 `30s`），默认 15s、最大 5m，用于 blob:none 部分克隆下需要网络取数的慢插件。
+
 ## [0.8.9] - 2026-11-06
 
 ### Fixed

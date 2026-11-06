@@ -7,6 +7,16 @@
 - 处理完一个任务批次且没有排队的后续任务时，**立即发版**，不把已提交改动留在未发布状态。
 - 每个 tag 必须有对应 CHANGELOG 条目；发布流程见 `scripts/brew-publish.sh` 与 `.github/workflows/release.yml`。
 
+## [0.8.10] - 2026-11-06
+
+### Added
+
+- `branch_push` 的 Hook/插件 stdin 载荷新增 `previousSha`（watcher 本轮轮询前记录的上一 tip），每条 commit 新增 `authorEmail` 与 `parents[]`：插件可直接用 `git rev-list previousSha..tipSha` 计算推送范围、用邮箱区分重名作者，不再需要打开本地镜像跑 `git log`。
+
+### Fixed
+
+- 插件契约文档补齐：`stdout` 必须是单一 `{"actions":[...]}` 文档（其余一律 no-op）、stderr 不支持作为报告通道（插件失败当前不记录，见 issue #13，非致命问题请用 `notify` action）、15 秒超时不可按插件配置、`plugin.yaml` 完整键集（`timeout`/`env` 不支持）、工作目录与 launchd 下 PATH、插件目录写文件的注意事项。
+
 ## [0.8.9] - 2026-11-06
 
 ### Fixed

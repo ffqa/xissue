@@ -35,6 +35,7 @@ type PREventContext struct {
 	Repo           *domain.Repo              `json:"repo,omitempty"`
 	Branch         string                    `json:"branch,omitempty"`
 	TipSHA         string                    `json:"tipSha,omitempty"`
+	PreviousSHA    string                    `json:"previousSha,omitempty"`
 	Commits        []gitx.CommitInfo         `json:"commits,omitempty"`
 	Issue          *domain.Issue             `json:"issue,omitempty"`
 	PR             *provider.PRDetailInfo    `json:"pr,omitempty"`

@@ -413,12 +413,18 @@ func splitLines(s string) []string {
 
 // CommitInfo represents a single git commit summary.
 type CommitInfo struct {
-	SHA      string `json:"sha"`
-	ShortSHA string `json:"shortSha"`
-	Subject  string `json:"subject"`
-	Author   string `json:"author"`
-	Date     string `json:"date"`
+	SHA         string   `json:"sha"`
+	ShortSHA    string   `json:"shortSha"`
+	Subject     string   `json:"subject"`
+	Author      string   `json:"author"`
+	AuthorEmail string   `json:"authorEmail,omitempty"`
+	Date        string   `json:"date"`
+	Parents     []string `json:"parents,omitempty"`
 }
+
+// commitLogFormat is the shared `git log --format` for CommitInfo parsing:
+// sha, short sha, subject, author name, author email, committer date, parents.
+const commitLogFormat = "%H%x09%h%x09%s%x09%an%x09%ae%x09%cI%x09%P"
 
 // CommitFile is one changed path in a commit.
 type CommitFile struct {
@@ -563,7 +569,7 @@ func BranchTip(ctx context.Context, mirror, branch string) (CommitInfo, error) {
 		return CommitInfo{}, err
 	}
 	ref := resolveBaseRef(ctx, mirror, branch)
-	out, err := Run(ctx, mirror, "log", "-n", "1", "--format=%H%x09%h%x09%s%x09%an%x09%cI", ref)
+	out, err := Run(ctx, mirror, "log", "-n", "1", "--format="+commitLogFormat, ref)
 	if err != nil {
 		return CommitInfo{}, err
 	}
@@ -583,7 +589,7 @@ func ListCommits(ctx context.Context, mirror, branch string, limit int) ([]Commi
 		limit = 30
 	}
 	ref := resolveBaseRef(ctx, mirror, branch)
-	out, err := Run(ctx, mirror, "log", "-n", strconv.Itoa(limit), "--format=%H%x09%h%x09%s%x09%an%x09%cI", ref)
+	out, err := Run(ctx, mirror, "log", "-n", strconv.Itoa(limit), "--format="+commitLogFormat, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -601,7 +607,7 @@ func ListCommitsRange(ctx context.Context, mirror, oldSHA, newSHA string, limit 
 	if limit <= 0 || limit > 100 {
 		limit = 30
 	}
-	out, err := Run(ctx, mirror, "log", "-n", strconv.Itoa(limit), "--format=%H%x09%h%x09%s%x09%an%x09%cI", oldSHA+".."+newSHA)
+	out, err := Run(ctx, mirror, "log", "-n", strconv.Itoa(limit), "--format="+commitLogFormat, oldSHA+".."+newSHA)
 	if err != nil {
 		return nil, err
 	}
@@ -611,17 +617,23 @@ func ListCommitsRange(ctx context.Context, mirror, oldSHA, newSHA string, limit 
 func parseCommitLines(out string) []CommitInfo {
 	var list []CommitInfo
 	for _, line := range splitLines(out) {
-		parts := strings.SplitN(line, "\t", 5)
-		if len(parts) < 5 {
+		parts := strings.SplitN(line, "\t", 7)
+		// Root commits have no %P; the trimmed trailing tab leaves 6 fields.
+		if len(parts) < 6 {
 			continue
 		}
-		list = append(list, CommitInfo{
-			SHA:      parts[0],
-			ShortSHA: parts[1],
-			Subject:  parts[2],
-			Author:   parts[3],
-			Date:     parts[4],
-		})
+		c := CommitInfo{
+			SHA:         parts[0],
+			ShortSHA:    parts[1],
+			Subject:     parts[2],
+			Author:      parts[3],
+			AuthorEmail: parts[4],
+			Date:        parts[5],
+		}
+		if len(parts) == 7 {
+			c.Parents = strings.Fields(parts[6])
+		}
+		list = append(list, c)
 	}
 	return list
 }

@@ -252,6 +252,45 @@ func TestMergeBranchToTargetRebasesStaleWorktree(t *testing.T) {
 	}
 }
 
+func TestListCommitsRangeIncludesEmailAndParents(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	if _, err := Run(ctx, dir, "init", "-b", "main"); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	_, _ = Run(ctx, dir, "config", "user.name", "Alice")
+	_, _ = Run(ctx, dir, "config", "user.email", "alice@example.com")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("one\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first, err := CommitAll(ctx, dir, "init")
+	if err != nil {
+		t.Fatalf("CommitAll: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("two\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := CommitAll(ctx, dir, "second")
+	if err != nil {
+		t.Fatalf("CommitAll: %v", err)
+	}
+
+	commits, err := ListCommitsRange(ctx, dir, first, second, 10)
+	if err != nil {
+		t.Fatalf("ListCommitsRange: %v", err)
+	}
+	if len(commits) != 1 {
+		t.Fatalf("expected 1 commit, got %+v", commits)
+	}
+	c := commits[0]
+	if c.SHA != second || c.Author != "Alice" || c.AuthorEmail != "alice@example.com" {
+		t.Fatalf("unexpected commit: %+v", c)
+	}
+	if len(c.Parents) != 1 || c.Parents[0] != first {
+		t.Fatalf("unexpected parents: %+v", c.Parents)
+	}
+}
+
 func TestDiffIncludesUntrackedAndTruncates(t *testing.T) {
 	ctx := t.Context()
 	dir := t.TempDir()

@@ -2099,13 +2099,16 @@ func (r *Runner) processBranchPushAutomation(ctx context.Context, w domain.Branc
 		workdir = repo.RemoteURL
 	}
 
+	// w.LastSHA 仍是本次轮询前记录的旧 SHA（DB 已更新但 w 为值传递），
+	// 插件可用 previousSha..tipSha 计算推送范围，无需打开镜像。
 	payload := automation.PREventContext{
-		Event:   "branch_push",
-		Project: *project,
-		Repo:    repo,
-		Branch:  w.Branch,
-		TipSHA:  tip.SHA,
-		Commits: commits,
+		Event:       "branch_push",
+		Project:     *project,
+		Repo:        repo,
+		Branch:      w.Branch,
+		TipSHA:      tip.SHA,
+		PreviousSHA: w.LastSHA,
+		Commits:     commits,
 	}
 
 	// Layer 1: Rules

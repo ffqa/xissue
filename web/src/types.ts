@@ -461,7 +461,9 @@ export interface CommitInfo {
   shortSha: string;
   subject: string;
   author: string;
+  authorEmail?: string;
   date: string;
+  parents?: string[];
 }
 
 export interface CommitFile {

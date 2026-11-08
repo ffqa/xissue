@@ -289,6 +289,27 @@ func TestListCommitsRangeIncludesEmailAndParents(t *testing.T) {
 	if len(c.Parents) != 1 || c.Parents[0] != first {
 		t.Fatalf("unexpected parents: %+v", c.Parents)
 	}
+
+	all, err := ListCommits(ctx, dir, "main", 10)
+	if err != nil {
+		t.Fatalf("ListCommits: %v", err)
+	}
+	if len(all) != 2 || all[1].SHA != first {
+		t.Fatalf("unexpected commit list: %+v", all)
+	}
+	if len(all[1].Parents) != 0 {
+		t.Fatalf("root commit should have no parents, got %+v", all[1].Parents)
+	}
+	if all[1].AuthorEmail != "alice@example.com" {
+		t.Fatalf("root commit email missing: %+v", all[1])
+	}
+	tip, err := BranchTip(ctx, dir, "main")
+	if err != nil {
+		t.Fatalf("BranchTip: %v", err)
+	}
+	if tip.AuthorEmail != "alice@example.com" || len(tip.Parents) != 1 || tip.Parents[0] != first {
+		t.Fatalf("unexpected tip: %+v", tip)
+	}
 }
 
 func TestDiffIncludesUntrackedAndTruncates(t *testing.T) {

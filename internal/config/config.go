@@ -78,6 +78,7 @@ const CurrentConfigVersion = 3
 
 type Config struct {
 	mu                    sync.RWMutex
+	observedBaseURL       string
 	Path                  string                  `yaml:"-" json:"-"`
 	ConfigVersion         int                     `yaml:"configVersion,omitempty" json:"configVersion,omitempty"`
 	Listen                string                  `yaml:"listen"`
@@ -209,14 +210,22 @@ func (c *Config) MonitorSnapshot() MonitorConfig {
 // An explicit monitor.publicUrl wins; otherwise it is derived from the listen
 // address (unspecified hosts fall back to a non-loopback interface when present).
 func (c *Config) PublicBaseURL() string {
-	mon := c.MonitorSnapshot()
+	c.mu.RLock()
+	mon := c.Monitor
+	listen := strings.TrimSpace(c.Listen)
+	observed := c.observedBaseURL
+	c.mu.RUnlock()
 	if raw := strings.TrimSpace(mon.PublicURL); raw != "" {
 		if !strings.Contains(raw, "://") {
 			raw = "http://" + raw
 		}
 		return strings.TrimRight(raw, "/")
 	}
-	listen := strings.TrimSpace(c.Listen)
+	// No explicit publicUrl: prefer the last externally observed request base
+	// (reverse proxy X-Forwarded-*), then fall back to the listen address.
+	if observed != "" {
+		return observed
+	}
 	host, port, err := net.SplitHostPort(listen)
 	if err != nil {
 		if listen == "" {
@@ -229,6 +238,19 @@ func (c *Config) PublicBaseURL() string {
 		host = firstNonLoopbackIPv4()
 	}
 	return "http://" + net.JoinHostPort(host, port)
+}
+
+// SetObservedBaseURL records an externally observed request base URL (for
+// example one learned from X-Forwarded-Proto/Host). It is in-memory only and
+// ignored when monitor.publicUrl is explicitly configured.
+func (c *Config) SetObservedBaseURL(raw string) {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	if raw == "" {
+		return
+	}
+	c.mu.Lock()
+	c.observedBaseURL = raw
+	c.mu.Unlock()
 }
 
 // AbsoluteURL turns an in-app path (e.g. /projects/2?watch=5) into a clickable

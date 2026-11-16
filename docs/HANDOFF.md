@@ -565,6 +565,13 @@
 
 - `telegramMessage` 的尾部链接由裸 URL 改为 Markdown 链接：`🔗 [查看详情](url)`；新增 `TestTelegramMessageRendersLinkAsMarkdown` 断言不再出现 `链接:` 前缀。
 
+### 2.67 反向代理下的通知链接（0.8.13）
+
+- `Config.PublicBaseURL()` 优先级：显式 `monitor.publicUrl` > 最近请求观察到的 `X-Forwarded-Proto/Host`（内存态，忽略回环地址）> 监听地址推导。
+- `authMiddleware` 在每次请求时调用 `observedBaseURL` 记录外部基址，`SetObservedBaseURL` 不落盘；直接 localhost 请求不会把已学到的公网地址降级。
+- 测试：`TestPublicBaseURLAndAbsoluteURL` 覆盖优先级；`TestObservedBaseURLFromForwardedHeaders` 覆盖反代请求与回环降级防护。
+- 注意：若反向代理把外部 Host 原样传给后端，现有 Host 校验会拒绝（DNS rebinding 防护）；反代应保留本地 Host 并设置 `X-Forwarded-Host`，或直接配置 `publicUrl`。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

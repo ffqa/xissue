@@ -7,6 +7,12 @@
 - 处理完一个任务批次且没有排队的后续任务时，**立即发版**，不把已提交改动留在未发布状态。
 - 每个 tag 必须有对应 CHANGELOG 条目；发布流程见 `scripts/brew-publish.sh` 与 `.github/workflows/release.yml`。
 
+## [0.8.13] - 2026-11-16
+
+### Fixed
+
+- 通知链接在反向代理后仍显示 `127.0.0.1`：现在当 `monitor.publicUrl` 未配置时，会从请求的 `X-Forwarded-Proto` / `X-Forwarded-Host` 学习外部访问地址（忽略 localhost/回环地址，且显式 publicUrl 始终优先），Telegram/Webhook/插件通知都使用该地址；仍无外部信息时回退到启动监听地址。
+
 ## [0.8.12] - 2026-11-16
 
 ### Fixed

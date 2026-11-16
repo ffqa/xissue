@@ -81,6 +81,16 @@ func TestPublicBaseURLAndAbsoluteURL(t *testing.T) {
 	if got := cfg.AbsoluteURL("/projects/1"); got != "http://100.64.0.2:7789/projects/1" {
 		t.Fatalf("explicit absolute URL = %q", got)
 	}
+
+	cfg.Monitor = MonitorConfig{}
+	cfg.SetObservedBaseURL("https://issue.example.com/")
+	if got := cfg.PublicBaseURL(); got != "https://issue.example.com" {
+		t.Fatalf("observed base URL = %q", got)
+	}
+	cfg.Monitor = MonitorConfig{PublicURL: "https://explicit.example.com"}
+	if got := cfg.PublicBaseURL(); got != "https://explicit.example.com" {
+		t.Fatalf("explicit publicUrl must win over observed, got %q", got)
+	}
 }
 
 func TestMonitorSecretsAreMaskedAndPreserved(t *testing.T) {

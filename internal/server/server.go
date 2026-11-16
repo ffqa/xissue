@@ -21,7 +21,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.8.12"
+const Version = "0.8.13"
 
 type Server struct {
 	cfg    *config.Config
@@ -139,8 +139,51 @@ func isStateChanging(method string) bool {
 	return method == http.MethodPost || method == http.MethodPut || method == http.MethodDelete || method == http.MethodPatch
 }
 
+// observedBaseURL derives the external base URL from a request, honoring the
+// reverse-proxy headers. Loopback hosts and malformed values are ignored.
+func observedBaseURL(r *http.Request) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	if v := firstHeaderValue(r.Header.Get("X-Forwarded-Proto")); v == "http" || v == "https" {
+		scheme = v
+	}
+	host := firstHeaderValue(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = r.Host
+	}
+	host = strings.TrimSpace(host)
+	if host == "" || len(host) > 255 || strings.ContainsAny(host, " \t\r\n/\\") {
+		return ""
+	}
+	hostOnly := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		hostOnly = h
+	}
+	hostOnly = strings.Trim(strings.ToLower(hostOnly), "[]")
+	if hostOnly == "localhost" || hostOnly == "127.0.0.1" || hostOnly == "::1" {
+		return ""
+	}
+	return scheme + "://" + host
+}
+
+// firstHeaderValue returns the first comma-separated value of a proxy header.
+func firstHeaderValue(raw string) string {
+	if i := strings.IndexByte(raw, ','); i >= 0 {
+		raw = raw[:i]
+	}
+	return strings.TrimSpace(raw)
+}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Learn the externally visible base URL behind a reverse proxy so
+		// notification links do not point at 127.0.0.1. monitor.publicUrl
+		// still wins when explicitly configured.
+		if base := observedBaseURL(r); base != "" {
+			s.cfg.SetObservedBaseURL(base)
+		}
 		// 1. Host header validation (DNS Rebinding protection). Remote runners
 		// authenticate with a bearer token and may connect through a LAN IP.
 		if r.URL.Path != "/api/runners/ws" && !isAllowedHost(r.Host, s.cfg.Listen) {

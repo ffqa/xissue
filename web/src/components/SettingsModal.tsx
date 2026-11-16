@@ -301,7 +301,10 @@ export function SettingsModal({
                     placeholder="如 http://100.64.0.2:7789；留空自动推导"
                     onChange={(e) => setPublicUrl(e.target.value)}
                   />
-                  <span className="small dim">外部通知里的链接需要它才能点击；0.0.0.0 监听时自动取本机非回环 IP。</span>
+                  <span className="small dim">
+                    外部通知里的链接需要它才能点击。留空时优先使用最近一次请求的 X-Forwarded-Host/Proto（反向代理），
+                    否则按监听地址推导；反向代理场景建议直接填写公网地址。
+                  </span>
                 </label>
                 <p className="small dim" style={{ marginBottom: 0 }}>
                   自动检查更新只检查版本，不会未经确认安装；浏览器通知是当前浏览器的本地偏好。

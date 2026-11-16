@@ -61,8 +61,8 @@ printf '%s' '[{"number":42,"title":"App crashes on start","body":"error","labels
 	if len(issues) != 1 || issues[0].Key != "acme/sync-repo#42" || issues[0].Title != "App crashes on start" {
 		t.Fatalf("unexpected imported issues: %+v", issues)
 	}
-	if len(issues[0].Labels) != 1 || issues[0].Labels[0] != "bug" {
-		t.Fatalf("expected triage bug label, got %+v", issues[0].Labels)
+	if len(issues[0].Labels) != 0 {
+		t.Fatalf("auto-develop is off; sync must not label issues, got %+v", issues[0].Labels)
 	}
 
 	// A second pass must be idempotent.
@@ -99,7 +99,7 @@ func TestAutoDevelopCommentDedup(t *testing.T) {
 	}
 }
 
-func TestGlobalAutoDevelopGateBypassesProjectOptIn(t *testing.T) {
+func TestGlobalAutoDevelopRequiresProjectOptIn(t *testing.T) {
 	srv, st, tmpDir := newTestServer(t)
 	if err := srv.cfg.UpdateMonitor(config.MonitorConfig{
 		Enabled:           true,
@@ -138,14 +138,40 @@ printf '%s' '[{"number":9,"title":"Crash on launch","body":"error","labels":[],"
 	if _, err := st.UpdateProject(t.Context(), proj.ID, store.ProjectPatch{AutoDevelopAuthors: &authors}); err != nil {
 		t.Fatal(err)
 	}
+	proj, err = st.GetProject(t.Context(), proj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	srv.syncAllProjectIssues(context.Background())
+	// Global switch alone must not act: the project has not opted in.
+	if _, err := srv.syncProjectIssues(context.Background(), proj); err != nil {
+		t.Fatal(err)
+	}
 	issue, err := st.FindIssueByKey(context.Background(), proj.ID, "acme/global-auto#9")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(issue.Labels) != 0 {
+		t.Fatalf("project opt-in is off; labels must stay empty, got %+v", issue.Labels)
+	}
+
+	auto := true
+	if _, err := st.UpdateProject(t.Context(), proj.ID, store.ProjectPatch{AutoDevelop: &auto}); err != nil {
+		t.Fatal(err)
+	}
+	proj, err = st.GetProject(t.Context(), proj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.syncProjectIssues(context.Background(), proj); err != nil {
+		t.Fatal(err)
+	}
+	issue, err = st.FindIssueByKey(context.Background(), proj.ID, "acme/global-auto#9")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(issue.Labels) != 1 || issue.Labels[0] != "bug" {
-		t.Fatalf("expected bug label, got %+v", issue.Labels)
+		t.Fatalf("expected local bug label, got %+v", issue.Labels)
 	}
 	comments, err := st.ListComments(context.Background(), issue.ID)
 	if err != nil {
@@ -158,7 +184,7 @@ printf '%s' '[{"number":9,"title":"Crash on launch","body":"error","labels":[],"
 		}
 	}
 	if !found {
-		t.Fatalf("global auto-develop gate was not reached; comments=%+v", comments)
+		t.Fatalf("auto-develop gate was not reached; comments=%+v", comments)
 	}
 }
 
@@ -257,6 +283,13 @@ printf '%s' '[{"number":11,"title":"Please add plugin config","body":"support ed
 		t.Fatal(err)
 	}
 
+	auto := true
+	if _, err := st.UpdateProject(context.Background(), proj.ID, store.ProjectPatch{AutoDevelop: &auto}); err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.cfg.UpdateMonitor(config.MonitorConfig{Enabled: true, AutoDevelopIssues: true, SyncIntervalMin: 10}); err != nil {
+		t.Fatal(err)
+	}
 	proj, err = st.GetProject(context.Background(), proj.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -325,6 +358,9 @@ printf '%s' '[{"number":12,"title":"In the global settings, agents should also b
 		t.Fatal(err)
 	}
 
+	if err := srv.cfg.UpdateMonitor(config.MonitorConfig{Enabled: true, AutoDevelopIssues: true, SyncIntervalMin: 10}); err != nil {
+		t.Fatal(err)
+	}
 	proj, err = st.GetProject(context.Background(), proj.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -420,6 +456,9 @@ esac
 
 func TestProjectAutoDevelopRequiresAuthorAllowlist(t *testing.T) {
 	srv, st, _ := newTestServer(t)
+	if err := srv.cfg.UpdateMonitor(config.MonitorConfig{Enabled: true, AutoDevelopIssues: true, SyncIntervalMin: 10}); err != nil {
+		t.Fatal(err)
+	}
 	proj, err := st.CreateProject(t.Context(), "ProjectAutoAuthors", "")
 	if err != nil {
 		t.Fatal(err)
@@ -477,7 +516,15 @@ func TestGlobalAutoDevelopRequiresProjectAuthorAllowlist(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	issue, err := st.CreateLocalIssue(t.Context(), proj.ID, "Crash", "error", nil)
+	auto := true
+	if _, err := st.UpdateProject(t.Context(), proj.ID, store.ProjectPatch{AutoDevelop: &auto}); err != nil {
+		t.Fatal(err)
+	}
+	proj, err = st.GetProject(t.Context(), proj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.CreateLocalIssue(t.Context(), proj.ID, "Crash", "error", []string{"bug"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,4 +587,74 @@ func waitIssueSyncIdle(t *testing.T, srv *Server) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("background issue sync did not finish")
+}
+
+// Syncing remote issues must never mutate the remote tracker, even when
+// automatic triage/development is enabled. Labels stay local.
+func TestSyncNeverWritesLabelsToRemote(t *testing.T) {
+	srv, st, tmpDir := newTestServer(t)
+	if err := srv.cfg.UpdateMonitor(config.MonitorConfig{
+		Enabled:           true,
+		AutoDevelopIssues: true,
+		SyncIntervalMin:   10,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(tmpDir, "gh-calls.log")
+	script := `#!/bin/sh
+if [ "$1 $2" = "issue list" ]; then
+  printf '%s' '[{"number":31,"title":"Crash on save","body":"error","labels":[],"url":"https://example.test/issues/31","author":{"login":"carol"}}]'
+  exit 0
+fi
+echo "$@" >> ` + marker + `
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(binDir, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	proj, err := st.CreateProject(t.Context(), "NoRemoteWrite", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateRepo(t.Context(), domain.Repo{
+		ProjectID:     proj.ID,
+		Name:          "no-write",
+		Provider:      domain.ProviderGitHub,
+		OwnerRepo:     "acme/no-write",
+		DefaultBranch: "main",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	auto := true
+	authors := []string{"carol"}
+	if _, err := st.UpdateProject(t.Context(), proj.ID, store.ProjectPatch{AutoDevelop: &auto, AutoDevelopAuthors: &authors}); err != nil {
+		t.Fatal(err)
+	}
+	proj, err = st.GetProject(t.Context(), proj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := srv.syncProjectIssues(t.Context(), proj); err != nil {
+		t.Fatal(err)
+	}
+	issue, err := st.FindIssueByKey(t.Context(), proj.ID, "acme/no-write#31")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(issue.Labels) != 1 || issue.Labels[0] != "bug" {
+		t.Fatalf("expected local bug label, got %+v", issue.Labels)
+	}
+	if data, err := os.ReadFile(marker); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.Contains(line, "--add-label") || strings.HasPrefix(line, "label create") || strings.HasPrefix(line, "issue edit") {
+				t.Fatalf("sync mutated the remote repository: %s", line)
+			}
+		}
+	}
 }

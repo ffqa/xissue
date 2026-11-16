@@ -1859,8 +1859,10 @@ ${it.key} · ${ISSUE_STATUS_LABEL[it.status]}`}>{it.title}</div>
                   </span>
                 </label>
                 <div className="small dim" style={{ marginTop: 6, lineHeight: 1.5 }}>
-                  新 Issue 同步后先自动判定 Bug / 需求 / 建议：Bug 与需求会打上对应标签并按下方条件启动 Agent
-                  预开发，完成后自动创建 PR；建议只打标不启动，等待作者或维护者补充。Agent 仍会先判断是否真实可实施，信息不足时不改代码。
+                  新 Issue 同步后先自动判定 Bug / 需求 / 建议：Bug 与需求只在**本地**打标签并按下方条件启动 Agent
+                  预开发，完成后自动创建 PR；建议只在本地打标不启动，等待作者或维护者补充。同步过程不会修改远程仓库
+                  （不回写标签）。需要同时开启监控里的「自动开发判定的 Bug / 需求」总开关，本开关才会生效。
+                  Agent 仍会先判断是否真实可实施，信息不足时不改代码。
                 </div>
                 {cfgAutoDevelop && (
                   <div

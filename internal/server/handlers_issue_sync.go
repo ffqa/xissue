@@ -168,9 +168,20 @@ func (s *Server) syncRemoteIssueComments(ctx context.Context, proj *domain.Proje
 	s.runner.LogMonitor("EVENT", "sync", fmt.Sprintf("%s 评论同步完成: 新增 %d，更新 %d", repo.Name, added, updated))
 }
 
-// handleNewRemoteIssue classifies a newly synced issue, applies a canonical
-// label locally and remotely, and only then considers auto-development.
+// autoDevelopEnabled reports whether automatic triage/development is on for a
+// project. The global switch is the master control and the project must opt in
+// explicitly; either switch off means sync only imports issues.
+func (s *Server) autoDevelopEnabled(p *domain.Project) bool {
+	return s.cfg.MonitorSnapshot().AutoDevelopIssues && p.AutoDevelop
+}
+
+// handleNewRemoteIssue classifies a newly synced issue and applies the
+// canonical label locally. It never writes labels back to the remote tracker:
+// syncing issues must not mutate repositories the operator does not own.
 func (s *Server) handleNewRemoteIssue(ctx context.Context, proj *domain.Project, repo domain.Repo, ri provider.RemoteIssue) {
+	if !s.autoDevelopEnabled(proj) {
+		return
+	}
 	issue, err := s.st.FindIssueByKey(ctx, proj.ID, provider.IssueKey(repo, ri.Number))
 	if err != nil {
 		return
@@ -184,9 +195,6 @@ func (s *Server) handleNewRemoteIssue(ctx context.Context, proj *domain.Project,
 		issue = updated
 		s.hub.BroadcastIssueUpdated(issue)
 	}
-	if err := provider.For(repo.Provider).AddLabels(ctx, repo, ri.Number, []string{triage.Label}); err != nil {
-		s.runner.LogMonitor("WARN", "triage", fmt.Sprintf("%s 远程打标失败 (%s): %v", issue.Key, triage.Label, err))
-	}
 	s.runner.LogMonitor("EVENT", "triage", fmt.Sprintf("%s 判定为 %s (%s)", issue.Key, triage.Kind, triage.Reason))
 
 	if !triage.Actionable {
@@ -196,9 +204,13 @@ func (s *Server) handleNewRemoteIssue(ctx context.Context, proj *domain.Project,
 	s.maybeAutoDevelop(ctx, proj, issue.Key, ri.Author, triage)
 }
 
-// triageExistingRemoteIssue backfills canonical labels for issues imported
-// before triage existed. It never starts an agent run.
+// triageExistingRemoteIssue backfills the local canonical label for issues
+// imported before triage existed. It never starts an agent run and never
+// writes labels to the remote tracker.
 func (s *Server) triageExistingRemoteIssue(ctx context.Context, proj *domain.Project, repo domain.Repo, ri provider.RemoteIssue) {
+	if !s.autoDevelopEnabled(proj) {
+		return
+	}
 	issue, err := s.st.FindIssueByKey(ctx, proj.ID, provider.IssueKey(repo, ri.Number))
 	if err != nil || issue.Status == domain.IssueDone {
 		return
@@ -218,9 +230,6 @@ func (s *Server) triageExistingRemoteIssue(ctx context.Context, proj *domain.Pro
 		if updated, err := s.st.AddIssueLabels(ctx, issue.ID, triage.Label); err == nil {
 			issue = updated
 			s.hub.BroadcastIssueUpdated(issue)
-		}
-		if err := provider.For(repo.Provider).AddLabels(ctx, repo, ri.Number, []string{triage.Label}); err != nil {
-			s.runner.LogMonitor("WARN", "triage", fmt.Sprintf("%s 远程补标失败 (%s): %v", issue.Key, triage.Label, err))
 		}
 		s.runner.LogMonitor("EVENT", "triage", fmt.Sprintf("%s 历史 Issue 补判为 %s (%s)", issue.Key, triage.Kind, triage.Reason))
 	}
@@ -327,8 +336,7 @@ func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key, a
 	if !triage.Actionable {
 		return
 	}
-	globalAuto := s.cfg.MonitorSnapshot().AutoDevelopIssues
-	if !p.AutoDevelop && !globalAuto {
+	if !s.autoDevelopEnabled(p) {
 		return
 	}
 	// Auto-develop can start an agent on code from an arbitrary issue author.
@@ -351,7 +359,7 @@ func (s *Server) maybeAutoDevelop(ctx context.Context, p *domain.Project, key, a
 	if err != nil {
 		return
 	}
-	if !globalAuto && !runner.IsDevelopableIssue(*issue, p.AutoDevelopLabels, p.AutoDevelopText) {
+	if !runner.IsDevelopableIssue(*issue, p.AutoDevelopLabels, p.AutoDevelopText) {
 		return
 	}
 	now := time.Now()

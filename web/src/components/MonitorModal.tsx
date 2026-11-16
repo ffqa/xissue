@@ -323,8 +323,8 @@ export const MonitorModal: React.FC<MonitorModalProps> = ({ onOpenSettings }) =>
                   自动开发判定的 Bug / 需求
                 </span>
                 <span className="dim small" style={{ fontSize: 11, marginTop: 2 }}>
-                  同步后先判定类型：Bug/需求自动打标并启动 Agent，完成后自动发 PR；建议只打标不开发。
-                  全局开关要求每个项目配置作者白名单（autoDevelopAuthors），否则跳过该项目。
+                  同步后先判定类型：Bug/需求只在本地打标并启动 Agent，完成后自动发 PR；建议只在本地打标不开发。
+                  不会回写远程仓库标签。全局开关还要求项目自己开启「自动预开发」并配置作者白名单，否则跳过该项目。
                 </span>
               </label>
               <label className="field" style={{ margin: 0 }}>

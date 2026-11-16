@@ -554,6 +554,13 @@
 - **Agent 删除**: `config.Load` 之前直接在 `Default()` 的 Agent 表上 `yaml.Unmarshal`，YAML 里缺失的默认 Agent 会保留；已改为先置空，只有完全没有 `agents` 键的旧配置才 seed 默认值。回归测试覆盖删除后重新 Load、旧配置 seed。
 - **`feat:` 分类**: `featureKeywords` 增加 `feat`（词边界匹配），约定式提交标题可被自动预开发识别。
 
+### 2.65 同步不再越权回写远程标签（0.8.11）
+
+- **自动打标改为本地**：`handleNewRemoteIssue` / `triageExistingRemoteIssue` 删除远程 `AddLabels` 调用；自动同步只读，不修改远程仓库。
+- **双开关**：`autoDevelopEnabled(project)` = 全局 `monitor.autoDevelopIssues` **且** 项目 `autoDevelop`；任一关闭时同步只导入 Issue，不做 triage、不打本地标签、不发系统评论、不启动 Run。
+- **`maybeAutoDevelop`**：删除全局绕过项目开关的逻辑，并始终按项目标签/文本规则判断可开发性。
+- **回归测试**：`TestSyncNeverWritesLabelsToRemote` 用假的 `gh` 断言同步只调用读取接口；`TestGlobalAutoDevelopRequiresProjectOptIn` 覆盖总开关单开时不动作。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

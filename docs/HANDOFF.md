@@ -561,6 +561,10 @@
 - **`maybeAutoDevelop`**：删除全局绕过项目开关的逻辑，并始终按项目标签/文本规则判断可开发性。
 - **回归测试**：`TestSyncNeverWritesLabelsToRemote` 用假的 `gh` 断言同步只调用读取接口；`TestGlobalAutoDevelopRequiresProjectOptIn` 覆盖总开关单开时不动作。
 
+### 2.66 Telegram 链接渲染（0.8.12）
+
+- `telegramMessage` 的尾部链接由裸 URL 改为 Markdown 链接：`🔗 [查看详情](url)`；新增 `TestTelegramMessageRendersLinkAsMarkdown` 断言不再出现 `链接:` 前缀。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

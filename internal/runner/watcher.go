@@ -210,7 +210,7 @@ func telegramMessage(title, body, link string) string {
 		msg += "\n\n" + formatTelegramBody(body)
 	}
 	if link != "" {
-		msg += fmt.Sprintf("\n\n🔗 链接: %s", link)
+		msg += fmt.Sprintf("\n\n🔗 [查看详情](%s)", link)
 	}
 	return msg
 }

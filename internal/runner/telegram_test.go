@@ -67,6 +67,17 @@ func TestTelegramPayloadAvoidsEscapedBracketsAndFormatsMarkdown(t *testing.T) {
 	}
 }
 
+func TestTelegramMessageRendersLinkAsMarkdown(t *testing.T) {
+	payload := telegramPayload("123", "标题", "", "http://127.0.0.1:7789/projects")
+	msg, _ := payload["text"].(string)
+	if !strings.Contains(msg, "[查看详情](http://127.0.0.1:7789/projects)") {
+		t.Fatalf("link not rendered as markdown: %q", msg)
+	}
+	if strings.Contains(msg, "链接:") {
+		t.Fatalf("bare link prefix still present: %q", msg)
+	}
+}
+
 func TestWebhookPayloadDeclaresMarkdown(t *testing.T) {
 	payload := webhookPayload("branch_push", "⚡ [admin] 分支推送自动化", "**重要**", "https://example.com")
 	if payload["format"] != "markdown" || payload["msg_type"] != "markdown" {

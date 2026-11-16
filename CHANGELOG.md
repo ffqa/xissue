@@ -7,6 +7,12 @@
 - 处理完一个任务批次且没有排队的后续任务时，**立即发版**，不把已提交改动留在未发布状态。
 - 每个 tag 必须有对应 CHANGELOG 条目；发布流程见 `scripts/brew-publish.sh` 与 `.github/workflows/release.yml`。
 
+## [0.8.12] - 2026-11-16
+
+### Fixed
+
+- Telegram 通知底部的链接改为 Markdown 链接 `[查看详情](url)`，不再显示 `🔗 链接: http://127.0.0.1:7789/projects` 这类裸 URL（内网地址在手机上不可点）。
+
 ## [0.8.11] - 2026-11-16
 
 ### Fixed

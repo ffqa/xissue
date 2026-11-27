@@ -14,6 +14,7 @@ import type {
   Comment,
   CommitDetail,
   CommitInfo,
+  RepoBlob,
   DevMode,
   Health,
   HookStatus,
@@ -324,6 +325,8 @@ export const api = {
     get<CommitInfo[]>(`/api/repos/${repoId}/commits?${q({ branch: branch ?? '', limit, refresh: refresh ? 1 : 0 })}`),
   repoCommitDetail: (repoId: number, sha: string) =>
     get<CommitDetail>(`/api/repos/${repoId}/commits/${encodeURIComponent(sha)}`),
+  repoBlob: (repoId: number, ref: string, path: string) =>
+    get<RepoBlob>(`/api/repos/${repoId}/blob?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`),
 
   issues: (projectId: number) => get<Issue[]>(`/api/projects/${projectId}/issues`),
   archivedIssues: (projectId: number, q = '', limit = 100, offset = 0) =>
@@ -452,6 +455,7 @@ export const qk = {
   mergedBranches: (repoId: number) => ['mergedBranches', repoId] as const,
   repoCommits: (repoId: number, branch: string) => ['repoCommits', repoId, branch] as const,
   repoCommitDetail: (repoId: number, sha: string) => ['repoCommitDetail', repoId, sha] as const,
+  repoBlob: (repoId: number, sha: string, path: string) => ['repoBlob', repoId, sha, path] as const,
   issues: (projectId: number) => ['issues', projectId] as const,
   archivedIssues: (projectId: number, q = '', limit = 100) => ['archivedIssues', projectId, q, limit] as const,
   issue: (id: number) => ['issue', id] as const,

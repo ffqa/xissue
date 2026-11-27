@@ -466,6 +466,12 @@ export interface CommitInfo {
   parents?: string[];
 }
 
+export interface RepoBlob {
+  content: string;
+  binary: boolean;
+  truncated: boolean;
+}
+
 export interface CommitFile {
   status: string;
   path: string;

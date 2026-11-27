@@ -23,17 +23,29 @@ function statusLabel(status: string): string {
   return '修改';
 }
 
-function PatchLine({ line }: { line: string }) {
+function PatchLine({ line, id }: { line: string; id?: string }) {
   let cls = 'diff-line';
   if (line.startsWith('@@')) cls += ' diff-hunk';
   else if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff --git') || line.startsWith('index '))
     cls += ' diff-meta';
   else if (line.startsWith('+')) cls += ' diff-add';
   else if (line.startsWith('-')) cls += ' diff-del';
-  return <div className={cls}>{line || ' '}</div>;
+  return (
+    <div className={cls} id={id}>
+      {line || ' '}
+    </div>
+  );
 }
 
-function CommitFiles({ files }: { files: CommitFile[] }) {
+function CommitFiles({
+  files,
+  onViewBlob,
+  onLocateDiff,
+}: {
+  files: CommitFile[];
+  onViewBlob: (path: string) => void;
+  onLocateDiff: (path: string) => void;
+}) {
   if (files.length === 0) return <span className="dim small">无文件变更</span>;
   return (
     <div className="commit-files">
@@ -42,12 +54,28 @@ function CommitFiles({ files }: { files: CommitFile[] }) {
           <span className="commit-file-status" style={{ color: statusColor(f.status) }} title={f.status}>
             {statusLabel(f.status)}
           </span>
-          <code className="mono small grow ellipsis" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}>
+          <code
+            className="mono small grow ellipsis commit-file-link"
+            title={`${f.oldPath ? `${f.oldPath} → ` : ''}${f.path}（点击查看文件内容）`}
+            onClick={() => onViewBlob(f.path)}
+          >
             {f.oldPath ? `${f.oldPath} → ` : ''}
             {f.path}
           </code>
-          <span className="small" style={{ color: 'var(--success)' }}>+{f.additions}</span>
-          <span className="small" style={{ color: 'var(--error)' }}>-{f.deletions}</span>
+          <button
+            className="diff-stat diff-stat-add"
+            title="定位到该文件的 Diff"
+            onClick={() => onLocateDiff(f.path)}
+          >
+            +{f.additions}
+          </button>
+          <button
+            className="diff-stat diff-stat-del"
+            title="定位到该文件的 Diff"
+            onClick={() => onLocateDiff(f.path)}
+          >
+            -{f.deletions}
+          </button>
         </div>
       ))}
     </div>
@@ -79,7 +107,9 @@ export function CommitsPanel({
   const repo = repos.find((r) => r.id === repoId) || repos[0];
   const [branch, setBranch] = useState(initialBranch || '');
   const [shaFromUrl, setShaFromUrl] = useState(initialSha || '');
-  const requestedBranch = branch || repo?.defaultBranch || '';
+  // 项目设置里配置了拉取分支时，优先选中第一个（如 main/dev → main）。
+  const preferredBranch = (project?.pullBranches?.length ? project.pullBranches[0] : '') || repo?.defaultBranch || '';
+  const requestedBranch = branch || preferredBranch;
 
   const branchesQ = useQuery({
     queryKey: qk.repoBranches(repoId),
@@ -89,24 +119,26 @@ export function CommitsPanel({
   const branches = branchesQ.data ?? [];
   const activeBranch =
     branches.length > 0 && !branches.includes(requestedBranch)
-      ? branches.includes(repo?.defaultBranch || '')
-        ? repo!.defaultBranch
-        : branches[0]
+      ? branches.includes(preferredBranch)
+        ? preferredBranch
+        : branches.includes(repo?.defaultBranch || '')
+          ? repo!.defaultBranch
+          : branches[0]
       : requestedBranch;
 
   useEffect(() => {
     if (!repos.length) return;
     if (!repoId || !repos.some((r) => r.id === repoId)) {
       setRepoId(repos[0].id);
-      setBranch(repos[0].defaultBranch);
+      setBranch((project?.pullBranches?.length ? project.pullBranches[0] : '') || repos[0].defaultBranch);
       setShaFromUrl('');
     }
-  }, [repoId, repos]);
+  }, [repoId, repos, project?.pullBranches]);
 
   useEffect(() => {
-    const next = initialBranch || repo?.defaultBranch;
+    const next = initialBranch || preferredBranch;
     if (!branch && next) setBranch(next);
-  }, [branch, repo?.defaultBranch, initialBranch]);
+  }, [branch, preferredBranch, initialBranch]);
 
   const commitsQ = useQuery({
     queryKey: qk.repoCommits(repoId, activeBranch),
@@ -131,6 +163,59 @@ export function CommitsPanel({
   const detail: CommitDetail | undefined = detailQ.data;
 
   const patchLines = useMemo(() => (detail?.patch ? detail.patch.split('\n') : []), [detail?.patch]);
+
+  // 每个 `diff --git` 段落的锚点，按文件路径索引（重命名时旧路径也能定位）。
+  const diffAnchors = useMemo(() => {
+    const map = new Map<string, number>();
+    let idx = -1;
+    for (const line of patchLines) {
+      if (!line.startsWith('diff --git ')) continue;
+      idx += 1;
+      const m = line.match(/^diff --git a\/(.*) b\/(.*)$/);
+      if (m) {
+        if (!map.has(m[2])) map.set(m[2], idx);
+        if (!map.has(m[1])) map.set(m[1], idx);
+      }
+    }
+    return map;
+  }, [patchLines]);
+
+  const lineIds = useMemo(() => {
+    const ids: (string | undefined)[] = [];
+    let idx = -1;
+    for (const line of patchLines) {
+      if (line.startsWith('diff --git ')) {
+        idx += 1;
+        ids.push(`diff-file-${idx}`);
+      } else {
+        ids.push(undefined);
+      }
+    }
+    return ids;
+  }, [patchLines]);
+
+  const locateDiff = (path: string) => {
+    const idx = diffAnchors.get(path);
+    if (idx === undefined) {
+      toast.error('Diff 中没有该文件（可能被截断）');
+      return;
+    }
+    const el = document.getElementById(`diff-file-${idx}`);
+    if (el) {
+      el.scrollIntoView({ block: 'start' });
+      el.classList.remove('diff-flash');
+      // 触发重绘以重放动画
+      void el.offsetWidth;
+      el.classList.add('diff-flash');
+    }
+  };
+
+  const [blobPath, setBlobPath] = useState('');
+  const blobQ = useQuery({
+    queryKey: qk.repoBlob(repoId, selectedSha, blobPath),
+    queryFn: () => api.repoBlob(repoId, selectedSha, blobPath),
+    enabled: !!repoId && !!selectedSha && !!blobPath,
+  });
 
   const total = useMemo(() => {
     let add = 0;
@@ -322,7 +407,11 @@ export function CommitsPanel({
                     </button>
                   )}
                 </div>
-                <CommitFiles files={filesExpanded ? detail.files : detail.files.slice(0, 10)} />
+                <CommitFiles
+                  files={filesExpanded ? detail.files : detail.files.slice(0, 10)}
+                  onViewBlob={(path) => setBlobPath(path)}
+                  onLocateDiff={locateDiff}
+                />
 
                 <div className="commit-section-title" style={{ marginTop: 12 }}>
                   Diff
@@ -332,7 +421,7 @@ export function CommitsPanel({
                   {detail.patch ? (
                     <>
                       {(fullDiff ? patchLines : patchLines.slice(0, 800)).map((line, i) => (
-                        <PatchLine key={i} line={line} />
+                        <PatchLine key={i} line={line} id={lineIds[i]} />
                       ))}
                       {!fullDiff && patchLines.length > 800 && (
                         <div className="diff-truncated">
@@ -351,6 +440,40 @@ export function CommitsPanel({
                 </div>
               </>
             ) : null}
+          </div>
+        </div>
+      )}
+
+      {blobPath && (
+        <div className="modal-backdrop" onClick={() => setBlobPath('')}>
+          <div className="modal modal-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-h">
+              <code className="mono small grow ellipsis">{blobPath}</code>
+              {blobQ.data?.truncated && (
+                <span className="small" style={{ color: 'var(--warning)' }}>内容过大，仅显示前 512KB</span>
+              )}
+              <button
+                className="ghost sm"
+                onClick={() => {
+                  const text = blobQ.data?.content ?? '';
+                  copyText(text).then(() => toast.success('已复制文件内容'));
+                }}
+              >
+                复制
+              </button>
+              <button className="ghost sm" onClick={() => setBlobPath('')}>关闭</button>
+            </div>
+            <div className="modal-b" style={{ padding: 0 }}>
+              {blobQ.isLoading ? (
+                <div className="dim small" style={{ padding: 14 }}>加载中…</div>
+              ) : blobQ.isError ? (
+                <div className="dim small" style={{ padding: 14 }}>读取失败：{(blobQ.error as Error).message}</div>
+              ) : blobQ.data?.binary ? (
+                <div className="dim small" style={{ padding: 14 }}>二进制文件，无法预览。</div>
+              ) : (
+                <pre className="blob-view">{blobQ.data?.content ?? ''}</pre>
+              )}
+            </div>
           </div>
         </div>
       )}

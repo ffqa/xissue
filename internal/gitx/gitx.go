@@ -801,3 +801,43 @@ func MergeBranchToTarget(ctx context.Context, wtDir, mirrorPath, remoteURL, sour
 	}
 	return headSHA, nil
 }
+
+// maxBlobBytes caps the file content returned by ShowBlob so a huge file
+// cannot stall the UI.
+const maxBlobBytes = 512 * 1024
+
+// ShowBlob returns the content of path at ref from the mirror. Binary content
+// is detected heuristically and returned with binary=true and empty content.
+// The mirror is a partial clone, so git may fetch the blob from the remote on
+// demand.
+func ShowBlob(ctx context.Context, mirror, ref, path string) (content string, binary bool, truncated bool, err error) {
+	ref = strings.TrimSpace(ref)
+	path = strings.TrimSpace(path)
+	if ref == "" || path == "" {
+		return "", false, false, fmt.Errorf("ref and path are required")
+	}
+	if strings.HasPrefix(ref, "-") || strings.HasPrefix(path, "-") || strings.ContainsAny(path, "\n\r\x00") {
+		return "", false, false, fmt.Errorf("invalid ref or path")
+	}
+	if err := ValidateSHA(ref); err != nil {
+		return "", false, false, fmt.Errorf("ref must be a commit sha: %v", err)
+	}
+	if _, err := Run(ctx, mirror, "rev-parse", "--verify", ref+"^{commit}"); err != nil {
+		return "", false, false, err
+	}
+	raw, _, err := runOutput(ctx, mirror, "show", ref+":"+path)
+	if err != nil {
+		return "", false, false, err
+	}
+	probe := raw
+	if len(probe) > 8192 {
+		probe = probe[:8192]
+	}
+	if strings.IndexByte(probe, 0) >= 0 {
+		return "", true, false, nil
+	}
+	if len(raw) > maxBlobBytes {
+		return raw[:maxBlobBytes], false, true, nil
+	}
+	return raw, false, false, nil
+}

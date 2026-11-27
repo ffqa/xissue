@@ -150,7 +150,9 @@ func TestExecutePluginsAggregatesFailures(t *testing.T) {
 		"#!/bin/sh\necho '{\"actions\":[{\"type\":\"notify\",\"message\":\"hi\"}]}'\n")
 	writeRunPlugin(t, root, "crasher", "",
 		"#!/bin/sh\necho 'boom detail' >&2\nexit 1\n")
-	writeRunPlugin(t, root, "sleeper", "timeout: 1s\n",
+	// 3s: under heavy load (e.g. -race on a busy machine) the process may not
+	// even start within 1s, making the salvage assertion flaky.
+	writeRunPlugin(t, root, "sleeper", "timeout: 3s\n",
 		"#!/bin/sh\necho '{\"actions\":[{\"type\":\"notify\",\"message\":\"late\"}]}'\nsleep 10\n")
 	writeRunPlugin(t, root, "noisy", "",
 		"#!/bin/sh\necho 'this is not json'\n")

@@ -522,6 +522,19 @@ func (r *Runner) ListRepoBranches(ctx context.Context, repoID int64, refresh boo
 	return gitx.ListBranches(ctx, mirror)
 }
 
+// ReadRepoBlob returns the content of a file at a commit in the repo mirror.
+func (r *Runner) ReadRepoBlob(ctx context.Context, repoID int64, ref, path string) (string, bool, bool, error) {
+	repo, err := r.st.GetRepo(ctx, repoID)
+	if err != nil {
+		return "", false, false, err
+	}
+	mirror := r.mirrorPath(repo.ID)
+	if err := gitx.EnsureMirrorCached(ctx, repo.RemoteURL, mirror); err != nil {
+		return "", false, false, err
+	}
+	return gitx.ShowBlob(ctx, mirror, ref, path)
+}
+
 // ListRepoCommits returns recent commits on branch. Unless refresh is true it
 // reads the existing mirror to keep UI navigation fast.
 func (r *Runner) ListRepoCommits(ctx context.Context, repoID int64, branch string, limit int, refresh bool) ([]gitx.CommitInfo, error) {

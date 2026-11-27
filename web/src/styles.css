@@ -504,13 +504,28 @@ label.field > input:not([type="checkbox"]):not([type="radio"]), label.field > se
 .commit-file-row { display: flex; align-items: center; gap: 10px; padding: 6px 16px; border-bottom: 1px solid var(--border); }
 .commit-file-row:last-child { border-bottom: 0; }
 .commit-file-status { flex: none; font-size: 11px; font-weight: 600; min-width: 42px; }
+.commit-file-link { cursor: pointer; border-radius: 4px; }
+.commit-file-link:hover { color: var(--accent-2, var(--accent)); text-decoration: underline; }
+.diff-stat { flex: none; font-family: var(--mono); font-size: 12px; padding: 0 4px; border-radius: 4px; background: none; border: 0; cursor: pointer; }
+.diff-stat:hover { background: var(--btn-hover-bg); }
+.diff-stat-add { color: var(--success, var(--green)); }
+.diff-stat-del { color: var(--error, var(--red)); }
+.blob-view { margin: 0; padding: 12px 16px; font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre; overflow: auto; flex: 1; min-height: 0; background: var(--bg-0, #0b0c0e); color: var(--text); }
 .diff-view { overflow: auto; background: var(--bg-0, #0b0c0e); font-family: var(--mono); font-size: 12px; line-height: 1.5; padding-bottom: 16px; flex: 1; min-height: 160px; }
 .diff-truncated { padding: 10px 14px; color: var(--text-3); border-top: 1px dashed var(--border); display: flex; align-items: center; gap: 10px; position: sticky; bottom: 0; background: var(--bg-0, #0b0c0e); }
-.diff-line { padding: 0 14px; white-space: pre; min-width: max-content; }
-.diff-add { background: rgba(76, 183, 130, .14); color: var(--green); }
-.diff-del { background: rgba(235, 87, 87, .13); color: var(--red); }
-.diff-hunk { background: rgba(78, 167, 252, .12); color: var(--blue); }
-.diff-meta { color: var(--text-3); }
+.diff-line { padding: 0 14px; white-space: pre; min-width: max-content; color: var(--text); }
+.diff-add { background: rgba(76, 183, 130, .18); color: #7ee0ab; }
+.diff-del { background: rgba(235, 87, 87, .16); color: #ff9d9d; }
+.diff-hunk { background: rgba(78, 167, 252, .18); color: #8ab9ff; font-weight: 600; }
+.diff-meta { color: var(--text-2); }
+.diff-flash { animation: diff-flash 1.2s ease-out; }
+@keyframes diff-flash {
+  0% { background: rgba(110, 123, 242, .45); }
+  100% { background: transparent; }
+}
+:root[data-theme="light"] .diff-add { color: #157a4c; }
+:root[data-theme="light"] .diff-del { color: #c22525; }
+:root[data-theme="light"] .diff-hunk { color: #1a63c9; }
 @media (max-width: 860px) {
   .commits-layout { grid-template-columns: 1fr; grid-template-rows: minmax(200px, 40%) minmax(0, 1fr); }
 }

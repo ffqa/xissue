@@ -572,6 +572,13 @@
 - 测试：`TestPublicBaseURLAndAbsoluteURL` 覆盖优先级；`TestObservedBaseURLFromForwardedHeaders` 覆盖反代请求与回环降级防护。
 - 注意：若反向代理把外部 Host 原样传给后端，现有 Host 校验会拒绝（DNS rebinding 防护）；反代应保留本地 Host 并设置 `X-Forwarded-Host`，或直接配置 `publicUrl`。
 
+### 2.68 提交页文件交互与默认分支（0.8.14）
+
+- **Blob 查看**: `GET /api/repos/{repoId}/blob?ref=sha&path=…`（`gitx.ShowBlob`，`rev-parse` 校验 sha、512KB 截断、8KB 探测二进制、blob:none 镜像按需取对象）；前端点击文件名打开内容弹窗。
+- **Diff 定位**: 文件行 `+x/-x` 按钮按 `diff --git` 段落锚点 `scrollIntoView` + `diff-flash` 动画；重命名时旧/新路径都可定位。
+- **默认分支**: `preferredBranch = pullBranches[0] || repo.defaultBranch`；分支列表不含它时回退 defaultBranch，再回退列表第一个。
+- **配色**: `.diff-line` 显式 `var(--text)`，hunk/add/del 提高背景透明度与文字亮度，亮色主题独立。
+
 ## 3. 核心架构与关键代码索引
 
 ```mermaid

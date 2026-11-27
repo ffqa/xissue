@@ -372,3 +372,36 @@ func TestDiffIncludesUntrackedAndTruncates(t *testing.T) {
 		t.Fatalf("expected truncation marker, got %q", short)
 	}
 }
+
+func TestShowBlob(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	if _, err := Run(ctx, dir, "init", "-b", "main"); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = Run(ctx, dir, "config", "user.name", "T")
+	_, _ = Run(ctx, dir, "config", "user.email", "t@example.com")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "bin.dat"), []byte{'a', 0, 'b'}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sha, err := CommitAll(ctx, dir, "init")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, binary, truncated, err := ShowBlob(ctx, dir, sha, "a.txt")
+	if err != nil || binary || truncated || content != "hello\n" {
+		t.Fatalf("text blob: %q binary=%v truncated=%v err=%v", content, binary, truncated, err)
+	}
+	if _, binary, _, err := ShowBlob(ctx, dir, sha, "bin.dat"); err != nil || !binary {
+		t.Fatalf("binary detection: binary=%v err=%v", binary, err)
+	}
+	if _, _, _, err := ShowBlob(ctx, dir, sha, "missing.txt"); err == nil {
+		t.Fatal("missing file should error")
+	}
+	if _, _, _, err := ShowBlob(ctx, dir, sha, "../escape"); err == nil {
+		t.Fatal("escape path should error")
+	}
+}

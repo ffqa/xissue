@@ -7,6 +7,18 @@
 - 处理完一个任务批次且没有排队的后续任务时，**立即发版**，不把已提交改动留在未发布状态。
 - 每个 tag 必须有对应 CHANGELOG 条目；发布流程见 `scripts/brew-publish.sh` 与 `.github/workflows/release.yml`。
 
+## [0.8.14] - 2026-11-27
+
+### Added
+
+- 提交详情页的变更文件可交互：点击文件名打开该 commit 的文件内容（新增 `GET /api/repos/{id}/blob`，512KB 上限、二进制探测、部分克隆按需取 blob）；点击 `+x` / `-x` 直接定位到 Diff 中该文件的位置并高亮闪烁。
+- 提交记录页默认分支：项目配置了拉取分支（如 `main/dev`）时优先选第一个；该分支不存在时回退仓库默认分支，再回退列表第一个。
+
+### Fixed
+
+- Diff 配色对比度：暗色主题下上下文行、hunk 头、增删行更亮更易读；亮色主题单独配色。
+- 修复 `TestExecutePluginsAggregatesFailures` 在高负载（-race）下偶发失败：sleeper 插件超时 1s → 3s。
+
 ## [0.8.13] - 2026-11-16
 
 ### Fixed

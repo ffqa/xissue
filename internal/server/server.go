@@ -21,7 +21,7 @@ import (
 	"github.com/xpier/xissue/internal/store"
 )
 
-const Version = "0.8.13"
+const Version = "0.8.14"
 
 type Server struct {
 	cfg    *config.Config
@@ -381,6 +381,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /api/maintenance/prune", s.handlePruneRunStorage)
 
 	m.HandleFunc("GET /api/repos/{repoId}/branches", s.handleRepoBranches)
+	m.HandleFunc("GET /api/repos/{repoId}/blob", s.handleRepoBlob)
 	m.HandleFunc("GET /api/repos/{repoId}/merged-branches", s.handleListMergedBranches)
 	m.HandleFunc("POST /api/repos/{repoId}/branches/delete", s.handleDeleteMergedBranches)
 	m.HandleFunc("GET /api/jobs", s.handleListJobs)

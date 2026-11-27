@@ -106,6 +106,23 @@ func (s *Server) handleCheckWatches(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleRepoBlob(w http.ResponseWriter, r *http.Request) {
+	repoID, ok := pathID(w, r, "repoId")
+	if !ok {
+		return
+	}
+	content, binary, truncated, err := s.runner.ReadRepoBlob(r.Context(), repoID, r.URL.Query().Get("ref"), r.URL.Query().Get("path"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"content":   content,
+		"binary":    binary,
+		"truncated": truncated,
+	})
+}
+
 func (s *Server) handleRepoBranches(w http.ResponseWriter, r *http.Request) {
 	repoID, ok := pathID(w, r, "repoId")
 	if !ok {

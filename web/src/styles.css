@@ -1,5 +1,6 @@
 :root {
   --bg: #0e0f11;
+  --bg-0: #0b0c0e;
   --bg-1: #141518;
   --bg-2: #1a1c20;
   --bg-3: #23262b;
@@ -35,6 +36,7 @@
 
 :root[data-theme="light"] {
   --bg: #f6f7f9;
+  --bg-0: #eef0f3;
   --bg-1: #ffffff;
   --bg-2: #f0f2f5;
   --bg-3: #e6e9ef;
